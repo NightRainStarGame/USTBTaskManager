@@ -29,8 +29,9 @@ export default function Sidebar() {
           <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-neon-yellow animate-pulse-glow" />
         </div>
         <div className="flex flex-col leading-tight">
-          <span className="font-mono text-sm font-bold text-neon-green text-glow-green">TASK·OS</span>
-          <span className="font-mono text-[9px] text-text-dim uppercase tracking-widest">v{appInfo?.version || '—'}</span>
+          <span className="font-mono text-base font-bold text-neon-green text-glow-green">StarOS</span>
+          <span className="font-mono text-[10px] text-text-dim uppercase tracking-widest mt-0.5">v{appInfo?.version || '—'}</span>
+          <span className="font-mono text-[8px] text-text-dim/70 tracking-wider mt-0.5">made by Lasarac</span>
         </div>
       </div>
 

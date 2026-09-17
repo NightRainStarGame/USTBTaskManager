@@ -1,10 +1,10 @@
 {
-  "version": "1.0.0",
-  "notes": "TaskManager v1.0.0 —— 班级作业发布 / 同步\n\n## 新增：班级作业公告板（GitHub 同步）\n- 课程页右下角新增「发布作业 / 同步作业」\n- 发布：输入班级发布密码 → 选课程 → 选上课日期（每节课作业可不同）→ 书写作业内容 → 一键发布到 GitHub\n- 同步：无需密码，一键拉取全班发布的作业，自动写入对应课程（没有的课程自动创建），带「同步」标记\n- 重复同步不产生重复；本地完成状态不会被覆盖\n- 首次发布需填一次 GitHub 令牌（仅存本机）\n\n## 其他\n- 设置页「软件更新」新增「无法连接 GitHub」解决教程链接\n- README 新增完整使用指南\n\n## 从 0.3.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载安装包覆盖安装（数据保留）。",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.0.0/TaskManager-Setup-1.0.0.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.0.0",
-  "sha256": "27ef29d6a0c444b3459e8231436f265354d2f3d9dfa5798cd299335cc5a8a13e",
-  "size": 87677433,
-  "fileName": "TaskManager-Setup-1.0.0.exe",
-  "releasedAt": "2026-09-17T05:47:28.758Z"
+  "version": "1.1.0",
+  "notes": "TaskManager v1.1.0 —— 左上角 Logo 更名 StarOS\n\n## 新增 / 调整\n- 左上角 Logo：「TASK·OS」正式更名为 **StarOS**，下方新增小字署名 **made by Lasarac**\n- 课程页底部「发布作业 / 同步作业」按钮位置保留\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.0.exe` —— 最新版（当前指向此文件）\n- `oldversion/TaskManager-Setup-0.3.0.exe`  —— 上一版（保留回退）\n\n## 从 1.0.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载安装包覆盖安装（数据保留）。",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.0.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.0",
+  "sha256": "8ea4c4899a60382ac9ebefd862f30ce10e7cf7353e09e51d87d6e845ba40c8c5",
+  "size": 89679402,
+  "fileName": "TaskManager-Setup-1.1.0.exe",
+  "releasedAt": "2026-09-17T07:55:00.000Z"
 }
