@@ -10,6 +10,16 @@
 TaskManager-Setup-x.y.z.exe
 ```
 
+或者直接从仓库的固定目录下载：
+
+| 版本   | 路径                                                                         |
+| ------ | ---------------------------------------------------------------------------- |
+| 最新版 | `leastversion/TaskManager-Setup-1.1.0.exe`                                  |
+| 上一版 | `oldversion/TaskManager-Setup-0.3.0.exe`                                    |
+
+- 最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.0.exe`
+- 上一版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/oldversion/TaskManager-Setup-0.3.0.exe`
+
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
 ## 自动更新
@@ -20,7 +30,7 @@ TaskManager-Setup-x.y.z.exe
 https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json
 ```
 
-清单里的 `url` 指向 GitHub Release 上的安装包，下载后会校验 SHA-256 再安装。
+清单里的 `url` 指向仓库 `leastversion/` 目录下的最新安装包，下载后会校验 SHA-256 再安装。
 
 > 若该地址在你的网络环境下不可达，可在「设置 → 软件更新 → 更新源地址」里填写镜像地址，例如：
 > `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json`
