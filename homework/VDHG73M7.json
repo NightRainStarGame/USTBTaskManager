@@ -1,0 +1,21 @@
+{
+  "syncCode": "VDHG73M7",
+  "courseName": "[E2E]码制测试课程",
+  "createdAt": 1789648307885,
+  "updatedAt": 1789648307885,
+  "entries": [
+    {
+      "id": "dade034e-f913-42c9-a3af-119621eca30d",
+      "courseName": "[E2E]码制测试课程",
+      "sessionDate": "2026-09-17",
+      "sessionTime": "08:00-09:35",
+      "title": "[E2E] 第三章习题 1-10",
+      "content": "E2E 测试内容：周一交，写全过程",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "e2e-测试员",
+      "publishedAt": 1789648307885,
+      "updatedAt": 1789648307885
+    }
+  ]
+}
