@@ -1,10 +1,10 @@
 {
   "version": "1.1.1",
-  "notes": "TaskManager v1.1.1 —— 多源更新 + 启动自动检查 NEW 弹窗 + NSIS 防代码堆叠\n\n## 新增 / 调整\n- 软件更新支持**多个更新源**（默认 GitHub leastversion + StarOS / nrsc.games 占位），可在设置里切换主源、增删源\n- 启动时静默检查更新，发现新版本自动弹出 **NEW** 浮窗告知（可下载 / 稍后 / 忽略此版本）\n- NSIS 自定义 hook（build/installer.nsh）：升级安装时主动清空 Electron 运行时缓存目录，避免新/旧文件堆叠\n- 一键打开「无法连接 GitHub」hosts 修复教程（dogfight360）\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.1.exe` —— 最新版（当前指向此文件）\n- `oldversion/TaskManager-Setup-1.1.0.exe`  —— 上一版（保留回退）\n\n## 从 1.1.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载安装包覆盖安装（数据保留）。",
+  "notes": "TaskManager v1.1.1 —— 多源更新 + 码制作业同步\n\n## 作业同步（重大改版）\n- 去掉固定发布密码，改为**码制**：一个作业包 = 一个课程的整套作业\n- 「作业同步」入口 → 发布作业 / 接收作业\n- 发布：输入或**生成新码对**（同步作业码=分享给同学 + 作业发布码=自己留存的密钥），验证后选课程书写发布\n- 接收：输入同步作业码，自动从 GitHub（或云盘镜像）拉取整包作业导入课程\n- 码对由 HMAC-SHA256 本地派生验证，无需联网验证；协议文档见仓库 docs/HOMEWORK-CODES.md\n\n## 软件更新\n- 支持多个更新源（默认 GitHub leastversion，云盘源占位）\n- 启动时静默检查更新，发现新版本弹 NEW 浮窗\n- NSIS 升级时主动清空运行时缓存，避免新旧文件堆叠\n- 「无法连接 GitHub」hosts 修复教程链接\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.1.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.0.exe`  —— 上一版（保留回退）\n\n## 从 1.1.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。",
   "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.1.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.1",
-  "sha256": "77d5bfdaaac0ad1f024815b45a55f21ea637898d2cdcd93cfa530e4704200941",
-  "size": 89684112,
+  "sha256": "16a53afcebfaabb147a9dd1fca665b69445d879f30fc33c2017134fa4c3e9e06",
+  "size": 89686379,
   "fileName": "TaskManager-Setup-1.1.1.exe",
-  "releasedAt": "2026-09-17T10:19:00.000Z"
+  "releasedAt": "2026-09-17T11:30:00.000Z"
 }

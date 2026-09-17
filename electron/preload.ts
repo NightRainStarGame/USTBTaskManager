@@ -202,19 +202,22 @@ const api = {
       return () => { ipcRenderer.off('update:available', handler); };
     },
   },
-  // 作业发布 / 同步（GitHub homework/ 文件夹）
+  // 作业发布 / 接收（码制协议：作业包 = homework/<syncCode>.json）
   homework: {
     config: () => ipcRenderer.invoke('homework:config') as Promise<{
       repo: string; branch: string; dir: string; repoUrl: string;
       tokenSet: boolean; publisher: string; lastSync: number | null;
+      cloudSourceEnabled: boolean;
     }>,
     /** 保存 GitHub 发布令牌 + 发布人昵称（只存本机） */
     saveAuth: (token: string, publisher: string) => ipcRenderer.invoke('homework:saveAuth', token, publisher) as Promise<{ ok: boolean; error?: string; tokenSet?: boolean }>,
-    /** 发布密码验证 */
-    verifyPassword: (password: string) => ipcRenderer.invoke('homework:verifyPassword', password) as Promise<{ ok: boolean }>,
-    /** 发布一条作业（写 GitHub） */
+    /** 生成一对新码（同步作业码 + 作业发布码） */
+    generateCodes: () => ipcRenderer.invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
+    /** 校验码对是否匹配（本地 HMAC，无需联网） */
+    verifyCodes: (syncCode: string, publishCode: string) => ipcRenderer.invoke('homework:verifyCodes', syncCode, publishCode) as Promise<{ ok: boolean }>,
+    /** 发布一条作业（凭码对 + GitHub 令牌写远端） */
     publish: (payload: {
-      password: string; courseName: string; sessionDate: string;
+      syncCode: string; publishCode: string; courseName: string; sessionDate: string;
       sessionTime?: string | null; title: string; content: string;
       type?: string; dueDate?: number | null;
     }) => ipcRenderer.invoke('homework:publish', payload) as Promise<{
@@ -222,14 +225,15 @@ const api = {
       entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
       fileUrl?: string;
     }>,
-    /** 某门课在远端已发布的作业 */
-    remoteEntries: (courseName: string) => ipcRenderer.invoke('homework:remoteEntries', courseName) as Promise<{
-      ok: boolean; error?: string;
+    /** 某个码包在远端已发布的作业 */
+    remoteEntries: (syncCode: string) => ipcRenderer.invoke('homework:remoteEntries', syncCode) as Promise<{
+      ok: boolean; error?: string; courseName?: string;
       entries: Array<{ id: string; title: string; sessionDate: string; sessionTime?: string | null; content: string; publisher: string; publishedAt: number; updatedAt: number }>;
     }>,
-    /** 从 GitHub 同步全部作业到本地课程 */
-    sync: () => ipcRenderer.invoke('homework:sync') as Promise<{
-      ok: boolean; error?: string; files: number; entries: number; created: number; updated: number;
+    /** 按同步作业码接收一个作业包到本地课程 */
+    receive: (syncCode: string) => ipcRenderer.invoke('homework:receive', syncCode) as Promise<{
+      ok: boolean; error?: string; source?: string; syncCode?: string; courseName?: string;
+      entries: number; created: number; updated: number;
       coursesTouched: number; coursesCreated: string[];
       items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
       syncedAt: number;
