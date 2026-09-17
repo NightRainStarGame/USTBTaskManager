@@ -14,6 +14,7 @@
     "build:exe": "npm run build && electron-builder --win nsis --x64",
     "release:manifest": "node scripts/release.js",
     "release:verify": "node scripts/release.js --verify",
+    "publish:github": "node scripts/publish-github.js",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
     "rebuild": "electron-rebuild -f -w better-sqlite3"
