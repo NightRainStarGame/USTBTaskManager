@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import { getSemesterWeek } from '@/utils/lunar';
@@ -1266,17 +1266,6 @@ function MiniProgramTab({ course }: { course: Course }) {
 // ===== 作业同步（码制协议：homework/<syncCode>.json） =====
 // ==================================================================
 
-type RemoteEntry = {
-  id: string;
-  title: string;
-  sessionDate: string;
-  sessionTime?: string | null;
-  content: string;
-  publisher: string;
-  publishedAt: number;
-  updatedAt: number;
-};
-
 /** 复制文本到剪贴板（失败静默） */
 async function copyText(t: string) {
   try { await navigator.clipboard.writeText(t); } catch { /* ignore */ }
@@ -1359,59 +1348,41 @@ function GenerateCodesModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** 发布作业弹窗：输入作业发布码验证 →（首次）填令牌 → 选课程/上课日期 → 书写 → 上传 */
+/** 发布作业弹窗（v1.1.3）：点开直接进入「添加作业」界面，填完直接上传到 GitHub。
+ *  - 不再要求先输作业发布码（GitHub PAT 已是身份认证）
+ *  - 可选「secret edit」开关：勾上后才需要填 12 位发布码（HMAC 校验），避免被人改自己的码包
+ *  - 每门课程一个持久化的同步作业码（settings homework_sync_<courseId>），首次发布自动生成
+ */
 function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => Promise<void> }) {
   const courses = useStore(s => s.courses);
   const events = useStore(s => s.events);
 
-  const [step, setStep] = useState<'code' | 'auth' | 'form'>('code');
   const [busy, setBusy] = useState(false);
-  // 发布码（密钥，自己留存）；同步码由验证结果解析而来
-  const [publishCode, setPublishCode] = useState('');
-  const [syncCode, setSyncCode] = useState('');
-  const [codesError, setCodesError] = useState('');
-  // 令牌
-  const [token, setToken] = useState('');
-  const [publisher, setPublisher] = useState('');
-  const [authError, setAuthError] = useState('');
-  // 表单
+  // 表单字段（与「添加作业」同款 UI）
   const [courseId, setCourseId] = useState<number | null>(null);
-  const [sessionDate, setSessionDate] = useState(dayjs().format('YYYY-MM-DD'));
-  const [sessionTime, setSessionTime] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
   const [type, setType] = useState<'homework' | 'exam' | 'project' | 'reading' | 'other'>('homework');
+  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [sessionDate, setSessionDate] = useState(dayjs().format('YYYY-MM-DD'));
   const [dueDate, setDueDate] = useState('');
-  const [remote, setRemote] = useState<RemoteEntry[] | null>(null);
-  const [remoteBusy, setRemoteBusy] = useState(false);
+  // 可选 secret edit
+  const [secretMode, setSecretMode] = useState(false);
+  const [publishCode, setPublishCode] = useState('');
+
   const [error, setError] = useState('');
-  const [published, setPublished] = useState<{ title: string; sessionDate: string; fileUrl?: string } | null>(null);
+  const [published, setPublished] = useState<{
+    title: string; sessionDate: string; syncCode?: string; bundleCreated?: boolean; fileUrl?: string;
+  } | null>(null);
+  const [copied, setCopied] = useState<'sync' | null>(null);
 
   const course = courses.find(c => c.id === courseId) ?? null;
 
+  // 默认选中第一门课
   useEffect(() => {
     if (courses.length && courseId === null) setCourseId(courses[0].id);
   }, [courses, courseId]);
 
-  // 已保存的发布人昵称
-  useEffect(() => {
-    window.taskAPI.homework.config().then(cfg => { if (cfg.publisher) setPublisher(cfg.publisher); });
-  }, []);
-
-  // 进入表单步骤后：拉这个码包在远端已发布的作业（避免重复发布）
-  useEffect(() => {
-    if (step !== 'form' || !syncCode) return;
-    let alive = true;
-    setRemoteBusy(true); setRemote(null);
-    window.taskAPI.homework.remoteEntries(syncCode).then(r => {
-      if (!alive) return;
-      setRemote(r.ok ? r.entries : []);
-      setRemoteBusy(false);
-    });
-    return () => { alive = false; };
-  }, [step, syncCode, published]);
-
-  // 该课程近期上课日期候选（教务导入的具体日期 + 每周时段展开，按离今天远近排序）
+  // 该课程近期上课日期候选
   const sessionOptions = useMemo(() => {
     if (!course) return [] as Array<{ date: string; time: string }>;
     const map = new Map<string, string>();
@@ -1421,7 +1392,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       if (e.type === 'class') {
         map.set(s.format('YYYY-MM-DD'), time);
       } else if (e.recurrence === 'WEEKLY') {
-        const dow = s.day(); // 0=周日
+        const dow = s.day();
         const base = dayjs().startOf('day');
         const thisMonday = dow === 0 ? base.subtract(6, 'day') : base.subtract(dow - 1, 'day');
         const thisDow = dow === 0 ? 6 : dow - 1;
@@ -1439,73 +1410,40 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       .sort((a, b) => a.ts - b.ts);
   }, [course, events]);
 
-  /** 验证作业发布码 → 通过则解析出同步码，按需进令牌/表单 */
-  const verifyPublishCode = async () => {
-    if (busy) return;
-    setBusy(true); setCodesError('');
-    try {
-      const r = await window.taskAPI.homework.verifyCodes(publishCode);
-      if (!r.ok || !r.syncCode) { setCodesError('作业发布码无效（12 位密钥，可在「生成作业码」或网站获取）'); return; }
-      setSyncCode(r.syncCode);
-      const cfg = await window.taskAPI.homework.config();
-      setStep(cfg.tokenSet ? 'form' : 'auth');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveAuth = async () => {
-    if (busy) return;
-    if (!token.trim()) { setAuthError('请填写 GitHub 令牌（对 USTBTaskManager 仓库有 Contents 读写权限）'); return; }
-    setBusy(true); setAuthError('');
-    try {
-      const r = await window.taskAPI.homework.saveAuth(token.trim(), publisher.trim());
-      if (!r.ok) { setAuthError(r.error || '保存失败'); return; }
-      setStep('form');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const submit = async () => {
     if (busy || !course) return;
     if (!title.trim()) { setError('请填写作业标题'); return; }
-    if (!sessionDate) { setError('请选择上课日期'); return; }
+    if (secretMode && publishCode && publishCode.length !== 12) { setError('作业发布码需为 12 位（不填则关闭 secret edit 模式）'); return; }
     setBusy(true); setError('');
     try {
       const r = await window.taskAPI.homework.publish({
-        publishCode,
+        publishCode: secretMode && publishCode ? publishCode : undefined,
+        courseId: course.id,
         courseName: course.name,
         sessionDate,
-        sessionTime,
         title: title.trim(),
         content: content.trim(),
         type,
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
       });
       if (!r.ok) { setError(r.error || '发布失败'); return; }
-      setPublished({ title: r.entry?.title || title.trim(), sessionDate, fileUrl: r.fileUrl });
-      // 发布成功后按此码接收一次，把刚发布的作业落到本地课程里
-      await window.taskAPI.homework.receive(syncCode);
+      setPublished({ title: r.entry?.title || title.trim(), sessionDate, syncCode: r.syncCode, bundleCreated: r.bundleCreated, fileUrl: r.fileUrl });
+      // 自动把刚发布的作业落到本地课程（与远端 ID 对齐）
+      if (r.syncCode) await window.taskAPI.homework.receive(r.syncCode);
       await onChanged();
     } finally {
       setBusy(false);
     }
   };
 
+  const doCopy = async (which: 'sync') => {
+    if (!published?.syncCode) return;
+    await copyText(published.syncCode);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
   const footer = (() => {
-    if (step === 'code') {
-      return <>
-        <button onClick={onClose} className="btn-ghost">取消</button>
-        <button onClick={verifyPublishCode} disabled={busy || !publishCode.trim()} className="btn-neon"><KeyRound size={14} /> {busy ? '验证中…' : '验证发布码'}</button>
-      </>;
-    }
-    if (step === 'auth') {
-      return <>
-        <button onClick={() => setStep('code')} className="btn-ghost">上一步</button>
-        <button onClick={saveAuth} disabled={busy} className="btn-neon">{busy ? '保存中…' : '保存并继续'}</button>
-      </>;
-    }
     if (published) {
       return <>
         <button onClick={() => { setPublished(null); setTitle(''); setContent(''); setDueDate(''); }} className="btn-ghost">再发一条</button>
@@ -1513,77 +1451,57 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       </>;
     }
     return <>
-      <button onClick={() => setStep('code')} className="btn-ghost">上一步</button>
-      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow"><CloudUpload size={14} /> {busy ? '上传中…' : '上传'}</button>
+      <button onClick={onClose} className="btn-ghost">取消</button>
+      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow">
+        <CloudUpload size={14} /> {busy ? '上传中…' : '上传到 GitHub'}
+      </button>
     </>;
   })();
 
   return (
     <Modal title="发布作业" onClose={onClose} footer={footer}>
       <div className="space-y-3">
-        {/* 通用说明 */}
-        <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
-          作业发布到 GitHub 仓库 <span className="text-neon-green">homework/&lt;同步作业码&gt;.json</span>，同学凭同步作业码点「接收作业」即可导入。
-        </div>
-
-        {/* 第 1 步：验证作业发布码 */}
-        {step === 'code' && (
+        {/* 发布成功后：分享同步码 */}
+        {published ? (
+          <div className="space-y-3">
+            <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5 space-y-2">
+              <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 发布成功，已落到本地</div>
+              <div className="font-mono text-xs text-text-secondary">「{published.title}」 · 上课 {published.sessionDate}</div>
+              <div className="font-mono text-[10px] text-text-dim">
+                {published.bundleCreated ? '✦ 首次发布 — 新建了一个码包' : '已追加到现有码包'}。把下面这个 8 位「同步作业码」发给同学，同学点「接收作业」即可导入：
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-text-dim text-xs shrink-0 w-20">同步作业码</span>
+                <span className="text-neon-green tracking-widest font-bold text-base">{published.syncCode}</span>
+                <button onClick={() => doCopy('sync')} className="btn-ghost p-1 text-[9px]">
+                  {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
+                </button>
+              </div>
+            </div>
+            {published.fileUrl && (
+              <button onClick={() => window.taskAPI.updater.openExternal(published.fileUrl!)} className="btn-ghost text-xs">
+                <ExternalLink size={12} /> 在浏览器查看仓库里的作业文件
+              </button>
+            )}
+          </div>
+        ) : (
           <>
-            <div className="p-2.5 rounded-md border border-neon-green/20 bg-neon-green/5 text-[11px] text-text-secondary leading-relaxed">
-              输入<span className="text-neon-yellow font-mono"> 作业发布码 </span>（12 位密钥）验证身份。
-              还没有码？点「作业同步 → 生成作业码」，或到网站申请。
+            {/* 说明 */}
+            <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim leading-relaxed">
+              直接填写下面的作业内容，提交后会保存到本地「{course?.name ?? '?'}」课程，并上传到 GitHub 仓库的
+              <span className="text-neon-green"> homework/&lt;同步作业码&gt;.json</span>。
+              每次为该课程首次发布时会自动生成一个 8 位同步作业码（持久化到本机），同学凭此码「接收作业」。
             </div>
 
-            <Field label="作业发布码（密钥，自己留存） *">
-              <input
-                value={publishCode}
-                autoFocus
-                onChange={(e: any) => { setPublishCode(e.target.value.toUpperCase()); setCodesError(''); }}
-                onKeyDown={(e: any) => e.key === 'Enter' && verifyPublishCode()}
-                className="input-neon font-mono tracking-widest"
-                placeholder="12 位，如 7KQ2M4XP9T3F"
-                maxLength={12}
-              />
-            </Field>
-
-            {codesError && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {codesError}</div>}
-          </>
-        )}
-
-        {/* 第 2 步：首次发布需要 GitHub 令牌 */}
-        {step === 'auth' && (
-          <>
-            <div className="p-2.5 rounded-md border border-neon-yellow/30 bg-neon-yellow/5 text-[11px] text-text-secondary">
-              首次发布需要一个有写权限的 GitHub 令牌（<span className="font-mono">fine-grained PAT，仅本仓库、仅 Contents 读写</span>）。
-              令牌只保存在这台电脑的本地数据库里，不会上传。GitHub → Settings → Developer settings → Fine-grained tokens 生成。
-            </div>
-            <Field label="GitHub 令牌 *">
-              <input type="password" value={token} autoFocus onChange={(e: any) => setToken(e.target.value)} className="input-neon" placeholder="github_pat_… 或 ghp_…" />
-            </Field>
-            <Field label="发布人昵称（接收方展示）">
-              <input value={publisher} onChange={(e: any) => setPublisher(e.target.value)} className="input-neon" placeholder="如：学委-张三" />
-            </Field>
-            {authError && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {authError}</div>}
-          </>
-        )}
-
-        {/* 第 3 步：写作业 */}
-        {step === 'form' && !published && course && (
-          <>
-            {/* 当前码包标识 */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-ink-base/40 border border-neon-green/10 font-mono text-[10px]">
-              <span className="text-text-dim">码包</span>
-              <span className="text-neon-green tracking-widest font-bold">{syncCode}</span>
-              <span className="text-text-dim">· 课程「{course.name}」</span>
-            </div>
-
+            {/* 课程 + 类型 */}
             <div className="grid grid-cols-2 gap-3">
               <Field label="课程 *">
                 <select
                   value={courseId ?? ''}
-                  onChange={(e: any) => { setCourseId(Number(e.target.value)); setRemote(null); setSessionTime(null); }}
+                  onChange={(e: any) => setCourseId(Number(e.target.value))}
                   className="input-neon"
                 >
+                  {courses.length === 0 && <option value="">（暂无课程，请先在「课程」页新建）</option>}
                   {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </Field>
@@ -1598,8 +1516,9 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               </Field>
             </div>
 
+            {/* 上课日期 + 候选 */}
             <Field label="上课日期 *（每节课的作业可能不同）">
-              <input type="date" value={sessionDate} onChange={(e: any) => { setSessionDate(e.target.value); setSessionTime(null); }} className="input-neon" />
+              <input type="date" value={sessionDate} onChange={(e: any) => setSessionDate(e.target.value)} className="input-neon" />
             </Field>
             {sessionOptions.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -1608,7 +1527,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
                   return (
                     <button
                       key={o.date}
-                      onClick={() => { setSessionDate(o.date); setSessionTime(o.time); }}
+                      onClick={() => setSessionDate(o.date)}
                       className={`px-2 py-1 rounded text-[10px] font-mono border transition-colors ${active ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
                     >
                       {o.date.slice(5)} {['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dayjs(o.date).day()]} {o.time}
@@ -1618,8 +1537,9 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               </div>
             )}
 
+            {/* 标题 + 内容 + 截止 */}
             <Field label="作业标题 *">
-              <input value={title} onChange={(e: any) => setTitle(e.target.value)} className="input-neon" placeholder="如：第三章习题 1-10（本周三这节课布置）" />
+              <input value={title} onChange={(e: any) => setTitle(e.target.value)} className="input-neon" placeholder="如：第三章习题 1-10（本周三这节课布置）" autoFocus />
             </Field>
             <Field label="作业内容">
               <textarea value={content} onChange={(e: any) => setContent(e.target.value)} rows={4} className="input-neon" placeholder="具体要求、提交方式、注意事项…（接收方会原样看到）" />
@@ -1628,25 +1548,24 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               <input type="datetime-local" value={dueDate} onChange={(e: any) => setDueDate(e.target.value)} className="input-neon" />
             </Field>
 
-            {/* 这个码包已发布的作业 */}
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="label-tag">此码包已发布（远端）</span>
-                {remoteBusy && <RefreshCw size={11} className="animate-spin text-text-dim" />}
-              </div>
-              {remote === null ? (
-                <div className="py-2 text-center font-mono text-[10px] text-text-dim">加载中…</div>
-              ) : remote.length === 0 ? (
-                <div className="py-2 text-center font-mono text-[10px] text-text-dim">[ ∅ ] 这个码包还没发布过作业</div>
-              ) : (
-                <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                  {remote.map(e => (
-                    <div key={e.id} className="flex items-center gap-2 px-2 py-1 rounded bg-ink-base/40 border border-neon-green/10 text-[11px]">
-                      <span className="font-mono text-[10px] text-neon-green shrink-0">{e.sessionDate?.slice(5) || '--'}</span>
-                      <span className="flex-1 min-w-0 truncate text-text-secondary">{e.title}</span>
-                      <span className="font-mono text-[9px] text-text-dim shrink-0">{e.publisher}</span>
-                    </div>
-                  ))}
+            {/* secret edit（可选） */}
+            <div className="p-2 rounded-md border border-neon-yellow/20 bg-neon-yellow/5">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={secretMode} onChange={(e) => setSecretMode(e.target.checked)} className="accent-[#FFCC00]" />
+                <span className="font-mono text-[11px] text-text-secondary">
+                  <strong className="text-neon-yellow">secret edit（可选）</strong>：开启后只有输入「作业发布码」才能改这个码包。
+                  默认关闭——只要有 GitHub 令牌就能改（一般场景够用；想限制修改权限再勾）。
+                </span>
+              </label>
+              {secretMode && (
+                <div className="mt-2">
+                  <input
+                    value={publishCode}
+                    onChange={(e: any) => setPublishCode(e.target.value.toUpperCase())}
+                    className="input-neon font-mono tracking-widest text-xs"
+                    placeholder="12 位发布码（如 7KQ2M4XPT9F3）"
+                    maxLength={12}
+                  />
                 </div>
               )}
             </div>
@@ -1654,52 +1573,37 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
             {error && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {error}</div>}
           </>
         )}
-
-        {/* 发布成功 */}
-        {step === 'form' && published && (
-          <div className="space-y-3">
-            <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5">
-              <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 发布成功，已导入本地</div>
-              <div className="font-mono text-xs text-text-secondary mt-2">
-                「{published.title}」 · 上课 {published.sessionDate}
-              </div>
-              <div className="font-mono text-[10px] text-text-dim mt-1">
-                同学在课程页点「作业同步 → 接收作业」，输入同步作业码 <span className="text-neon-green font-bold">{syncCode}</span> 即可收到。
-              </div>
-            </div>
-            {published.fileUrl && (
-              <button onClick={() => window.taskAPI.updater.openExternal(published.fileUrl!)} className="btn-ghost text-xs">
-                <ExternalLink size={12} /> 在浏览器查看仓库里的作业文件
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </Modal>
   );
 }
 
-/** 接收作业弹窗：输入同步作业码 → 从 GitHub / 云盘拉取这个包 → 导入本地课程 */
+/** 接收作业弹窗：输入同步作业码 → 从 GitHub 拉取这个包 → 匹配本地课程 → 自动挂载。
+ *  v1.1.3：远端 bundle 引用的本地课程缺失时不再自动建课，而是弹窗告知让用户主动同步课程。
+ */
 function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSynced: () => Promise<void> }) {
   const [syncCode, setSyncCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{
-    ok: boolean; error?: string; source?: string; courseName?: string;
+    ok: boolean; error?: string; source?: string; courseName?: string; courseNotFound?: boolean;
+    syncCode?: string;
     entries: number; created: number; updated: number;
     coursesTouched: number; coursesCreated: string[];
     items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
   } | null>(null);
   const [lastSync, setLastSync] = useState<number | null>(null);
+  const [creatingCourse, setCreatingCourse] = useState(false);
 
   useEffect(() => {
     window.taskAPI.homework.config().then(cfg => setLastSync(cfg.lastSync));
   }, []);
 
-  const run = async () => {
-    if (busy || !syncCode.trim()) return;
+  const run = async (overrideCode?: string) => {
+    const code = (overrideCode ?? syncCode).trim();
+    if (busy || !code) return;
     setBusy(true); setResult(null);
     try {
-      const r = await window.taskAPI.homework.receive(syncCode.trim());
+      const r = await window.taskAPI.homework.receive(code);
       setResult(r);
       if (r.ok) {
         setLastSync(r.syncedAt);
@@ -1710,20 +1614,45 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
     }
   };
 
+  /** 在本地新建缺失的课程，然后再次接收把作业挂上去 */
+  const createMissingCourseAndReceive = async () => {
+    if (!result?.courseName || busy || creatingCourse) return;
+    setCreatingCourse(true);
+    try {
+      const created = await window.taskAPI.db.courses.create({
+        name: result.courseName,
+        description: '由作业接收自动创建（请补全课程信息）',
+      });
+      // 新课程建好后再次接收，把作业挂到新课程上
+      setSyncCode(result.syncCode || syncCode);
+      setResult(null);
+      await run(result.syncCode || syncCode);
+      // 让父组件刷新（onSynced 已在 run 里调过）
+      await onSynced();
+    } catch (e: any) {
+      setResult({
+        ok: false, error: '新建课程失败：' + (e?.message || e),
+        entries: 0, created: 0, updated: 0, coursesTouched: 0, coursesCreated: [], items: [],
+      });
+    } finally {
+      setCreatingCourse(false);
+    }
+  };
+
   return (
     <Modal
-      title="接收作业（输入同步作业码）"
+      title="接收作业"
       onClose={onClose}
       footer={<>
         <button onClick={onClose} className="btn-ghost">关闭</button>
-        <button onClick={run} disabled={busy || !syncCode.trim()} className="btn-neon">
+        <button onClick={() => run()} disabled={busy || !syncCode.trim()} className="btn-neon">
           <CloudDownload size={14} className={busy ? 'animate-bounce' : ''} /> {busy ? '接收中…' : '接收作业'}
         </button>
       </>}
     >
       <div className="space-y-3">
         <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
-          输入发布者分享的同步作业码，从 GitHub（或云盘镜像）拉取对应课程作业包，自动写入本地课程（没有的课程会自动创建）。
+          输入发布者分享的同步作业码，从 GitHub 拉取对应课程作业包，自动挂到本地同名课程。
           {lastSync ? <span className="block mt-1">上次接收：{dayjs(lastSync).format('YYYY-MM-DD HH:mm')}</span> : <span className="block mt-1">还没接收过</span>}
         </div>
 
@@ -1739,6 +1668,34 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
           />
         </Field>
 
+        {/* 课程缺失：弹窗告知 */}
+        {result && !result.ok && result.courseNotFound && (
+          <div className="p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
+            <div className="flex items-center gap-2 text-neon-yellow font-bold text-sm">
+              <AlertCircle size={15} /> 本地没有同名课程
+            </div>
+            <div className="font-mono text-xs text-text-secondary">
+              远端作业包引用了课程「<span className="text-neon-yellow font-bold">{result.courseName}</span>」，但你本地还没有这门课。
+            </div>
+            <div className="font-mono text-[10px] text-text-dim">
+              接收作业要求「本地已存在同名课程」（避免被远端包任意新建空课）。两种处理：
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={createMissingCourseAndReceive}
+                disabled={creatingCourse}
+                className="btn-neon btn-neon-yellow text-xs"
+              >
+                <Plus size={12} /> {creatingCourse ? '建课中…' : '新建该课程并接收'}
+              </button>
+              <button onClick={onClose} className="btn-ghost text-xs">
+                我先去手动添加课程
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 接收成功 */}
         {result?.ok && (
           <div className="space-y-2">
             <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5">
@@ -1748,7 +1705,7 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
                 新增 <span className="text-neon-green font-bold">{result.created}</span> 条 · 更新 {result.updated} 条
               </div>
               {result.coursesCreated.length > 0 && (
-                <div className="font-mono text-[10px] text-neon-yellow mt-1">自动新建课程：{result.coursesCreated.join('、')}</div>
+                <div className="font-mono text-[10px] text-neon-yellow mt-1">本次新建课程：{result.coursesCreated.join('、')}</div>
               )}
             </div>
             {result.items.length > 0 && (
@@ -1771,7 +1728,8 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
           </div>
         )}
 
-        {result && !result.ok && (
+        {/* 其它失败 */}
+        {result && !result.ok && !result.courseNotFound && (
           <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap">✗ {result.error || '接收失败'}</div>
         )}
       </div>

@@ -1,25 +1,24 @@
-# 作业同步码制协议 v2.1（HOMEWORK-CODES）
+# 作业同步码制协议 v2.2（HOMEWORK-CODES）
 
 > TaskManager v1.1.1 起，班级作业发布/接收从「固定密码 + 全量同步」改为「码制 + 按码拉取」。
 > v1.1.2 起，`publishCode` 改为**自包含**格式（前 8 位即 `syncCode`），发布作业只需输入发布码一个码。
+> v1.1.3 起，`publishCode` 改为**可选 secret edit**；每门课程持久化一个 `syncCode`；发布作业**直接进入添加作业 UI**；接收作业**找不到同名课程时弹窗告知**。
 > 本文档是**协议规范**：配套网站（申请码 + 云盘镜像）必须照此实现，才能与 App 互通。
 
 ## 1. 核心概念
 
-一份**作业包**（bundle）= 一个课程的整套作业（含多节课条目），由一对随机码标识：
+一份**作业包**（bundle）= 一个课程的整套作业（含多节课条目），由 8 位同步作业码标识：
 
 | 码 | 名称 | 长度 | 角色 | 谁知道 |
 |---|---|---|---|---|
 | `syncCode` | 同步作业码（分享码） | 8 | 标识作业包；接收方凭此码拉取 | 公开，发给同学 |
-| `publishCode` | 作业发布码（密钥） | 12 | 发布方授权凭据；**前 8 位 = syncCode + 后 4 位校验** | 发布者自己留存 |
+| `publishCode` | 作业发布码（密钥，可选） | 12 | 可选 secret edit；前 8 位 = syncCode + 4 位 HMAC 校验 | 只有发布者 |
 
-**关键性质**：`publishCode = syncCode(8位) + 校验位(4位)`。
-- 校验位由 `syncCode` 经 HMAC-SHA256 派生，防止随手编造；
-- 发布码**自包含**同步码：发布作业只需输入这一个码，App 本地解析 + 校验即可（无需联网、无需服务端）；
-- 网站端生成码时用相同 SECRET，即可产出与 App 完全兼容的码对。
+**v1.1.3 默认行为**：GitHub PAT = 用户身份认证，`syncCode` 就够上传；想限制别人改你的码包才填 `publishCode`。
+**v1.1.3 持久化**：每门课程有一个 `syncCode`，存于本机 `settings.homework_sync_<courseId>`，首次发布时自动生成；同一课程后续发布复用同一个码。
 
-App 端入口（v1.1.2）：「作业同步」菜单分三个按钮——
-**生成作业码**（生成/展示码对）、**发布作业**（只输发布码）、**接收作业**（只输同步码）。
+App 端入口（v1.1.3）：「作业同步」菜单分三个按钮——
+**生成作业码**（生成/展示码对，留给网站或跨设备分发）、**发布作业**（点开**直接进「添加作业」界面** → 填完即上传 + 自动落到本地）、**接收作业**（输入同步码 → 拉取 → 自动挂到同名课程；找不到时弹窗告知）。
 
 ## 2. 码的规范
 
@@ -158,23 +157,28 @@ GET {CLOUD_SOURCE_BASE}/<syncCode>/homework.json
 
 ## 5. App 端行为（供网站端理解）
 
-### 发布（PublishHomeworkModal）
+### 发布（PublishHomeworkModal，v1.1.3 流程）
 
-1. 「作业同步 → 生成作业码」或网站申请得到码对（发布码 = 密钥，同步码 = 分享码）；
-2. 「发布作业」输入 `publishCode` → `homework:verifyCodes` 本地解析校验（顺带得到 `syncCode`）；
-3. 首次发布需配置 GitHub 令牌（`homework:saveAuth`，存本机 settings 表）；
-4. 进入发布界面：选课程 / 上课日期 → 写标题内容 → `homework:publish` 写 GitHub `homework/<syncCode>.json`；
-5. 发布成功后自动按此码接收一次，落到本地课程。
+1. 「作业同步 → 发布作业」**直接打开「添加作业」界面**（课程 / 类型 / 标题 / 内容 / 上课日 / 截止），无需先输码；
+2. 后端 `homework:publish` 收到 `courseId`（或 `syncCode`）后决定远端 bundle：
+   - 传 `courseId` 且该课程持久化过 `syncCode` → 复用；
+   - 传 `courseId` 但未持久化 → 自动生成 8 位 `syncCode` 存 `settings.homework_sync_<courseId>`；
+   - 传 `syncCode`（兼容旧流程）→ 直接用；
+   - 都不传 → 报错；
+3. 可选「secret edit」勾上后，App 校验 `publishCode`（HMAC）；不勾则跳过（仅依赖 GitHub PAT）；
+4. 首次发布需配置 GitHub 令牌（`homework:saveAuth`，存本机 settings 表）；
+5. `homework:publish` 写 GitHub `homework/<syncCode>.json`；成功后自动 `homework:receive` 一次把刚发布的条目落到本地课程。
 
-### 接收（ReceiveHomeworkModal）
+### 接收（ReceiveHomeworkModal，v1.1.3 流程）
 
 1. 输入 `syncCode` → `homework:receive`；
 2. App 依次尝试 GitHub → 云盘源拉包；
-3. 按 `courseName` 匹配本地课程（没有则自动建课，绿色 #00FF88，描述「由作业接收自动创建」）；
-4. 按 `remote_id`（即 entry.id）去重写入课程作业列表；已存在则只更新内容字段，**不动本地完成状态**。
+3. 按 `courseName` 匹配本地课程：
+   - **命中** → 按 `remote_id`（即 entry.id）去重写入课程作业列表；已存在则只更新内容字段，**不动本地完成状态**；
+   - **未命中** → 不再自动建课；返回 `courseNotFound=true` + `courseName=X`，前端弹窗告知并提供「新建该课程并接收 / 我先手动添加课程」两个选项。
 
 ## 6. 安全边界
-
-- `publishCode` 是协议层/UI 层门槛（防误发、防班级内随意冒发）；**真正的写权限由 GitHub 令牌控制**。
+- `publishCode`（v1.1.3 起可选，默认关闭）是协议层/UI 层门槛（防冒发），**真正的写权限由 GitHub 令牌控制**。
 - 派生算法内置在客户端（App / 网站），防君子不防逆向——对班级作业场景足够。
 - 任何人拿到 `syncCode` 都能读取作业内容（这是设计目标：分享码=读取权）。
+- **v1.1.3 起**：接收作业要求本地已存在同名课程，避免被远端包任意新建空课。

@@ -1,10 +1,10 @@
 {
-  "version": "1.1.2",
-  "notes": "TaskManager v1.1.2 —— 数据安全加固 + 作业码制重构\n\n## 课表数据保护（重要）\n- **课表导入前自动安全备份**：无论 Excel 课表导入还是教务系统导入，执行前都会先在 backups/ 里落一份 pre-import 备份，导入结果不满意可随时回滚\n- **自动滚动备份保留份数 7 → 14**：可回溯的时间窗更长\n- 1.1.1 用户反馈「升级后课表消失」已查明：并非更新导致，而是开发机上的测试脚本误用了真实数据库；本版已修复该测试脚本，并加上面的两层备份保护\n\n## 作业同步（码制 v2.1）\n- 「作业同步」菜单分三个入口：**生成作业码**（一键生成发布码+同步码）、**发布作业**（只输发布码验证，进入发布界面添加作业并上传）、**接收作业**（输入同步码，作业自动挂到对应课程）\n- 发布码为自包含格式（前 8 位即同步码），网站端按 docs/HOMEWORK-CODES.md 规范实现即可互通\n\n## 从 1.1.1 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.2.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.1.exe`  —— 上一版（保留回退）",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.2.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.2",
-  "sha256": "9b2f0fc33e05719c2a5aa7e395e098cf7efc8feeaaa8be91c57ea22d54a45f6a",
-  "size": 89686920,
-  "fileName": "TaskManager-Setup-1.1.2.exe",
-  "releasedAt": "2026-09-17T12:40:00.000Z"
+  "version": "1.1.3",
+  "notes": "TaskManager v1.1.3 —— 作业同步流程重做 + 源管理修复\n\n## 设置页\n- 「检查所有源」统一改名为「**检查更新**」\n- 修一个隐蔽 bug：之前点击「添加源」后，新加的空白源在切换其他源的启用/主源时会被静默吞掉（后端过滤了 url 为空的源），看上去像「需要重启才能输入」。现在允许保存 url 为空的草稿源\n\n## 作业同步（码制 v2.2）\n- **发布作业**：点开**直接进入「添加作业」界面**（课程 / 类型 / 标题 / 内容 / 上课日 / 截止），提交后立即上传到 GitHub homework/<syncCode>.json 并落到本地课程\n- 发布码改为**可选 secret edit**：默认凭 GitHub PAT 即可发布；想限制别人改自己的码包再勾上填 12 位发布码\n- 每门课程一个持久化的同步作业码（settings `homework_sync_<courseId>`），首次发布时自动生成 8 位码\n- **接收作业**：输入同步码 → 拉取 → 自动挂到同名课程。**v1.1.3 起本地没同名课程不再自动建课**，改为弹窗告知并提供「新建该课程并接收 / 我先手动添加课程」两个选项\n\n## 从 1.1.2 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.3.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.2.exe`  —— 上一版（保留回退）",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.3.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.3",
+  "sha256": "c861d1b21330541f61a6e79481143cfa8ada31a8ec5f3bdd68fd76d16996ab57",
+  "size": 89687536,
+  "fileName": "TaskManager-Setup-1.1.3.exe",
+  "releasedAt": "2026-09-17T13:35:00.000Z"
 }

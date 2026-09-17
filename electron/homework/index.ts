@@ -52,6 +52,8 @@ const REPO_URL = `https://github.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME
 const SETTING_TOKEN = 'homework_github_token';
 const SETTING_PUBLISHER = 'homework_publisher';
 const SETTING_LAST_SYNC = 'homework_last_sync';
+/** 每门课程对应的同步作业码：key 形如 homework_sync_<courseId>，value 是 8 位 syncCode */
+const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
 
 const FETCH_TIMEOUT_MS = 20000;
 
@@ -153,7 +155,8 @@ export interface CodePair {
 export interface PublishPayload {
   /** 可不传；传了必须与发布码前缀一致（发布码自包含同步码） */
   syncCode?: string;
-  publishCode: string;
+  /** 可不传：仅在发布方想加一道「只有自己知道密钥」时输入；留空 = 任何人凭 syncCode + GitHub PAT 即可发布 */
+  publishCode?: string;
   courseName: string;
   sessionDate: string;
   sessionTime?: string | null;
@@ -177,6 +180,8 @@ export interface SyncResult {
   coursesCreated: string[];
   items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
   syncedAt: number;
+  /** v1.1.3 起：远端 bundle 引用了一个本地没有的课程，让前端弹窗询问是否新建 */
+  courseNotFound?: boolean;
 }
 
 // ==================== settings 读写 ====================
@@ -313,18 +318,48 @@ async function fetchBundleFromAnySource(syncCode: string, token?: string): Promi
 }
 
 // ==================== 发布 ====================
+/** 取/生成某课程对应的同步作业码（首次为该课程发布时落地） */
+function getOrCreateCourseSyncCode(db: DB, courseId: number | null | undefined): string {
+  if (!courseId) return generateCodePair().syncCode;
+  const key = SETTING_COURSE_SYNC_PREFIX + courseId;
+  const existing = normalizeSyncCode(getSetting(db, key));
+  if (existing) return existing;
+  const fresh = generateCodePair().syncCode;
+  setSetting(db, key, fresh);
+  return fresh;
+}
+
+/** 取某课程的同步作业码（没存过就返回空，不落地） */
+function getCourseSyncCode(db: DB, courseId: number | null | undefined): string {
+  if (!courseId) return '';
+  return normalizeSyncCode(getSetting(db, SETTING_COURSE_SYNC_PREFIX + courseId)) || '';
+}
+
 /**
  * 发布/更新一条作业到 homework/<syncCode>.json。
  * 幂等：同一课程同一上课日期 + 同标题 → 覆盖更新远端已有条目（保留其 id，接收端无感）。
+ * - publishCode 可选：填了 = 校验 HMAC；空 = 仅依赖 GitHub PAT
+ * - syncCode 可选：填了直接用；空且 courseId 给了 → 用该课程持久化的（首次自动生成）；
+ *   都没有 → 返回错误
  */
-export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string }> {
-  // 1) 发布码验证：前 8 位即同步码，后 4 位为 HMAC 校验（本地重算，无需联网）
-  const syncCode = parsePublishCode(payload.publishCode);
-  if (!syncCode) {
-    return { ok: false, error: `作业发布码格式不对（${PUBLISH_CODE_LEN} 位，字母数字，不含 0/O/1/I/L；可在「生成作业码」或网站获取）` };
-  }
-  if (payload.syncCode && normalizeSyncCode(payload.syncCode) !== syncCode) {
-    return { ok: false, error: '作业发布码与同步作业码不匹配' };
+export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean }> {
+  // 1) 发布码验证（可选；填了就要通过 HMAC）
+  let syncCode: string | undefined;
+  if (payload.publishCode && payload.publishCode.trim()) {
+    const decoded = parsePublishCode(payload.publishCode);
+    if (!decoded) return { ok: false, error: `作业发布码格式不对（${PUBLISH_CODE_LEN} 位，字母数字，不含 0/O/1/I/L）` };
+    syncCode = decoded;
+    if (payload.syncCode && normalizeSyncCode(payload.syncCode) !== syncCode) {
+      return { ok: false, error: '作业发布码与同步作业码不匹配' };
+    }
+  } else if (payload.syncCode) {
+    const normalized = normalizeSyncCode(payload.syncCode);
+    if (!normalized) return { ok: false, error: `同步作业码格式不对（${SYNC_CODE_LEN} 位）` };
+    syncCode = normalized;
+  } else if ((payload as any).courseId) {
+    syncCode = getOrCreateCourseSyncCode(db, (payload as any).courseId);
+  } else {
+    return { ok: false, error: '缺少同步作业码：要么填入「作业发布码」或「同步作业码」，要么在「课程」下选择一个具体课程（首次发布会自动生成）' };
   }
 
   const courseName = (payload.courseName || '').trim();
@@ -411,6 +446,8 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     ok: true,
     entry,
     fileUrl: `${REPO_URL}/${syncCode}.json`,
+    syncCode,
+    bundleCreated: !existing,
   };
 }
 
@@ -469,19 +506,15 @@ export async function receiveHomework(db: DB, rawSyncCode: string): Promise<Sync
     return result;
   }
 
-  // 课程匹配：先找同名本地课程，没有则自动新建
-  let courseId: number;
+  // 课程匹配：先找同名本地课程；没有则 **不再自动建课**，让前端弹窗询问用户（避免误建空课）
   const hitCourse = db.prepare('SELECT id FROM courses WHERE TRIM(name) = ? LIMIT 1').get(courseName) as { id: number } | undefined;
-  if (hitCourse) {
-    courseId = hitCourse.id;
-  } else {
-    const info = db.prepare(
-      `INSERT INTO courses (name, code, instructor, semester, color, description, tags, created_at)
-       VALUES (?, NULL, NULL, NULL, '#00FF88', '由作业接收自动创建', '[]', ?)`
-    ).run(courseName, Date.now());
-    courseId = Number(info.lastInsertRowid);
-    result.coursesCreated.push(courseName);
+  if (!hitCourse) {
+    result.courseName = courseName;
+    result.courseNotFound = true;
+    result.error = `本地没有课程「${courseName}」，请先在「课程」页新建/同步该课程，再点接收`;
+    return result;
   }
+  const courseId = hitCourse.id;
   result.coursesTouched = 1;
 
   // 条目写入：remote_id 去重；已存在则只更新内容字段，不动本地完成状态
@@ -554,6 +587,15 @@ export function registerHomework(db: DB) {
   ipcMain.handle('homework:verifyCodes', (_e, publishCode: string) => {
     const syncCode = parsePublishCode(publishCode);
     return syncCode ? { ok: true, syncCode } : { ok: false };
+  });
+
+  /** v1.1.3：取某课程已持久化的同步作业码（首次自动生成）；没指定 courseId 返回空 */
+  ipcMain.handle('homework:courseSyncCode', (_e, courseId: number | null | undefined) => {
+    if (!courseId) return { ok: false, syncCode: '', error: '请指定 courseId' };
+    const existing = getCourseSyncCode(db, courseId);
+    if (existing) return { ok: true, syncCode: existing };
+    const fresh = getOrCreateCourseSyncCode(db, courseId);
+    return { ok: true, syncCode: fresh };
   });
 
   ipcMain.handle('homework:publish', async (_e, payload: PublishPayload) => {

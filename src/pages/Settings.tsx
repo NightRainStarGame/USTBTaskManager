@@ -781,14 +781,14 @@ export default function SettingsPage() {
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" checked={updateAuto} onChange={(e) => toggleAutoCheck(e.target.checked)} className="accent-[#00FF88]" />
             <span className="text-xs text-text-secondary">
-              开启后每次启动会<strong className="text-neon-yellow">查所有启用的源</strong>，发现新版本会<strong className="text-neon-yellow">在右下角弹窗告知</strong>；左侧「设置」也会有 NEW 标记。
+              开启后每次启动会<strong className="text-neon-yellow">检查所有启用的更新源</strong>，发现新版本会<strong className="text-neon-yellow">在右下角弹窗告知</strong>；左侧「设置」也会有 NEW 标记。
             </span>
           </label>
         </Row>
 
         <div className="flex flex-wrap gap-2 pt-1">
           <button onClick={checkUpdate} disabled={updateChecking} className="btn-neon">
-            <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查所有源'}
+            <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查更新'}
           </button>
           {aggregate?.winner?.hasUpdate && aggregate.winner.downloadUrl && !dlPath && (
             <button onClick={startDownload} disabled={!!dl?.running} className="btn-neon btn-neon-yellow">

@@ -215,14 +215,18 @@ const api = {
     generateCodes: () => ipcRenderer.invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
     /** 校验作业发布码（本地 HMAC，无需联网）；通过则返回解析出的同步码 */
     verifyCodes: (publishCode: string) => ipcRenderer.invoke('homework:verifyCodes', publishCode) as Promise<{ ok: boolean; syncCode?: string }>,
-    /** 发布一条作业（凭发布码 + GitHub 令牌写远端；发布码自包含同步码） */
+    /** v1.1.3：取某课程对应的同步作业码（首次自动生成）。用作发布时定位远端 bundle */
+    courseSyncCode: (courseId: number | null | undefined) => ipcRenderer.invoke('homework:courseSyncCode', courseId) as Promise<{ ok: boolean; syncCode: string; error?: string }>,
+    /** 发布一条作业。publishCode 可选；如未填 syncCode 但传了 courseId，会用该课程持久化的 syncCode（首次自动生成） */
     publish: (payload: {
-      publishCode: string; courseName: string; sessionDate: string;
+      publishCode?: string; syncCode?: string; courseId?: number | null;
+      courseName: string; sessionDate: string;
       sessionTime?: string | null; title: string; content: string;
       type?: string; dueDate?: number | null;
     }) => ipcRenderer.invoke('homework:publish', payload) as Promise<{
       ok: boolean; error?: string;
       entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
+      syncCode?: string; bundleCreated?: boolean;
       fileUrl?: string;
     }>,
     /** 某个码包在远端已发布的作业 */
@@ -230,9 +234,10 @@ const api = {
       ok: boolean; error?: string; courseName?: string;
       entries: Array<{ id: string; title: string; sessionDate: string; sessionTime?: string | null; content: string; publisher: string; publishedAt: number; updatedAt: number }>;
     }>,
-    /** 按同步作业码接收一个作业包到本地课程 */
+    /** 按同步作业码接收一个作业包到本地课程；本地缺课程时返回 courseNotFound=true 让前端弹窗询问 */
     receive: (syncCode: string) => ipcRenderer.invoke('homework:receive', syncCode) as Promise<{
       ok: boolean; error?: string; source?: string; syncCode?: string; courseName?: string;
+      courseNotFound?: boolean;
       entries: number; created: number; updated: number;
       coursesTouched: number; coursesCreated: string[];
       items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;

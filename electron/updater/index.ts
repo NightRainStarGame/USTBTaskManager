@@ -257,16 +257,20 @@ export function getSources(db: DB | null): UpdateSource[] {
 }
 
 export function setSources(db: DB | null, sources: UpdateSource[]): UpdateSource[] {
-  // 归一化：清洗字段；至少保证 1 个；保证至少有 1 个 primary
-  const cleaned = sources
-    .filter((s) => s && typeof s.url === 'string' && s.url.trim())
+  // 归一化：清洗字段；保留 url 为空的草稿（避免被静默吞掉导致 UI 看起来要"重启"）；
+  // 仅在所有源 url 都空时回退到默认源；填了 url 的源靠前参与实际拉取。
+  const cleaned = (sources || [])
+    .filter((s) => s && typeof s === 'object')
     .map((s) => ({
       name: String(s.name || '源').slice(0, 40),
-      url: String(s.url).trim().slice(0, 2048),
+      url: typeof s.url === 'string' ? s.url.trim().slice(0, 2048) : '',
       enabled: s.enabled !== false,
       primary: !!s.primary,
     }));
-  const final = cleaned.length ? cleaned : [DEFAULT_UPDATE_SOURCES[0]];
+  const filled = cleaned.filter((s) => s.url);
+  const drafts = cleaned.filter((s) => !s.url);
+  const ordered = [...filled, ...drafts];
+  const final = ordered.length ? ordered : [DEFAULT_UPDATE_SOURCES[0]];
   const hasPrimary = final.some((s) => s.primary);
   if (!hasPrimary) final[0].primary = true;
   if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(final));

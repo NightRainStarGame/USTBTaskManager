@@ -102,14 +102,21 @@ function check(name, cond, extra = '') {
     console.log('  ! 无 token，跳过发布/接收网络用例（仅本地用例）');
   }
 
-  // ---------- 4. 发布 ----------
+  // ---------- 4. 发布（v1.1.3 新接口：publishCode 可选，courseId 自动找/生成 syncCode） ----------
   console.log('\n== 4. 发布作业 ==');
   let published = false;
   if (token) {
+    // 先建个空课程拿 courseId，验证 courseSyncCode 自动生成
+    const courseName = '[E2E]码制测试课程' + Date.now();
+    const createR = await evaluate(`window.taskAPI.db.courses.create({ name: ${JSON.stringify(courseName)}, description: 'e2e temp' })`);
+    const courseId = createR?.id;
+    const syncR = await evaluate(`window.taskAPI.homework.courseSyncCode(${courseId})`);
+    check('courseSyncCode 首次自动生成 8 位码', syncR.ok === true && /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(syncR.syncCode), JSON.stringify(syncR));
+    const generatedSyncCode = syncR.syncCode;
+
     const r = await evaluate(`window.taskAPI.homework.publish({
-      syncCode: ${JSON.stringify(pair.syncCode)},
-      publishCode: ${JSON.stringify(pair.publishCode)},
-      courseName: '[E2E]码制测试课程',
+      courseId: ${courseId},
+      courseName: ${JSON.stringify(courseName)},
       sessionDate: '2026-09-17',
       sessionTime: '08:00-09:35',
       title: '[E2E] 第三章习题 1-10',
@@ -117,9 +124,15 @@ function check(name, cond, extra = '') {
       type: 'homework',
       dueDate: null
     })`);
-    check('publish → ok', r.ok === true, r.error || '');
+    check('publish → ok（无 publishCode）', r.ok === true, r.error || '');
+    check('publish 返回的 syncCode = courseSyncCode', r.syncCode === generatedSyncCode, `got ${r.syncCode}`);
     published = r.ok;
     if (!r.ok) console.log('    error: ' + r.error);
+
+    // 把 syncCode 暴露给后续步骤
+    pair.syncCode = r.syncCode || pair.syncCode;
+    pair.courseId = courseId;
+    pair.e2eCourseName = courseName;
   }
 
   // ---------- 5. 接收 ----------
@@ -127,10 +140,9 @@ function check(name, cond, extra = '') {
   if (published) {
     const r = await evaluate(`window.taskAPI.homework.receive(${JSON.stringify(pair.syncCode)})`);
     check('receive → ok', r.ok === true, r.error || '');
-    check('课程名匹配', r.courseName === '[E2E]码制测试课程', `got ${r.courseName}`);
+    check('课程名匹配', /码制测试课程/.test(r.courseName || ''), `got ${r.courseName}`);
     check('来源 = github', r.source === 'github', `got ${r.source}`);
     check('新增 1 条', r.created === 1, `created=${r.created}`);
-    check('涉及课程含新建', r.coursesCreated.includes('[E2E]码制测试课程') || r.coursesTouched >= 1);
 
     // 幂等：再接收一次 → created=0 updated=1
     const r2 = await evaluate(`window.taskAPI.homework.receive(${JSON.stringify(pair.syncCode)})`);
@@ -139,10 +151,38 @@ function check(name, cond, extra = '') {
     console.log('  (跳过：未发布)');
   }
 
-  // ---------- 6. 接收不存在的码 ----------
-  console.log('\n== 6. 接收不存在的码 ==');
+  // ---------- 6. 接收不存在 / 课程缺失（v1.1.3 新分支） ----------
+  console.log('\n== 6. 接收失败场景 ==');
   const r404 = await evaluate(`window.taskAPI.homework.receive("ZZZZ9999")`);
   check('不存在码 → 报错不崩溃', r404.ok === false && /没有找到|不存在/.test(r404.error || ''), r404.error || '');
+
+  // 新增：先用一个全新 syncCode 发布到不存在的课程名 → 接收时本地无该课程 → 应返回 courseNotFound=true
+  if (token) {
+    const ghost = await evaluate(`window.taskAPI.homework.generateCodes()`);
+    const ghostCourseName = '[E2E-Ghost]' + Date.now();
+    const pubR = await evaluate(`window.taskAPI.homework.publish({
+      syncCode: ${JSON.stringify(ghost.syncCode)},
+      publishCode: ${JSON.stringify(ghost.publishCode)},
+      courseName: ${JSON.stringify(ghostCourseName)},
+      sessionDate: '2026-09-17',
+      title: '[E2E-Ghost] 不存在的课程',
+      content: '用于触发 courseNotFound 分支',
+      type: 'homework',
+      dueDate: null
+    })`);
+    if (pubR.ok) {
+      const recR = await evaluate(`window.taskAPI.homework.receive(${JSON.stringify(ghost.syncCode)})`);
+      check('课程缺失 → courseNotFound=true', recR.ok === false && recR.courseNotFound === true && recR.courseName === ghostCourseName, JSON.stringify({ ok: recR.ok, courseNotFound: recR.courseNotFound, courseName: recR.courseName }));
+      // 清理远端 ghost 文件
+      try {
+        const meta = require('child_process').execFileSync('curl', ['-sS', '-H', `Authorization: Bearer ${token}`, `https://api.github.com/repos/NightRainStarGame/USTBTaskManager/contents/homework/${ghost.syncCode}.json?ref=main`], { encoding: 'utf8' });
+        const sha = JSON.parse(meta)?.sha;
+        if (sha) {
+          require('child_process').execFileSync('curl', ['-sS', '-X', 'DELETE', '-H', `Authorization: Bearer ${token}`, '-H', 'Content-Type: application/json', '-d', JSON.stringify({ message: `chore: e2e cleanup ghost ${ghost.syncCode}`, sha, branch: 'main' }), `https://api.github.com/repos/NightRainStarGame/USTBTaskManager/contents/homework/${ghost.syncCode}.json`]);
+        }
+      } catch { /* ignore */ }
+    }
+  }
 
   // ---------- 7. UI：入口按钮（先导航到课程页） ----------
   console.log('\n== 7. UI 入口 ==');
