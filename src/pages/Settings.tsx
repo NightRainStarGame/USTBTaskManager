@@ -163,6 +163,12 @@ export default function SettingsPage() {
     if (!r.ok) setUpdateMsg(r.error || '打开链接失败');
   };
 
+  /** GitHub 连不上时的解决教程（dogfight360 hosts 修复） */
+  const openGithubFix = async () => {
+    const r = await window.taskAPI.updater.openExternal('https://www.dogfight360.com/blog/18682/');
+    if (!r.ok) setUpdateMsg(r.error || '打开链接失败');
+  };
+
   const ignoreVersion = async () => {
     if (!updateResult?.latestVersion) return;
     await window.taskAPI.updater.skipVersion(updateResult.latestVersion);
@@ -624,6 +630,9 @@ export default function SettingsPage() {
           {updateResult?.hasUpdate && !updateResult?.skipped && (
             <button onClick={ignoreVersion} className="btn-ghost text-text-dim">忽略 v{updateResult.latestVersion}</button>
           )}
+          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="GitHub 打不开 / 下载慢的解决教程">
+            <ExternalLink size={14} /> 无法连接 GitHub？点这
+          </button>
         </div>
 
         {/* 下载进度 */}
@@ -644,7 +653,10 @@ export default function SettingsPage() {
         {/* 结果 / 提示 */}
         {updateMsg && (
           <div className="mt-1 p-3 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap break-all">
-            ✗ {updateMsg}
+            <div>✗ {updateMsg}</div>
+            <button onClick={openGithubFix} className="mt-2 underline underline-offset-2 hover:opacity-80">
+              无法连接 GitHub？点这（解决教程）
+            </button>
           </div>
         )}
         {updateResult?.ok && updateResult?.hasUpdate && !updateMsg && (
