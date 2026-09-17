@@ -1,10 +1,10 @@
 {
-  "version": "0.3.0",
-  "notes": "TaskManager v0.3.0 —— 首个公开发布版本。\n\n## 新增\n- 内置**软件更新**模块：检查更新 / 下载 / SHA-256 校验 / 一键安装并重启\n- 课程页新增「**课表日历**」视图，按周查看课程时段（支持教务导入课程）\n- 课程卡片显示作业数量，点击课程即可查看其全部作业\n- 支持北京科技大学教务课表导入（按周展开为具名事件）\n- 数据备份与恢复、数据库自检修复\n- 本地账号密码登录（SHA-256 哈希存储，仅存本机）\n\n## 修复\n- 修复「课程无法添加作业」\n- 修复设置页编辑框无法输入的问题\n- 恢复安装包自定义安装目录（NSIS 目录选择页）\n\n## 安装\n下载 TaskManager-Setup-0.3.0.exe，向导支持自定义安装目录，无需管理员权限。\n应用内置更新检查，之后的新版本会通过本仓库的 latest.json 自动感知。",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v0.3.0/TaskManager-Setup-0.3.0.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v0.3.0",
-  "sha256": "7d7acff205f2f974cee9918a60e7517c59973b7337eaed926094da7293b8c0c6",
-  "size": 87669900,
-  "fileName": "TaskManager-Setup-0.3.0.exe",
-  "releasedAt": "2026-09-17T03:06:00.117Z"
+  "version": "1.0.0",
+  "notes": "TaskManager v1.0.0 —— 班级作业发布 / 同步\n\n## 新增：班级作业公告板（GitHub 同步）\n- 课程页右下角新增「发布作业 / 同步作业」\n- 发布：输入班级发布密码 → 选课程 → 选上课日期（每节课作业可不同）→ 书写作业内容 → 一键发布到 GitHub\n- 同步：无需密码，一键拉取全班发布的作业，自动写入对应课程（没有的课程自动创建），带「同步」标记\n- 重复同步不产生重复；本地完成状态不会被覆盖\n- 首次发布需填一次 GitHub 令牌（仅存本机）\n\n## 其他\n- 设置页「软件更新」新增「无法连接 GitHub」解决教程链接\n- README 新增完整使用指南\n\n## 从 0.3.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载安装包覆盖安装（数据保留）。",
+  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.0.0/TaskManager-Setup-1.0.0.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.0.0",
+  "sha256": "27ef29d6a0c444b3459e8231436f265354d2f3d9dfa5798cd299335cc5a8a13e",
+  "size": 87677433,
+  "fileName": "TaskManager-Setup-1.0.0.exe",
+  "releasedAt": "2026-09-17T05:47:28.758Z"
 }
