@@ -1,0 +1,21 @@
+{
+  "syncCode": "BW6VRXTC",
+  "courseName": "[E2E-Ghost]1789652079355",
+  "createdAt": 1789652080101,
+  "updatedAt": 1789652080101,
+  "entries": [
+    {
+      "id": "d265aac5-8974-4ba3-8094-620b1ab9720c",
+      "courseName": "[E2E-Ghost]1789652079355",
+      "sessionDate": "2026-09-17",
+      "sessionTime": null,
+      "title": "[E2E-Ghost] 不存在的课程",
+      "content": "用于触发 courseNotFound 分支",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "e2e-测试员",
+      "publishedAt": 1789652080101,
+      "updatedAt": 1789652080101
+    }
+  ]
+}
