@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #000000;
+    color: #E8FFEE;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: rgba(0, 255, 136, 0.04); }
+  *::-webkit-scrollbar-thumb { background: rgba(0, 255, 136, 0.3); border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 136, 0.6); }
+
+  ::selection { background: rgba(0, 255, 136, 0.4); color: #fff; }
+}
+
+@layer components {
+  /* 荧光边框按钮 */
+  .btn-neon {
+    @apply relative inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md
+           bg-ink-900/80 border border-neon-green/40 text-neon-green
+           font-mono text-sm uppercase tracking-wider
+           transition-all duration-200
+           hover:bg-neon-green/10 hover:border-neon-green
+           hover:shadow-neon-green
+           active:scale-95;
+  }
+  .btn-neon-yellow {
+    @apply border-neon-yellow/40 text-neon-yellow
+           hover:bg-neon-yellow/10 hover:border-neon-yellow
+           hover:shadow-neon-yellow;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md
+           text-text-secondary hover:text-neon-green hover:bg-neon-green/5
+           transition-colors duration-150 text-sm;
+  }
+
+  /* 玻璃拟态卡片 */
+  .glass-panel {
+    @apply bg-ink-900/70 backdrop-blur-md border border-neon-green/15
+           rounded-lg shadow-glass;
+  }
+
+  /* 输入框 */
+  .input-neon {
+    @apply w-full px-3 py-2 rounded-md
+           bg-ink-base/60 border border-neon-green/30
+           text-text-primary placeholder-text-dim
+           font-mono text-sm
+           focus:outline-none focus:border-neon-green focus:shadow-neon-green
+           transition-all duration-150;
+  }
+
+  /* 标题小标签 */
+  .label-tag {
+    @apply font-mono text-[10px] uppercase tracking-[0.2em] text-neon-green/70;
+  }
+
+  /* 数据胶囊 */
+  .data-pill {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded
+           bg-ink-base/60 border border-neon-green/30
+           font-mono text-xs text-neon-green;
+  }
+
+  /* 状态点 */
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+}
+
+@layer utilities {
+  /* 扫描线叠加层 */
+  .scanline::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 0%, rgba(0,255,136,0.03) 50%, transparent 100%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    animation: scanLine 8s linear infinite;
+  }
+
+  /* 文字荧光 */
+  .text-glow-green {
+    text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
+  }
+  .text-glow-yellow {
+    text-shadow: 0 0 8px rgba(255,234,0,0.6), 0 0 16px rgba(255,234,0,0.3);
+  }
+
+  /* 进度条 */
+  .progress-bar {
+    @apply h-1 bg-ink-700 rounded-full overflow-hidden;
+  }
+  .progress-bar > div {
+    @apply h-full bg-gradient-to-r from-neon-green to-neon-green-bright
+           shadow-neon-green transition-all duration-500;
+  }
+}

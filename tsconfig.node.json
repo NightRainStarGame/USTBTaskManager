@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "dist-electron",
+    "rootDir": "electron",
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "composite": true,
+    "noEmit": false
+  },
+  "include": ["electron/**/*"]
+}

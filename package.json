@@ -1,0 +1,95 @@
+{
+  "name": "task-manager",
+  "version": "0.3.0",
+  "description": "课程 / 项目 / 日历一体化可视化工作流（霓虹荧光科技风）",
+  "main": "dist-electron/main.js",
+  "author": "豆芽",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELEC -c green,cyan \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build": "tsc -p tsconfig.node.json && tsc -p tsconfig.json && vite build",
+    "build:exe": "npm run build && electron-builder --win nsis --x64",
+    "release:manifest": "node scripts/release.js",
+    "release:verify": "node scripts/release.js --verify",
+    "preview": "vite preview",
+    "postinstall": "electron-builder install-app-deps",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "dayjs": "^1.11.13",
+    "http-proxy-agent": "^7.0.2",
+    "lucide-react": "^0.460.0",
+    "lunar-javascript": "^1.6.12",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.2",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.douya.taskmanager",
+    "productName": "TaskManager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "!dist/assets/*-*.js",
+      "!dist/assets/*-*.css",
+      "dist-electron/**",
+      "package.json",
+      "node_modules/better-sqlite3/**",
+      "node_modules/bindings/**",
+      "node_modules/file-uri-to-path/**"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TaskManager",
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "asar": true
+  }
+}

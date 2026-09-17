@@ -1,0 +1,22 @@
+# 统一换行符：仓库内统一 LF，检出时按平台自动转换
+* text=auto
+
+# 二进制文件不做换行符转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.node binary
+*.db   binary
+*.icns binary
+
+# 语言统计归类
+*.ts   text
+*.tsx  text
+*.js   text
+*.json text
+*.css  text
+*.html text
+*.md   text

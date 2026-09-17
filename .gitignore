@@ -1,0 +1,42 @@
+# ==================== 依赖 ====================
+node_modules/
+.restore/
+.probe/
+
+# ==================== 构建产物 ====================
+dist/
+dist-electron/
+release/
+release-*/
+release-manifest/
+out-app*/
+*.tsbuildinfo
+
+# 注意：build/ 存放应用图标（icon.ico / icon.png），需纳入版本管理，勿忽略
+
+# ==================== 测试 / 临时产物 ====================
+.screenshots/
+.workbuddy/
+.vs/
+scripts/.input-test*/
+scripts/*.png
+scripts/*.ps1
+*.log
+
+# ==================== 数据库 ====================
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# ==================== 本地环境配置（含 proxy / strict-ssl 等本机设置，不公开） ====================
+.npmrc
+.env
+.env.local
+
+# ==================== 编辑器 / 系统 ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

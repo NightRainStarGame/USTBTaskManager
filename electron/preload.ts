@@ -1,0 +1,171 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+// 渲染进程可调用的 API
+const api = {
+  // 窗口
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized') as Promise<boolean>,
+  },
+  // 数据库（统一封装）
+  db: {
+    courses: {
+      list: () => ipcRenderer.invoke('db:courses:list'),
+      get: (id: number) => ipcRenderer.invoke('db:courses:get', id),
+      create: (data: any) => ipcRenderer.invoke('db:courses:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:courses:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:courses:delete', id),
+    },
+    requirements: {
+      list: (filter?: any) => ipcRenderer.invoke('db:requirements:list', filter),
+      create: (data: any) => ipcRenderer.invoke('db:requirements:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:requirements:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:requirements:delete', id),
+    },
+    events: {
+      list: (filter?: any) => ipcRenderer.invoke('db:events:list', filter),
+      create: (data: any) => ipcRenderer.invoke('db:events:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:events:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:events:delete', id),
+    },
+    categories: {
+      list: () => ipcRenderer.invoke('db:categories:list'),
+      create: (data: any) => ipcRenderer.invoke('db:categories:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:categories:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:categories:delete', id),
+    },
+    userProfiles: {
+      list: () => ipcRenderer.invoke('db:userProfiles:list'),
+      getActive: () => ipcRenderer.invoke('db:userProfiles:getActive'),
+      getByOpenid: (openid: string) => ipcRenderer.invoke('db:userProfiles:getByOpenid', openid),
+      create: (data: any) => ipcRenderer.invoke('db:userProfiles:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:userProfiles:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:userProfiles:delete', id),
+      setActive: (id: number) => ipcRenderer.invoke('db:userProfiles:setActive', id),
+    },
+    courseNotes: {
+      list: (courseId: number) => ipcRenderer.invoke('db:courseNotes:list', courseId),
+      create: (data: any) => ipcRenderer.invoke('db:courseNotes:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:courseNotes:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:courseNotes:delete', id),
+    },
+    miniPrograms: {
+      list: () => ipcRenderer.invoke('db:miniPrograms:list'),
+      getByCourse: (courseId: number) => ipcRenderer.invoke('db:miniPrograms:getByCourse', courseId),
+      getActive: () => ipcRenderer.invoke('db:miniPrograms:getActive'),
+      createOrUpdate: (data: any) => ipcRenderer.invoke('db:miniPrograms:createOrUpdate', data),
+      setActive: (id: number) => ipcRenderer.invoke('db:miniPrograms:setActive', id),
+      delete: (id: number) => ipcRenderer.invoke('db:miniPrograms:delete', id),
+    },
+    projects: {
+      list: () => ipcRenderer.invoke('db:projects:list'),
+      get: (id: number) => ipcRenderer.invoke('db:projects:get', id),
+      create: (data: any) => ipcRenderer.invoke('db:projects:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:projects:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:projects:delete', id),
+    },
+    tasks: {
+      list: (filter?: any) => ipcRenderer.invoke('db:tasks:list', filter),
+      create: (data: any) => ipcRenderer.invoke('db:tasks:create', data),
+      update: (id: number, data: any) => ipcRenderer.invoke('db:tasks:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('db:tasks:delete', id),
+    },
+    settings: {
+      getAll: () => ipcRenderer.invoke('db:settings:getAll'),
+      set: (key: string, value: string) => ipcRenderer.invoke('db:settings:set', key, value),
+    },
+    stats: {
+      dashboard: () => ipcRenderer.invoke('db:stats:dashboard'),
+    },
+  },
+  // 微信小程序（预留接口）
+  miniprogram: {
+    open: (appId: string) => ipcRenderer.invoke('miniprogram:open', appId),
+    isReady: () => ipcRenderer.invoke('miniprogram:isReady') as Promise<boolean>,
+    config: {
+      get: () => ipcRenderer.invoke('miniprogram:config:get'),
+      set: (cfg: any) => ipcRenderer.invoke('miniprogram:config:set', cfg),
+    },
+  },
+  // 贝壳课表（USTB SSO 扫码登录 + BYYT 教务课表导入）
+  ustb: {
+    status: () => ipcRenderer.invoke('ustb:status'),
+    qrStart: () => ipcRenderer.invoke('ustb:qr:start') as Promise<{ sessionId: string; qrImage: string }>,
+    qrPoll: (sessionId: string) => ipcRenderer.invoke('ustb:qr:poll', sessionId) as Promise<{ status: string; user?: { name: string; school: string; userId: string }; message?: string }>,
+    qrCancel: (sessionId: string) => ipcRenderer.invoke('ustb:qr:cancel', sessionId),
+    preview: (term: { xn: string; xq: string }) => ipcRenderer.invoke('ustb:preview', term),
+    import: (opts: { xn: string; xq: string; semesterStart: number }) => ipcRenderer.invoke('ustb:import', opts) as Promise<{ courses: number; events: number; items: number; warnings: string[] }>,
+    logout: () => ipcRenderer.invoke('ustb:logout'),
+  },
+  // ICS 导出
+  ics: {
+    export: (events: any[]) => ipcRenderer.invoke('ics:export', events) as Promise<{ ok: boolean; path?: string; count?: number; canceled?: boolean }>,
+  },
+  // 应用信息（版本号等）
+  app: {
+    info: () => ipcRenderer.invoke('app:info') as Promise<{
+      name: string;
+      version: string;
+      electron: string;
+      platform: string;
+      packaged: boolean;
+    }>,
+  },
+  // 软件更新
+  updater: {
+    config: () => ipcRenderer.invoke('update:config') as Promise<{
+      defaultSource: string;
+      source: string;
+      autoCheck: boolean;
+      skippedVersion: string | null;
+    }>,
+    check: (opts?: { force?: boolean }) => ipcRenderer.invoke('update:check', opts),
+    download: (opts: { url: string; version: string; sha256?: string | null }) =>
+      ipcRenderer.invoke('update:download', opts) as Promise<{ ok: boolean; path?: string; size?: number; error?: string; canceled?: boolean }>,
+    cancel: () => ipcRenderer.invoke('update:cancel'),
+    install: (filePath: string) => ipcRenderer.invoke('update:install', filePath) as Promise<{ ok: boolean; error?: string }>,
+    openExternal: (url: string) => ipcRenderer.invoke('update:openExternal', url) as Promise<{ ok: boolean; error?: string }>,
+    skipVersion: (version: string) => ipcRenderer.invoke('update:skipVersion', version),
+    setSource: (source: string) => ipcRenderer.invoke('update:setSource', source) as Promise<{ ok: boolean; source: string }>,
+    setAutoCheck: (enabled: boolean) => ipcRenderer.invoke('update:setAutoCheck', enabled) as Promise<{ ok: boolean; enabled: boolean }>,
+    /** 订阅下载进度，返回取消订阅函数 */
+    onProgress: (cb: (p: any) => void) => {
+      const handler = (_e: unknown, payload: any) => cb(payload);
+      ipcRenderer.on('update:progress', handler);
+      return () => { ipcRenderer.off('update:progress', handler); };
+    },
+    /** 订阅「启动时发现新版本」推送，返回取消订阅函数 */
+    onAvailable: (cb: (r: any) => void) => {
+      const handler = (_e: unknown, payload: any) => cb(payload);
+      ipcRenderer.on('update:available', handler);
+      return () => { ipcRenderer.off('update:available', handler); };
+    },
+  },
+  // 全量备份 / 恢复 / 完整性检查
+  backup: {
+    export: () => ipcRenderer.invoke('backup:export') as Promise<{ ok: boolean; path?: string; counts?: Record<string, number>; canceled?: boolean }>,
+    import: (opts?: { skipSafetyBackup?: boolean }) => ipcRenderer.invoke('backup:import', opts) as Promise<{
+      ok: boolean;
+      canceled?: boolean;
+      error?: string;
+      restored?: Record<string, number>;
+      safetyBackupPath?: string;
+      source?: string;
+    }>,
+    status: () => ipcRenderer.invoke('backup:status') as Promise<{
+      integrity: string;
+      foreignKeyViolations: number;
+      journalMode: string;
+      tables: Record<string, number>;
+      dbSizeBytes: number;
+      lastAutoBackup: string | null;
+    }>,
+    makeSafety: () => ipcRenderer.invoke('backup:makeSafety') as Promise<{ ok: boolean; path: string }>,
+  },
+};
+
+contextBridge.exposeInMainWorld('taskAPI', api);
+
+export type TaskAPI = typeof api;
