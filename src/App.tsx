@@ -7,10 +7,12 @@ import CoursesPage from './pages/Courses';
 import ProjectsPage from './pages/Projects';
 import SettingsPage from './pages/Settings';
 import MiniProgramPage from './pages/MiniProgram';
+import UpdateNotification from './components/UpdateNotification';
 import { useStore } from './store';
 
 export default function App() {
   const refreshAll = useStore((s) => s.refreshAll);
+  const updateInfo = useStore((s) => s.updateInfo);
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -18,16 +20,20 @@ export default function App() {
   }, [refreshAll, pathname]);
 
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Dashboard />} />
-        <Route path="/calendar" element={<CalendarPage />} />
-        <Route path="/courses" element={<CoursesPage />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/miniprogram" element={<MiniProgramPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/courses" element={<CoursesPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/miniprogram" element={<MiniProgramPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+      {/* 全局启动时更新通知（监听主进程推送 + 渲染层 store） */}
+      <UpdateNotification externalTrigger={updateInfo} />
+    </>
   );
 }

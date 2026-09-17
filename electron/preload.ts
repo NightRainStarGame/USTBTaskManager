@@ -116,19 +116,78 @@ const api = {
   // 软件更新
   updater: {
     config: () => ipcRenderer.invoke('update:config') as Promise<{
-      defaultSource: string;
+      defaultSources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
+      sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
+      activeIndex: number;
+      /** 兼容旧字段：当前主源 URL */
       source: string;
+      defaultSource: string;
       autoCheck: boolean;
       skippedVersion: string | null;
+      lastCheckAt: number;
     }>,
-    check: (opts?: { force?: boolean }) => ipcRenderer.invoke('update:check', opts),
+    check: (opts?: { force?: boolean; sourceIndex?: number }) => ipcRenderer.invoke('update:check', opts),
+    /** 查所有启用的源，返回合并结果（每源独立结果 + 版本最高的 winner） */
+    checkAll: () => ipcRenderer.invoke('update:checkAll') as Promise<{
+      currentVersion: string;
+      ok: boolean;
+      anyConfigured: boolean;
+      winner: {
+        ok: boolean;
+        configured: boolean;
+        currentVersion: string;
+        latestVersion: string | null;
+        hasUpdate: boolean;
+        notes?: string | null;
+        downloadUrl?: string | null;
+        pageUrl?: string | null;
+        sha256?: string | null;
+        forced?: boolean;
+        skipped?: boolean;
+        source?: string;
+        sourceIndex?: number;
+        sourceName?: string;
+        checkedAt?: number;
+      } | null;
+      perSource: Array<{
+        source: { name: string; url: string; enabled: boolean; primary: boolean };
+        result: {
+          ok: boolean;
+          configured: boolean;
+          currentVersion: string;
+          latestVersion: string | null;
+          hasUpdate: boolean;
+          notes?: string | null;
+          downloadUrl?: string | null;
+          pageUrl?: string | null;
+          sha256?: string | null;
+          forced?: boolean;
+          skipped?: boolean;
+          source?: string;
+          sourceIndex?: number;
+          sourceName?: string;
+          reason?: string;
+          message?: string;
+          checkedAt?: number;
+        };
+      }>;
+      checkedAt: number;
+    }>,
     download: (opts: { url: string; version: string; sha256?: string | null }) =>
       ipcRenderer.invoke('update:download', opts) as Promise<{ ok: boolean; path?: string; size?: number; error?: string; canceled?: boolean }>,
     cancel: () => ipcRenderer.invoke('update:cancel'),
     install: (filePath: string) => ipcRenderer.invoke('update:install', filePath) as Promise<{ ok: boolean; error?: string }>,
     openExternal: (url: string) => ipcRenderer.invoke('update:openExternal', url) as Promise<{ ok: boolean; error?: string }>,
     skipVersion: (version: string) => ipcRenderer.invoke('update:skipVersion', version),
-    setSource: (source: string) => ipcRenderer.invoke('update:setSource', source) as Promise<{ ok: boolean; source: string }>,
+    /** 兼容旧 API：用单源替换（保留旧行为） */
+    setSource: (source: string) => ipcRenderer.invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }> }>,
+    /** 新 API：整体保存多源 + 切换主源 */
+    setSources: (payload: {
+      sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
+      activeIndex: number;
+    }) => ipcRenderer.invoke('update:setSources', payload) as Promise<{ ok: boolean; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>; activeIndex: number }>,
+    /** 仅切换激活的主源（不动其他配置） */
+    setActiveSource: (index: number) => ipcRenderer.invoke('update:setActiveSource', index) as Promise<{ ok: boolean; activeIndex: number; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }> }>,
     setAutoCheck: (enabled: boolean) => ipcRenderer.invoke('update:setAutoCheck', enabled) as Promise<{ ok: boolean; enabled: boolean }>,
     /** 订阅下载进度，返回取消订阅函数 */
     onProgress: (cb: (p: any) => void) => {

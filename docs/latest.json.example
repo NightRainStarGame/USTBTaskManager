@@ -2,6 +2,9 @@
   "version": "0.3.1",
   "notes": "· 本次更新第一条\n· 本次更新第二条",
   "url": "https://你的域名/taskmanager/files/TaskManager%20Setup%200.3.1.exe",
-  "sha256": "在这里填安装包的 64 位 SHA-256（由 release.js 自动生成）",
-  "page": "https://可选-发布页或网盘分享页"
+  "sha256": "在这里填安装包的 64 位 SHA-256（由 release.js / publish-vps.js 自动生成）",
+  "page": "https://可选-发布页或网盘分享页",
+  "size": 89679402,
+  "fileName": "TaskManager Setup 0.3.1.exe",
+  "releasedAt": "2026-09-17T07:55:00.000Z"
 }

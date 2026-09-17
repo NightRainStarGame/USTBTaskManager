@@ -3,7 +3,30 @@ import { useStore } from '@/store';
 import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
-import type { UserProfile, UpdateCheckResult, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
+import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
+
+interface UpdateSource {
+  name: string;
+  url: string;
+  enabled: boolean;
+  primary: boolean;
+}
+
+interface PerSourceResult {
+  source: UpdateSource;
+  result: {
+    ok: boolean;
+    latestVersion: string | null;
+    hasUpdate: boolean;
+    reason?: string;
+    message?: string;
+    downloadUrl?: string | null;
+    pageUrl?: string | null;
+    sha256?: string | null;
+    notes?: string | null;
+    forced?: boolean;
+  };
+}
 
 const PROFILE_FIELDS: { key: keyof UserProfile; label: string; placeholder?: string; type?: string }[] = [
   { key: 'student_id', label: '学号', placeholder: '如：202310030101' },
@@ -61,14 +84,32 @@ export default function SettingsPage() {
 
   // ===== 软件更新 =====
   const appInfo = useStore(s => s.appInfo);
-  const [updateSource, setUpdateSource] = useState('');
-  const [updateAuto, setUpdateAuto] = useState(true);
+  const setUpdateInfo = useStore(s => s.setUpdateInfo);
+  const [sources, setSources] = useState<UpdateSource[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [srcSaved, setSrcSaved] = useState(false);
   const [updateChecking, setUpdateChecking] = useState(false);
-  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [aggregate, setAggregate] = useState<{
+    winner: {
+      currentVersion: string;
+      latestVersion: string | null;
+      hasUpdate: boolean;
+      downloadUrl?: string | null;
+      pageUrl?: string | null;
+      sha256?: string | null;
+      notes?: string | null;
+      forced?: boolean;
+      sourceName?: string;
+      source?: string;
+    } | null;
+    perSource: Array<{ source: UpdateSource; result: any }>;
+    checkedAt: number;
+  } | null>(null);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [dl, setDl] = useState<{ running: boolean; percent: number; received: number; total: number } | null>(null);
   const [dlPath, setDlPath] = useState<string | null>(null);
+  const [updateAuto, setUpdateAuto] = useState(true);
+  const [showSrcEditor, setShowSrcEditor] = useState(false);
 
   // ===== 课表 Excel 导入 =====
   const [xlsOpen, setXlsOpen] = useState(false);
@@ -100,7 +141,8 @@ export default function SettingsPage() {
     (async () => {
       try {
         const cfg = await window.taskAPI.updater.config();
-        setUpdateSource(cfg.source || cfg.defaultSource || '');
+        setSources(cfg.sources || []);
+        setActiveIndex(cfg.activeIndex ?? 0);
         setUpdateAuto(cfg.autoCheck);
       } catch { /* 忽略 */ }
     })();
@@ -119,18 +161,43 @@ export default function SettingsPage() {
     return () => { off?.(); };
   }, []);
 
-  const saveUpdateSource = async () => {
-    const src = updateSource.trim();
+  const saveSources = async (next: UpdateSource[], nextActive: number) => {
     try {
-      const r = await window.taskAPI.updater.setSource(src);
-      setSettings({ ...settings, update_source: r.source });
+      const r = await window.taskAPI.updater.setSources({ sources: next, activeIndex: nextActive });
+      setSources(r.sources);
+      setActiveIndex(r.activeIndex);
       setSrcSaved(true);
       setTimeout(() => setSrcSaved(false), 1800);
-      setUpdateResult(null);
       setUpdateMsg(null);
     } catch (e: any) {
       setUpdateMsg(e?.message || '保存失败');
     }
+  };
+
+  const addSource = () => {
+    const blank: UpdateSource = { name: `源 ${sources.length + 1}`, url: '', enabled: true, primary: false };
+    setSources([...sources, blank]);
+    setShowSrcEditor(true);
+  };
+  const updateSourceLocal = (idx: number, patch: Partial<UpdateSource>) => {
+    setSources((arr) => arr.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const removeSource = (idx: number) => {
+    if (!confirm(`删除源「${sources[idx]?.name || '源 ' + (idx + 1)}」？`)) return;
+    const next = sources.filter((_, i) => i !== idx);
+    const safe = Math.max(0, Math.min(activeIndex, next.length - 1));
+    void saveSources(next, safe);
+  };
+  const setAsPrimary = async (idx: number) => {
+    await saveSources(sources.map((s, i) => ({ ...s, primary: i === idx })), idx);
+  };
+  const toggleEnabled = async (idx: number) => {
+    const next = sources.map((s, i) => (i === idx ? { ...s, enabled: !s.enabled } : s));
+    if (next.every((s) => !s.enabled)) {
+      alert('至少保留一个启用的源');
+      return;
+    }
+    await saveSources(next, activeIndex);
   };
 
   const toggleAutoCheck = async (v: boolean) => {
@@ -144,9 +211,24 @@ export default function SettingsPage() {
     setDl(null);
     setDlPath(null);
     try {
-      const r = await window.taskAPI.updater.check({ force: true });
-      setUpdateResult(r);
-      if (!r.ok && r.message) setUpdateMsg(r.message);
+      const r = await window.taskAPI.updater.checkAll();
+      setAggregate(r);
+      // 把 winner 推给全局 UpdateNotification
+      if (r.winner) {
+        const perSource = r.perSource.map(({ source, result }) => ({
+          name: source.name,
+          url: source.url,
+          ok: result.ok,
+          latestVersion: result.latestVersion,
+          reason: result.reason,
+          message: result.message,
+        }));
+        setUpdateInfo({ ...r.winner, perSource } as any);
+      } else {
+        setUpdateInfo(null);
+      }
+      const failed = r.perSource.filter((p) => !p.result.ok && p.result.message).map((p) => `${p.source.name}: ${p.result.message}`);
+      if (!r.winner && failed.length) setUpdateMsg(failed.join('\n'));
     } catch (e: any) {
       setUpdateMsg(e?.message || '检查更新失败');
     } finally {
@@ -155,15 +237,15 @@ export default function SettingsPage() {
   };
 
   const startDownload = async () => {
-    const r0 = updateResult;
-    if (!r0?.downloadUrl) return;
+    const w = aggregate?.winner;
+    if (!w?.downloadUrl) return;
     setUpdateMsg(null);
     setDl({ running: true, percent: 0, received: 0, total: 0 });
     try {
       const r = await window.taskAPI.updater.download({
-        url: r0.downloadUrl,
-        version: r0.latestVersion || 'latest',
-        sha256: r0.sha256 || null,
+        url: w.downloadUrl,
+        version: w.latestVersion || 'latest',
+        sha256: w.sha256 || null,
       });
       if (!r.ok) {
         setDl(null);
@@ -184,7 +266,7 @@ export default function SettingsPage() {
   };
 
   const openReleasePage = async (url?: string | null) => {
-    const u = url || updateResult?.pageUrl || updateSource;
+    const u = url || aggregate?.winner?.pageUrl || sources[activeIndex]?.url || '';
     if (!u) return;
     const r = await window.taskAPI.updater.openExternal(u);
     if (!r.ok) setUpdateMsg(r.error || '打开链接失败');
@@ -197,9 +279,10 @@ export default function SettingsPage() {
   };
 
   const ignoreVersion = async () => {
-    if (!updateResult?.latestVersion) return;
-    await window.taskAPI.updater.skipVersion(updateResult.latestVersion);
-    setUpdateResult({ ...updateResult, skipped: true });
+    const w = aggregate?.winner;
+    if (!w?.latestVersion) return;
+    await window.taskAPI.updater.skipVersion(w.latestVersion);
+    setAggregate((a) => (a && a.winner ? { ...a, winner: { ...a.winner } as any } : a));
   };
 
   useEffect(() => {
@@ -614,57 +697,106 @@ export default function SettingsPage() {
         <Row label="当前版本">
           <div className="flex items-center gap-3 font-mono text-sm">
             <span className="text-neon-green">v{appInfo?.version || '—'}</span>
-            {updateResult?.hasUpdate && !updateResult?.skipped && (
+            {aggregate?.winner?.hasUpdate && (
               <span className="px-2 py-0.5 rounded text-[10px] bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/40">
-                新版本 v{updateResult.latestVersion} 可用
+                新版本 v{aggregate.winner.latestVersion} 可用
               </span>
             )}
           </div>
         </Row>
 
-        <Row label="更新源地址">
+        <Row label="更新源">
           <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                value={updateSource}
-                onChange={(e) => setUpdateSource(e.target.value)}
-                placeholder="留空 = 未配置；可填版本清单 JSON 直链或网盘分享页链接"
-                className="input-neon flex-1 font-mono text-xs"
-              />
-              <button onClick={saveUpdateSource} className="btn-ghost shrink-0">
-                {srcSaved ? <><CheckCircle2 size={14} className="text-neon-green" /> 已保存</> : <><Save size={14} /> 保存地址</>}
-              </button>
+            {/* 源列表（紧凑） */}
+            <div className="space-y-1">
+              {sources.length === 0 ? (
+                <div className="font-mono text-[10px] text-text-dim">尚未配置更新源，点下方「+ 添加源」新增。</div>
+              ) : sources.map((s, i) => (
+                <div key={i} className="flex items-center gap-2 font-mono text-[11px] p-2 rounded border border-neon-green/15 bg-ink-base/40">
+                  <input
+                    type="checkbox"
+                    checked={s.enabled}
+                    onChange={() => toggleEnabled(i)}
+                    className="accent-[#00FF88]"
+                    title={s.enabled ? '已启用' : '已禁用'}
+                  />
+                  {s.primary ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-green/15 text-neon-green border border-neon-green/40">主</span>
+                  ) : (
+                    <button onClick={() => setAsPrimary(i)} className="px-1.5 py-0.5 rounded text-[9px] border border-text-dim/30 text-text-dim hover:border-neon-green hover:text-neon-green" title="设为主源">置主</button>
+                  )}
+                  <input
+                    value={s.name}
+                    onChange={(e) => updateSourceLocal(i, { name: e.target.value })}
+                    placeholder="源名称"
+                    className="input-neon w-32 py-0.5 px-2 text-xs"
+                  />
+                  <input
+                    value={s.url}
+                    onChange={(e) => updateSourceLocal(i, { url: e.target.value })}
+                    placeholder="版本清单 JSON 直链 / 网盘分享页"
+                    className="input-neon flex-1 py-0.5 px-2 text-xs"
+                  />
+                  <button onClick={() => removeSource(i)} className="btn-ghost text-neon-danger p-1" title="删除该源">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
             </div>
-            <p className="font-mono text-[10px] text-text-dim leading-relaxed">
-              推荐放一个版本清单 JSON（网盘直链 / 静态托管均可）：<br />
-              {'{ "version": "0.3.1", "notes": "更新说明", "url": "安装包直链", "page": "网盘分享页", "sha256": "可选校验和" }'}
-            </p>
+
+            <div className="flex items-center gap-2">
+              <button onClick={addSource} className="btn-ghost text-xs py-1">
+                <Plus size={12} /> 添加源
+              </button>
+              <button
+                onClick={() => saveSources(sources, activeIndex)}
+                disabled={!sources.length}
+                className="btn-neon text-xs py-1"
+              >
+                {srcSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : <><Save size={12} /> 保存源</>}
+              </button>
+              <span className="font-mono text-[10px] text-text-dim">
+                内置两个源：<strong className="text-neon-green">StarOS（nrsc.games）</strong>为主源，
+                <strong className="text-neon-green">GitHub leastversion</strong>为备用镜像；
+                检查更新时会两个一起查，取版本最高的那个升级。
+              </span>
+            </div>
+
+            <details className="font-mono text-[10px] text-text-dim">
+              <summary className="cursor-pointer hover:text-neon-green">支持的清单格式（参考）</summary>
+              <pre className="mt-1 p-2 rounded bg-ink-base/60 border border-neon-green/10 whitespace-pre-wrap">
+{`{
+  "version": "1.2.0",
+  "notes": "更新说明",
+  "url": "安装包直链（application/octet-stream）",
+  "page": "网盘分享页（兜底入口）",
+  "sha256": "可选校验和"
+}`}
+              </pre>
+            </details>
           </div>
         </Row>
 
         <Row label="启动时自动检查">
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" checked={updateAuto} onChange={(e) => toggleAutoCheck(e.target.checked)} className="accent-[#00FF88]" />
-            <span className="text-xs text-text-secondary">开启后每次启动会静默检查，发现新版本会在左侧「设置」显示 NEW 标记</span>
+            <span className="text-xs text-text-secondary">
+              开启后每次启动会<strong className="text-neon-yellow">查所有启用的源</strong>，发现新版本会<strong className="text-neon-yellow">在右下角弹窗告知</strong>；左侧「设置」也会有 NEW 标记。
+            </span>
           </label>
         </Row>
 
         <div className="flex flex-wrap gap-2 pt-1">
           <button onClick={checkUpdate} disabled={updateChecking} className="btn-neon">
-            <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查更新'}
+            <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查所有源'}
           </button>
-          {updateResult?.hasUpdate && updateResult?.downloadUrl && !dlPath && (
+          {aggregate?.winner?.hasUpdate && aggregate.winner.downloadUrl && !dlPath && (
             <button onClick={startDownload} disabled={!!dl?.running} className="btn-neon btn-neon-yellow">
-              <Download size={14} /> {dl?.running ? '下载中…' : '下载更新'}
+              <Download size={14} /> {dl?.running ? '下载中…' : `下载 v${aggregate.winner.latestVersion}`}
             </button>
           )}
-          {updateResult?.hasUpdate && (updateResult?.pageUrl || updateSource) && (
-            <button onClick={() => openReleasePage(updateResult?.pageUrl)} className="btn-ghost">
-              <ExternalLink size={14} /> 打开发布页
-            </button>
-          )}
-          {!updateResult?.hasUpdate && (updateResult?.pageUrl || updateSource.trim()) && (
-            <button onClick={() => openReleasePage(updateResult?.pageUrl)} className="btn-ghost">
+          {aggregate?.winner && (aggregate.winner.pageUrl || aggregate.winner.source) && (
+            <button onClick={() => openReleasePage(aggregate?.winner?.pageUrl)} className="btn-ghost">
               <ExternalLink size={14} /> 打开发布页
             </button>
           )}
@@ -673,11 +805,11 @@ export default function SettingsPage() {
               <Sparkles size={14} /> 立即安装并重启
             </button>
           )}
-          {updateResult?.hasUpdate && !updateResult?.skipped && (
-            <button onClick={ignoreVersion} className="btn-ghost text-text-dim">忽略 v{updateResult.latestVersion}</button>
+          {aggregate?.winner?.hasUpdate && (
+            <button onClick={ignoreVersion} className="btn-ghost text-text-dim">忽略 v{aggregate.winner.latestVersion}</button>
           )}
-          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="GitHub 打不开 / 下载慢的解决教程">
-            <ExternalLink size={14} /> 无法连接 GitHub？点这
+          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="GitHub 源打不开 / 下载慢的解决教程（主源 nrsc.games 不受影响）">
+            <ExternalLink size={14} /> GitHub 源打不开？点这
           </button>
         </div>
 
@@ -696,47 +828,46 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* 结果 / 提示 */}
+        {/* 多源结果汇总 */}
+        {aggregate && aggregate.perSource.length > 0 && !updateMsg && (
+          <div className="mt-1 p-3 rounded-md border border-neon-green/15 bg-ink-base/40 space-y-1">
+            <div className="font-mono text-[10px] text-text-dim mb-1">
+              {aggregate.checkedAt ? `检查时间：${dayjs(aggregate.checkedAt).format('YYYY-MM-DD HH:mm:ss')}` : '本次检查结果'}
+            </div>
+            {aggregate.perSource.map(({ source, result }, i) => (
+              <div key={i} className="flex justify-between font-mono text-[10px]">
+                <span className="text-text-secondary truncate pr-2">{source.name}{source.primary ? ' (主)' : ''}</span>
+                <span className={result.ok ? 'text-neon-green' : 'text-neon-danger'}>
+                  {result.ok
+                    ? `v${result.latestVersion}${result.hasUpdate ? ' · 有更新' : ' · 已是最新'}`
+                    : (result.reason || '失败') + (result.message ? ` · ${result.message}` : '')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 错误 */}
         {updateMsg && (
           <div className="mt-1 p-3 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap break-all">
             <div>✗ {updateMsg}</div>
             <button onClick={openGithubFix} className="mt-2 underline underline-offset-2 hover:opacity-80">
-              无法连接 GitHub？点这（解决教程）
+              GitHub 源连不上？点这（解决教程）
             </button>
           </div>
         )}
-        {updateResult?.ok && updateResult?.hasUpdate && !updateMsg && (
-          <div className="mt-1 p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
-            <div className="flex items-center justify-between font-mono text-xs">
-              <span className="text-neon-yellow font-bold">发现新版本 v{updateResult.latestVersion}</span>
-              <span className="text-text-dim">当前 v{updateResult.currentVersion}{updateResult.forced ? ' · 建议尽快更新' : ''}</span>
-            </div>
-            {updateResult.notes && (
-              <div className="text-xs text-text-secondary whitespace-pre-wrap max-h-40 overflow-y-auto font-mono leading-relaxed">{updateResult.notes}</div>
-            )}
-            {!updateResult.downloadUrl && (
-              <div className="flex items-start gap-1.5 font-mono text-[10px] text-text-dim">
-                <AlertCircle size={12} className="mt-0.5 shrink-0" />
-                该更新源未提供安装包直链，请点「打开发布页」在浏览器中下载。
-              </div>
-            )}
+
+        {/* 已是最新 */}
+        {aggregate && !aggregate.winner && !updateMsg && aggregate.perSource.some((p) => p.result.ok) && (
+          <div className="mt-1 p-3 rounded-md border border-neon-green/40 bg-neon-green/5 font-mono text-xs text-neon-green flex items-center gap-2">
+            <CheckCircle2 size={14} /> 已是最新版本（v{appInfo?.version || '—'}）
           </div>
         )}
+
         {dlPath && (
           <div className="mt-1 p-3 rounded-md border border-neon-green/40 bg-neon-green/5 font-mono text-[11px] text-neon-green break-all">
             ✓ 安装包已下载：{dlPath}
           </div>
-        )}
-        {updateResult?.ok && updateResult?.hasUpdate === false && !!updateResult?.latestVersion && !updateMsg && (
-          <div className="mt-1 p-3 rounded-md border border-neon-green/40 bg-neon-green/5 font-mono text-xs text-neon-green flex items-center gap-2">
-            <CheckCircle2 size={14} /> 已是最新版本（v{updateResult.currentVersion}）
-          </div>
-        )}
-        {updateResult?.skipped && updateResult?.hasUpdate && (
-          <div className="mt-1 font-mono text-[10px] text-text-dim">已忽略 v{updateResult.latestVersion}，点击「检查更新」可重新提示。</div>
-        )}
-        {updateResult?.message && updateResult?.ok !== false && (
-          <div className="mt-1 font-mono text-[10px] text-text-dim">{updateResult.message}</div>
         )}
       </Section>
 

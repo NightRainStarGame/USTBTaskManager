@@ -1,6 +1,6 @@
 {
   "name": "task-manager",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "课程 / 项目 / 日历一体化可视化工作流（霓虹荧光科技风）",
   "main": "dist-electron/main.js",
   "author": "豆芽",
@@ -15,6 +15,9 @@
     "release:manifest": "node scripts/release.js",
     "release:verify": "node scripts/release.js --verify",
     "publish:github": "node scripts/publish-github.js",
+    "publish:vps": "node scripts/publish-vps.js",
+    "verify:vps": "node scripts/publish-vps.js --verify",
+    "test:updater": "tsc -p tsconfig.node.json && node scripts/test-updater-sources.js",
     "verify:update": "node scripts/verify-live-update.js",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -54,7 +57,7 @@
     "appId": "com.douya.taskmanager",
     "productName": "TaskManager",
     "directories": {
-      "output": "release-v1.1"
+      "output": "release-v1.1.1"
     },
     "files": [
       "dist/**",
@@ -91,7 +94,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "TaskManager",
-      "artifactName": "${productName} Setup ${version}.${ext}"
+      "artifactName": "${productName} Setup ${version}.${ext}",
+      "include": "build/installer.nsh"
     },
     "asar": true
   }

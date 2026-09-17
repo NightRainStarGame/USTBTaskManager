@@ -18,6 +18,17 @@ export interface Category {
 const DAY = 86400000;
 /** 浏览器预览用的模拟版本号（与 package.json 保持一致即可，仅展示用） */
 const MOCK_APP_VERSION = '0.3.0';
+
+/**
+ * 浏览器预览时的默认更新源，需与 electron/updater/index.ts 的
+ * DEFAULT_UPDATE_SOURCES 保持一致（主源 = StarOS 自建站，GitHub 为备用镜像）。
+ */
+const MOCK_DEFAULT_SOURCES: Array<{ name: string; url: string; enabled: boolean; primary: boolean }> = [
+  { name: 'StarOS / nrsc.games', url: 'https://nrsc.games/downloads/taskmanager/latest.json', enabled: true, primary: true },
+  { name: 'GitHub / leastversion', url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json', enabled: true, primary: false },
+];
+
+const MOCK_DEFAULT_SOURCE = MOCK_DEFAULT_SOURCES[0].url;
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 const T0 = today.getTime();
@@ -30,7 +41,7 @@ let categories: Category[] = [];
 let projects: Project[] = [];
 let tasks: ProjectTask[] = [];
 
-let settings: Record<string, string> = {
+let settings: Record<string, any> = {
   theme: 'green',
   semester: '2026-Fall',
   semester_start: String(T0),
@@ -483,15 +494,28 @@ export function createBrowserApi() {
 
     // 软件更新（浏览器预览：模拟检查结果，不做真实下载）
     updater: {
-      config: async () => ({
-        defaultSource: '',
-        source: settings.update_source || '',
-        autoCheck: settings.update_auto_check !== '0',
-        skippedVersion: settings.update_skipped_version || null,
-      }),
-      check: async () => {
+      config: async () => {
+        const sources = Array.isArray(settings.update_sources) ? settings.update_sources : [];
+        const finalSources = sources.length ? sources : MOCK_DEFAULT_SOURCES.map((s) => ({ ...s }));
+        const activeIndex = finalSources.findIndex((s: any) => s.primary);
+        return {
+          defaultSources: finalSources,
+          sources: finalSources,
+          activeIndex: activeIndex >= 0 ? activeIndex : 0,
+          source: finalSources[activeIndex >= 0 ? activeIndex : 0]?.url || '',
+          defaultSource: MOCK_DEFAULT_SOURCE,
+          autoCheck: settings.update_auto_check !== '0',
+          skippedVersion: settings.update_skipped_version || null,
+          lastCheckAt: Number(settings.update_last_check) || 0,
+        };
+      },
+      check: async (opts: any) => {
         await delay();
-        const source = (settings.update_source || '').trim();
+        const sources = Array.isArray(settings.update_sources) ? settings.update_sources : [];
+        const finalSources = sources.length ? sources : MOCK_DEFAULT_SOURCES.map((s) => ({ ...s }));
+        const activeIndex = finalSources.findIndex((s: any) => s.primary);
+        const idx = opts?.sourceIndex ?? (activeIndex >= 0 ? activeIndex : 0);
+        const source = (finalSources[idx]?.url || '').trim();
         if (!source) {
           return {
             ok: false, reason: 'not_configured', configured: false,
@@ -509,17 +533,59 @@ export function createBrowserApi() {
           pageUrl: source,
           sha256: null,
           source,
+          sourceIndex: idx,
+          sourceName: finalSources[idx]?.name,
           checkedAt: Date.now(),
           skipped: false,
           forced: false,
         };
+      },
+      checkAll: async () => {
+        await delay();
+        const sources = Array.isArray(settings.update_sources) ? settings.update_sources : [];
+        const finalSources = sources.length ? sources : MOCK_DEFAULT_SOURCES.map((s) => ({ ...s }));
+        const perSource = finalSources.map((s: any, i: number) => ({
+          source: s,
+          result: {
+            ok: true, configured: true,
+            currentVersion: MOCK_APP_VERSION,
+            latestVersion: '0.3.1',
+            hasUpdate: true,
+            notes: '· 新增课表日历视图',
+            downloadUrl: `${(s.url || '').replace(/\/[^/]*$/, '')}/TaskManager Setup 0.3.1.exe`,
+            pageUrl: s.url,
+            sourceIndex: i,
+            sourceName: s.name,
+            source: s.url,
+            checkedAt: Date.now(),
+            skipped: false,
+            forced: false,
+          },
+        }));
+        return { currentVersion: MOCK_APP_VERSION, ok: true, anyConfigured: true, winner: perSource[0].result, perSource, checkedAt: Date.now() };
       },
       download: async () => ({ ok: false, error: '(浏览器预览模式不支持下载安装包，请在桌面应用中使用)' }),
       cancel: async () => ({ ok: true }),
       install: async () => ({ ok: false, error: '(浏览器预览模式不支持安装，请在桌面应用中使用)' }),
       openExternal: async (url: string) => { window.open(url, '_blank', 'noopener'); return { ok: true }; },
       skipVersion: async (v: string) => { settings.update_skipped_version = v; return { ok: true }; },
-      setSource: async (s: string) => { settings.update_source = s; return { ok: true, source: s }; },
+      setSource: async (s: string) => {
+        settings.update_source = s;
+        settings.update_sources = [{ name: '自定义源', url: s, enabled: true, primary: true }];
+        return { ok: true, source: s, sources: settings.update_sources as any };
+      },
+      setSources: async (payload: any) => {
+        settings.update_sources = (payload?.sources || []).map((s: any) => ({ ...s }));
+        settings.update_active_index = String(payload?.activeIndex ?? 0);
+        return { ok: true, sources: settings.update_sources as any, activeIndex: payload?.activeIndex ?? 0 };
+      },
+      setActiveSource: async (index: number) => {
+        const arr: any[] = Array.isArray(settings.update_sources) ? settings.update_sources : [];
+        const safe = Math.max(0, Math.min(index, arr.length - 1));
+        settings.update_sources = arr.map((s, i) => ({ ...s, primary: i === safe }));
+        settings.update_active_index = String(safe);
+        return { ok: true, activeIndex: safe, sources: settings.update_sources as any };
+      },
       setAutoCheck: async (enabled: boolean) => { settings.update_auto_check = enabled ? '1' : '0'; return { ok: true, enabled }; },
       onProgress: () => () => { /* noop */ },
       onAvailable: () => () => { /* noop */ },

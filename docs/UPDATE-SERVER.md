@@ -29,6 +29,41 @@ App 启动 / 点击「检查更新」
 
 ---
 
+## ⭐ 本项目当前实际使用的更新源（先看这节）
+
+已经搭好并投入使用了。**两个源并存，App 会同时查、取版本号最高的那个升级**，单个源挂掉不影响另一个。
+
+| 源 | 清单地址 | 托管在哪 |
+|---|---|---|
+| **主源** | `https://nrsc.games/downloads/taskmanager/latest.json` | StarOS 站点（相邻项目 `D:\StarMain\Web`；VPS 上是 `/opt/starmain`） |
+| 备用 | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | GitHub 仓库根目录 |
+
+- 主源短地址等价：`https://nrsc.games/taskmanager/latest.json`
+- 主源目录布局是 `downloads/taskmanager/{leastversion,oldversion}/`，**不是**下面「推荐结构」里的 `files/releases`。
+  站点页面「历史版本」区块就是按这个布局读 `oldversion/versions.json` 的。
+- 清单里 `url` / `page` 用 `__BASE__` 占位符，由站点服务端替换成 `.env` 的 `PUBLIC_BASE_URL`（当前是 `https://nrsc.games`）；
+  所以**换域名不用改清单**，改站点 `.env` 即可。
+- 清单响应头是 `Cache-Control: no-store`，客户端每次拿到最新版本 —— 不要改成可缓存。
+
+**发新版本只要两条命令**（细节见仓库 README「发布新版本」一节）：
+
+```bash
+npm run build:exe
+
+npm run publish:vps      # 写清单 + 滚版本 + 算 SHA-256，并打印 rsync 上服务器命令
+npm run publish:github   # 顺手把同一版本发到 GitHub 备用源（可选，但推荐）
+```
+
+发布完不用重启 VPS 上的服务 —— 清单每次请求都读盘。
+
+**改默认源地址**：`electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`（**重新打包后**才对新装用户生效）；
+已安装用户的值存在各自本机 SQLite 的 `update_sources` 里，在「设置 → 软件更新 → 更新源」改，不需要重新打包。
+
+> 下面 1~5 节是**从零搭一个更新源**的通用指南（自建服务器 / 腾讯云 COS / 阿里云 OSS / GitHub / 网盘），
+> 以后想换托管方案再看；照当前方案走的话不需要重新搭建。
+
+---
+
 ## 1. 服务器目录结构（推荐）
 
 ```

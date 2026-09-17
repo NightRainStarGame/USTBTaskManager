@@ -24,7 +24,8 @@
  *   3) 直接给网盘分享页链接 —— 无法自动解析版本时，界面会退化为「打开发布页」按钮，
  *      由用户在浏览器里下载安装包。
  *
- * 更新源地址优先级：设置项 update_source > 代码里的 DEFAULT_UPDATE_SOURCE。
+ * 更新源地址优先级：设置项 update_sources（用户在设置页维护的多源列表）
+ *                    > 旧版单源设置 update_source > 代码里的 DEFAULT_UPDATE_SOURCES。
  */
 import { app, net, shell, ipcMain, BrowserWindow } from 'electron';
 import path from 'node:path';
@@ -33,23 +34,54 @@ import crypto from 'node:crypto';
 import type { DB } from '../db/index';
 
 /**
- * ⬇️⬇️⬇️ 默认更新源地址（发布新版本时填在这里，留空 = 未配置）⬇️⬇️⬇️
+ * ⬇️⬇️⬇️ 默认更新源地址（发布新版本时维护这里）⬇️⬇️⬇️
  *
- * 当前指向 GitHub 仓库中的版本清单 latest.json（固定地址，每次发版覆盖它即可）：
- *   https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json
+ * 内置两个源。App 启动 / 点「检查更新」时会**同时查所有启用的源**，
+ * 取版本号最高的那个来升级，单个源挂掉不影响另一个 —— 相当于双通道备份。
  *
- * 安装包本体托管在 GitHub Release 上，由 latest.json 里的 url 字段给出。
- * 若该域名在你的网络环境下不可达，可在「设置 → 软件更新 → 更新源地址」里改成镜像地址
- * （例如 https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json）。
+ *   1) StarOS 自建源（nrsc.games）—— 默认主源
+ *      清单：https://nrsc.games/downloads/taskmanager/latest.json
+ *      安装包与清单托管在同一站点，国内访问稳定，没有 GitHub 的限速 / 断连问题。
+ *
+ *   2) GitHub / leastversion —— 备用镜像源
+ *      清单：https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json
+ *      自建站故障时仍能升级；因国内访问 raw.githubusercontent.com 常超时，不作主源。
+ *
+ * 两个源分别由 scripts/publish-vps.js 与 scripts/publish-github.js 维护，版本号保持一致。
+ * 若某个源落后于另一个也不影响升级（聚合时取最高版本）。
+ * 用户也可在「设置 → 软件更新 → 更新源」里增删源、切换主源或换成第三方镜像。
  */
-export const DEFAULT_UPDATE_SOURCE =
-  'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json';
+export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
+  {
+    name: 'StarOS / nrsc.games',
+    url: 'https://nrsc.games/downloads/taskmanager/latest.json',
+    enabled: true,
+    primary: true,
+  },
+  {
+    name: 'GitHub / leastversion',
+    url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
+    enabled: true,
+    primary: false,
+  },
+];
+export const DEFAULT_UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]?.url || '';
 
 const FETCH_TIMEOUT_MS = 15000;
 const MAX_MANIFEST_BYTES = 1024 * 512; // 清单最大 512KB
-const SETTING_SOURCE = 'update_source';
+const SETTING_SOURCES = 'update_sources';          // JSON 数组字符串
+const SETTING_ACTIVE_INDEX = 'update_active_index'; // '0' / '1' / '2'…
+const SETTING_SOURCES_LEGACY = 'update_source';    // 旧版单字符串，兼容老库
 const SETTING_AUTO = 'update_auto_check';
 const SETTING_SKIPPED = 'update_skipped_version';
+const SETTING_LAST_CHECK = 'update_last_check';
+
+export interface UpdateSource {
+  name: string;       // 显示名（如「StarOS / nrsc.games」「GitHub / leastversion」）
+  url: string;        // 清单地址（latest.json 直链）
+  enabled: boolean;   // 是否启用
+  primary: boolean;   // 是否为主源（UI 里标"主"）
+}
 
 export interface UpdateManifest {
   version: string;
@@ -77,8 +109,29 @@ export interface UpdateCheckResult {
   forced?: boolean;
   /** 用户此前选择「忽略此版本」 */
   skipped?: boolean;
+  /** 单源时是源地址；多源合并时是 `GitHub · 云盘` 之类 */
   source?: string;
+  /** 多源模式下：命中的源 index，便于 UI 展示 */
+  sourceIndex?: number;
+  /** 多源模式下：命中的源 name */
+  sourceName?: string;
   checkedAt?: number;
+}
+
+/** 多源合并后的统一结果（取所有源中版本最高的那一条） */
+export interface UpdateAggregate {
+  currentVersion: string;
+  ok: boolean;
+  /** 是否至少有一个「已启用且填了地址」的源（用来区分「没配源」和「源全都连不上」） */
+  anyConfigured: boolean;
+  /** 命中的最佳版本（null = 当前就是最新 / 全部失败） */
+  winner: UpdateCheckResult | null;
+  /** 每个源独立结果（顺序与 sources 一致） */
+  perSource: Array<{
+    source: UpdateSource;
+    result: UpdateCheckResult;
+  }>;
+  checkedAt: number;
 }
 
 // ===================== 版本号比较 =====================
@@ -177,9 +230,72 @@ function setSetting(db: DB, key: string, value: string) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
 
+/** 把用户归并/补全的源：第一个 primary = 主源；至少保留 DEFAULT_UPDATE_SOURCES[0] */
+export function getSources(db: DB | null): UpdateSource[] {
+  const raw = getSetting(db, SETTING_SOURCES);
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) {
+        return arr
+          .filter((s: any) => s && typeof s.url === 'string' && s.url.trim())
+          .map((s: any, i: number): UpdateSource => ({
+            name: String(s.name || `源 ${i + 1}`).slice(0, 40),
+            url: String(s.url).trim().slice(0, 2048),
+            enabled: s.enabled !== false,
+            primary: s.primary === true,
+          }));
+      }
+    } catch { /* fallthrough */ }
+  }
+  // 兼容旧库：把 update_source（单字符串）当成唯一的一个自定义源
+  const legacy = (getSetting(db, SETTING_SOURCES_LEGACY) || '').trim();
+  if (legacy) {
+    return [{ name: '自定义源（旧版设置）', url: legacy, enabled: true, primary: true }];
+  }
+  return DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s }));
+}
+
+export function setSources(db: DB | null, sources: UpdateSource[]): UpdateSource[] {
+  // 归一化：清洗字段；至少保证 1 个；保证至少有 1 个 primary
+  const cleaned = sources
+    .filter((s) => s && typeof s.url === 'string' && s.url.trim())
+    .map((s) => ({
+      name: String(s.name || '源').slice(0, 40),
+      url: String(s.url).trim().slice(0, 2048),
+      enabled: s.enabled !== false,
+      primary: !!s.primary,
+    }));
+  const final = cleaned.length ? cleaned : [DEFAULT_UPDATE_SOURCES[0]];
+  const hasPrimary = final.some((s) => s.primary);
+  if (!hasPrimary) final[0].primary = true;
+  if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(final));
+  return final;
+}
+
+/** 当前激活的主源 index（用户在 Settings 里切换） */
+export function getActiveSourceIndex(db: DB | null): number {
+  const raw = parseInt(getSetting(db, SETTING_ACTIVE_INDEX), 10);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  const sources = getSources(db);
+  const idx = sources.findIndex((s) => s.primary);
+  return idx >= 0 ? idx : 0;
+}
+
+export function setActiveSourceIndex(db: DB | null, index: number): number {
+  const sources = getSources(db);
+  const safe = Math.max(0, Math.min(index, sources.length - 1));
+  // 切 active 也意味着只有这个标 primary
+  const updated = sources.map((s, i) => ({ ...s, primary: i === safe }));
+  setSources(db, updated);
+  if (db) setSetting(db, SETTING_ACTIVE_INDEX, String(safe));
+  return safe;
+}
+
+/** 兼容旧 API：返回当前主源 URL */
 export function getEffectiveSource(db: DB | null): string {
-  const fromSettings = (getSetting(db, SETTING_SOURCE) || '').trim();
-  return fromSettings || DEFAULT_UPDATE_SOURCE.trim();
+  const idx = getActiveSourceIndex(db);
+  return getSources(db)[idx]?.url || DEFAULT_UPDATE_SOURCES[0]?.url || '';
 }
 
 // ===================== 网络请求 =====================
@@ -225,34 +341,45 @@ function describeError(e: any): string {
   return msg || '未知错误';
 }
 
-// ===================== 检查更新 =====================
-export async function checkForUpdate(db: DB | null, opts?: { force?: boolean }): Promise<UpdateCheckResult> {
+// ===================== 检查更新（单源） =====================
+/**
+ * 检查单个源的更新。
+ * opts.sourceIndex 省略则用当前激活源。
+ */
+export async function checkForUpdate(
+  db: DB | null,
+  opts?: { force?: boolean; sourceIndex?: number }
+): Promise<UpdateCheckResult> {
   const currentVersion = app.getVersion();
-  const source = getEffectiveSource(db);
+  const sources = getSources(db);
+  const idx = opts?.sourceIndex ?? getActiveSourceIndex(db);
+  const src = sources[idx];
   const base: UpdateCheckResult = {
     ok: false,
-    configured: !!source,
+    configured: !!src?.url,
     currentVersion,
-    source,
+    source: src?.url,
+    sourceIndex: idx,
+    sourceName: src?.name,
     checkedAt: Date.now(),
   };
 
-  if (!source) {
+  if (!src?.url) {
     return {
       ...base,
       reason: 'not_configured',
-      message: '尚未配置更新源地址。填写后即可检查更新（可填版本清单 JSON 直链或网盘分享页）。',
+      message: '尚未配置更新源地址。',
     };
   }
 
   let text: string;
   try {
-    text = await fetchText(source);
+    text = await fetchText(src.url);
   } catch (e: any) {
     return { ...base, reason: 'network', message: describeError(e) };
   }
 
-  const manifest = parseManifest(text, source);
+  const manifest = parseManifest(text, src.url);
   if (!manifest) {
     // 能连上但内容不像清单 → 大概率是网盘分享页，退化为「打开发布页」
     return {
@@ -262,7 +389,7 @@ export async function checkForUpdate(db: DB | null, opts?: { force?: boolean }):
       message: '更新源内容无法识别为版本清单（可能是网盘分享页），可点「打开发布页」在浏览器中查看。',
       latestVersion: null,
       hasUpdate: false,
-      pageUrl: source,
+      pageUrl: src.url,
       notes: text.slice(0, 400),
     };
   }
@@ -279,10 +406,55 @@ export async function checkForUpdate(db: DB | null, opts?: { force?: boolean }):
     skipped,
     notes: manifest.notes,
     downloadUrl: manifest.url,
-    pageUrl: manifest.page || source,
+    pageUrl: manifest.page || src.url,
     sha256: manifest.sha256,
     forced: hasUpdate && !!manifest.force,
   };
+}
+
+// ===================== 检查更新（多源聚合） =====================
+/**
+ * 查所有启用的源，挑**版本最高**的更新；任一源失败不影响其他源。
+ * 若全部失败，winner = null + perSource 都标记网络/解析错误。
+ */
+export async function checkAllSources(db: DB | null): Promise<UpdateAggregate> {
+  const currentVersion = app.getVersion();
+  // 只取一次源列表：checkForUpdate 内部也是按同一个顺序取源，因此下标必须基于这一次的结果。
+  // 切勿改回 `getSources(db).indexOf(src)` —— getSources 每次调用都返回全新对象，
+  // 对象身份比对恒为 -1，会让每个源都退化成「尚未配置更新源」。
+  const all = getSources(db);
+  const targets = all
+    .map((source, index) => ({ source, index }))
+    .filter(({ source }) => source.enabled);
+
+  const checkedAt = Date.now();
+  if (db) setSetting(db, SETTING_LAST_CHECK, String(checkedAt));
+
+  // 按下标落位：Promise.all 的完成顺序不定，直接 push 会让 UI 里各源顺序乱跳
+  const slots: Array<{ source: UpdateSource; result: UpdateCheckResult } | undefined> = new Array(all.length);
+  await Promise.all(targets.map(async ({ source, index }) => {
+    const result = await checkForUpdate(db, { sourceIndex: index });
+    slots[index] = { source, result };
+  }));
+  const perSource = slots.filter(
+    (e): e is { source: UpdateSource; result: UpdateCheckResult } => !!e
+  );
+
+  // 选 winner：所有「有更新」的源里取**版本号最高**的那个。
+  // 注意不要按「领先当前版本多少」排序 —— 那样 1.1.0→1.1.5（领先 5 个补丁）会压过
+  // 1.1.0→1.2.0（领先 1 个小版本），于是用户装到更低的版本。必须直接比 latestVersion。
+  const winner = perSource
+    .filter(({ result }) =>
+      result.ok &&
+      !result.skipped &&
+      !!result.latestVersion &&
+      compareVersions(result.latestVersion, currentVersion) > 0
+    )
+    .map(({ result }) => result)
+    .sort((a, b) => compareVersions(b.latestVersion!, a.latestVersion!))[0] ?? null;
+
+  const anyConfigured = all.some((s) => s.enabled && !!s.url);
+  return { currentVersion, ok: anyConfigured, anyConfigured, winner, perSource, checkedAt };
 }
 
 // ===================== 下载安装包 =====================
@@ -292,6 +464,20 @@ function pickFileName(url: string, version: string): string {
     if (/\.(exe|msi|zip|7z)$/i.test(base)) return base;
   } catch { /* ignore */ }
   return `TaskManager Setup ${version}.exe`;
+}
+
+/**
+ * 清理 `%TEMP%\taskmanager-update\` 下的旧安装包，避免多次升级后多个版本堆积
+ * （避免「代码堆叠 / 旧版新版混文件」体感）。
+ */
+function cleanStaleDownloads(): void {
+  const dir = path.join(app.getPath('temp'), 'taskmanager-update');
+  try {
+    const files = fs.readdirSync(dir);
+    for (const f of files) {
+      try { fs.unlinkSync(path.join(dir, f)); } catch { /* 占用中 / 权限不足，跳过 */ }
+    }
+  } catch { /* 目录不存在，忽略 */ }
 }
 
 export interface DownloadResult {
@@ -310,6 +496,9 @@ async function downloadUpdate(
   sha256?: string | null
 ): Promise<DownloadResult> {
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: '下载地址无效（需以 http/https 开头）' };
+
+  // 先清掉旧的下载文件，避免多次升级后版本堆积
+  cleanStaleDownloads();
 
   const dir = path.join(app.getPath('temp'), 'taskmanager-update');
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
@@ -405,14 +594,26 @@ export function registerUpdater(db: DB | null) {
     packaged: app.isPackaged,
   }));
 
-  ipcMain.handle('update:config', () => ({
-    defaultSource: DEFAULT_UPDATE_SOURCE,
-    source: getEffectiveSource(db),
-    autoCheck: getSetting(db, SETTING_AUTO) !== '0',
-    skippedVersion: getSetting(db, SETTING_SKIPPED) || null,
-  }));
+  ipcMain.handle('update:config', () => {
+    const sources = getSources(db);
+    const activeIndex = getActiveSourceIndex(db);
+    return {
+      defaultSources: DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s })),
+      sources,
+      activeIndex,
+      source: sources[activeIndex]?.url || '',         // 兼容旧字段
+      defaultSource: DEFAULT_UPDATE_SOURCES[0]?.url || '',
+      autoCheck: getSetting(db, SETTING_AUTO) !== '0',
+      skippedVersion: getSetting(db, SETTING_SKIPPED) || null,
+      lastCheckAt: Number(getSetting(db, SETTING_LAST_CHECK)) || 0,
+    };
+  });
 
-  ipcMain.handle('update:check', (_e, opts?: { force?: boolean }) => checkForUpdate(db, opts));
+  ipcMain.handle('update:check', (_e, opts?: { force?: boolean; sourceIndex?: number }) =>
+    checkForUpdate(db, opts)
+  );
+
+  ipcMain.handle('update:checkAll', () => checkAllSources(db));
 
   ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null }) =>
     downloadUpdate(opts.url, opts.version, opts.sha256)
@@ -425,10 +626,13 @@ export function registerUpdater(db: DB | null) {
 
   ipcMain.handle('update:install', async (_e, filePath: string) => {
     if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '安装包不存在，请重新下载' };
+    // 启动安装程序；用 spawn + detached 确保它能脱离父进程独立运行
     const err = await shell.openPath(filePath);
     if (err) return { ok: false, error: err };
-    // 安装包已启动：退出当前应用，避免文件占用导致安装失败
-    setTimeout(() => app.quit(), 800);
+    // 防「代码堆叠 / 旧版新版混文件」：旧应用必须立即退出，让 NSIS 拿到干净的 $INSTDIR。
+    // setTimeout 200ms 是给 shell.openPath 留出创建子进程的时间窗。
+    // 使用 app.exit 而不是 app.quit：前者同步、强制退出；后者要等异步操作完成。
+    setTimeout(() => app.exit(0), 200);
     return { ok: true };
   });
 
@@ -443,10 +647,25 @@ export function registerUpdater(db: DB | null) {
     return { ok: true };
   });
 
+  /** 兼容旧 API：替换成单源（视为唯一一个源） */
   ipcMain.handle('update:setSource', (_e, source: string) => {
     const s = String(source || '').trim();
-    setSetting(db as DB, SETTING_SOURCE, s);
-    return { ok: true, source: s };
+    const sources = setSources(db, [{ name: '自定义源', url: s, enabled: true, primary: true }]);
+    setSetting(db as DB, SETTING_ACTIVE_INDEX, '0');
+    return { ok: true, source: s, sources };
+  });
+
+  /** 新 API：整体保存多源 + 切换主源 */
+  ipcMain.handle('update:setSources', (_e, payload: { sources: UpdateSource[]; activeIndex: number }) => {
+    const cleaned = setSources(db, payload?.sources || []);
+    const safe = Math.max(0, Math.min(payload?.activeIndex ?? 0, cleaned.length - 1));
+    setSetting(db as DB, SETTING_ACTIVE_INDEX, String(safe));
+    return { ok: true, sources: cleaned, activeIndex: safe };
+  });
+
+  ipcMain.handle('update:setActiveSource', (_e, index: number) => {
+    const safe = setActiveSourceIndex(db, typeof index === 'number' ? index : 0);
+    return { ok: true, activeIndex: safe, sources: getSources(db) };
   });
 
   ipcMain.handle('update:setAutoCheck', (_e, enabled: boolean) => {
@@ -455,14 +674,26 @@ export function registerUpdater(db: DB | null) {
   });
 }
 
-/** 启动后静默检查（供 main.ts 调用），有新版本时推送给渲染进程 */
+/** 启动后静默检查（供 main.ts 调用），查所有源，挑版本最高的，命中时推送给渲染进程 */
 export async function autoCheckUpdate(db: DB | null, win: BrowserWindow | null) {
   try {
     if (getSetting(db, SETTING_AUTO) === '0') return;
-    if (!getEffectiveSource(db)) return;
-    const result = await checkForUpdate(db);
-    if (result.ok && result.hasUpdate && !result.skipped) {
-      if (win && !win.isDestroyed()) win.webContents.send('update:available', result);
+    const sources = getSources(db).filter((s) => s.enabled);
+    if (!sources.length) return;
+
+    const agg = await checkAllSources(db);
+    if (agg.winner) {
+      // payload 里附上多源结果供 UI 展示（"X 源可用 Y 源失败"）
+      const perSource = agg.perSource.map(({ source, result }) => ({
+        name: source.name,
+        url: source.url,
+        ok: result.ok,
+        latestVersion: result.latestVersion,
+        reason: result.reason,
+        message: result.message,
+      }));
+      const payload = { ...agg.winner, perSource };
+      if (win && !win.isDestroyed()) win.webContents.send('update:available', payload);
     }
   } catch {
     /* 静默失败：启动期不打扰用户 */

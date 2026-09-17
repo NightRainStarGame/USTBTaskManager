@@ -202,15 +202,29 @@ function selfVerify(manifest, ver) {
   return { ok: problems.length === 0, problems, parsed };
 }
 
-/** 把默认更新源写入 electron/updater/index.ts */
+/**
+ * 把更新源写入 electron/updater/index.ts 的 DEFAULT_UPDATE_SOURCES ——
+ * 只替换数组里**第一个** url（即主源），备用的 GitHub 镜像源保持不动。
+ */
 function applyDefaultSource(url) {
   const file = path.join(ROOT, 'electron', 'updater', 'index.ts');
   if (!fs.existsSync(file)) { console.error('! 找不到 electron/updater/index.ts，跳过 --apply-default'); return; }
   const src = fs.readFileSync(file, 'utf8');
-  const re = /export const DEFAULT_UPDATE_SOURCE = '[^']*';/;
-  if (!re.test(src)) { console.error('! 未找到 DEFAULT_UPDATE_SOURCE 常量，跳过'); return; }
-  fs.writeFileSync(file, src.replace(re, `export const DEFAULT_UPDATE_SOURCE = '${url}';`));
-  console.log(`✓ 已写入默认更新源：electron/updater/index.ts → ${url}`);
+
+  const arrRe = /(export const DEFAULT_UPDATE_SOURCES: UpdateSource\[\] = \[)([\s\S]*?)(\];)/;
+  if (!arrRe.test(src)) {
+    console.error('! 未找到 DEFAULT_UPDATE_SOURCES 数组，请手动把主源改成：' + url);
+    return;
+  }
+  if (!/url:\s*'[^']*'/.test(src.match(arrRe)[2])) {
+    console.error('! DEFAULT_UPDATE_SOURCES 数组里没有可替换的 url 字段，请手动改：' + url);
+    return;
+  }
+  const next = src.replace(arrRe, (_all, head, body, tail) =>
+    head + body.replace(/url:\s*'[^']*'/, `url: '${url}'`) + tail
+  );
+  fs.writeFileSync(file, next);
+  console.log(`✓ 已把主源写入 electron/updater/index.ts → ${url}`);
   console.log('  注意：这需要重新 build + 打包才会在新安装包中生效。\n');
 }
 
@@ -313,7 +327,8 @@ function printSummary(o) {
   if (!String(args['base-url'] || '')) {
     line('  ⚠ 未提供 --base-url，清单里的下载地址是相对路径。');
     line('     App 需要绝对 http(s) 地址，请重新执行：');
-    line(`     node scripts/release.js --base-url https://<你的域名>/taskmanager`);
+    line(`     node scripts/release.js --base-url https://nrsc.games/downloads/taskmanager`);
+    line('  ℹ 发布到本项目自建更新站，直接用：node scripts/publish-vps.js');
     line('────────────────────────────────────────────────────────────');
   }
   line('  下一步：');

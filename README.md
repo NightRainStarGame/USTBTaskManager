@@ -4,18 +4,15 @@
 
 ## 下载安装
 
-前往 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 下载最新版安装包：
+**推荐：自建站点直链（nrsc.games，国内速度稳定）**
 
-```
-TaskManager-Setup-x.y.z.exe
-```
+| 版本   | 下载地址                                                                              |
+| ------ | ------------------------------------------------------------------------------------- |
+| 最新版 | `https://nrsc.games/downloads/taskmanager/leastversion/TaskManager-Setup-1.1.0.exe`    |
+| 上一版 | `https://nrsc.games/downloads/taskmanager/oldversion/TaskManager-Setup-0.3.0.exe`      |
 
-或者直接从仓库的固定目录下载：
-
-| 版本   | 路径                                                                         |
-| ------ | ---------------------------------------------------------------------------- |
-| 最新版 | `leastversion/TaskManager-Setup-1.1.0.exe`                                  |
-| 上一版 | `oldversion/TaskManager-Setup-0.3.0.exe`                                    |
+也可以走 GitHub 通道（国内可能较慢）—— [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest)
+或仓库固定目录：
 
 - 最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.0.exe`
 - 上一版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/oldversion/TaskManager-Setup-0.3.0.exe`
@@ -24,16 +21,24 @@ TaskManager-Setup-x.y.z.exe
 
 ## 自动更新
 
-应用内置更新模块，启动后（或手动点「检查更新」）会去读取固定地址的版本清单：
+应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查两个更新源**，取版本号最高的那个升级；
+一个源连不上不影响另一个 —— 相当于双通道备份。
+
+| 源 | 清单地址 | 说明 |
+|---|---|---|
+| **StarOS 自建站**（主源） | `https://nrsc.games/downloads/taskmanager/latest.json` | 安装包同站托管，国内速度快、无 GitHub 限速 |
+| GitHub / leastversion（备用） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | raw.githubusercontent.com 国内常超时，仅作兜底 |
+
+自建源还有一个等价短地址，填哪个都行：
 
 ```
-https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json
+https://nrsc.games/taskmanager/latest.json
 ```
 
-清单里的 `url` 指向仓库 `leastversion/` 目录下的最新安装包，下载后会校验 SHA-256 再安装。
+清单里的 `url` 指向该源自己的安装包，下载后校验 SHA-256，**不匹配会拒绝安装**。
 
-> 若该地址在你的网络环境下不可达，可在「设置 → 软件更新 → 更新源地址」里填写镜像地址，例如：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json`
+> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可以增删源、切换主源；
+> 也可以填第三方镜像，例如 `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json`。
 
 ## 使用指南
 
@@ -122,10 +127,11 @@ https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.
 
 **设置 → 软件更新**：
 
-1. 点「**检查更新**」，有新版本时会显示版本号和更新说明
+1. 点「**检查更新**」，会同时查自建站和 GitHub 两个源，有新版本时显示版本号和更新说明
 2. 下载完成后显示 **SHA-256 校验值**，点「**立即安装并重启**」完成升级
 3. 网络不好可点「**打开发布页**」到浏览器手动下载
 4. 不想被打扰可以关掉「自动检查」，或对某个版本点「忽略此版本」
+5. 下方「更新源」可以增删源、切换主源（改了记得点「保存源」）
 
 ## 功能模块
 
@@ -136,7 +142,7 @@ https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.
 - 📂 **项目** 看板 / 列表 / 时间线三种视图 · 拖拽切换状态
 - 💾 **数据安全** 一键备份 / 恢复 · 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 检查 / 下载 / 校验 / 静默安装并重启
+- 🔄 **软件更新** 双源（自建站 + GitHub）检查 / 下载 / SHA-256 校验 / 静默安装并重启
 - ⚙️ **设置** 主题 / 学期 / 数据导出 / 小程序配置
 - 🪟 **小程序** 微信小程序 PC 端嵌套（架构预留，当前占位）
 
@@ -164,14 +170,45 @@ npm run build:exe
 
 ```bash
 npm run build:exe        # 打包
-npm run publish:github   # 创建 Release + 上传安装包 + 更新 latest.json
+
+npm run publish:vps      # ① 发布到自建更新站（nrsc.games，主源）
+npm run publish:github   # ② 同步一份到 GitHub（备用镜像源）
 ```
 
-`scripts/publish-github.js` 会自动创建 tag `vX.Y.Z` 的 Release、把安装包重命名为
+### ① 自建站主源（`npm run publish:vps`）
+
+`scripts/publish-vps.js` 会自动完成整条链路：
+
+1. 定位安装包、计算 SHA-256
+2. 把 `leastversion/` 里的旧版滚进 `oldversion/`，新包放进 `leastversion/`
+3. 重写 `latest.json`、`oldversion/versions.json`、`SHA256SUMS.txt`
+   （写入站点目录 `D:\StarMain\Web\downloads\taskmanager\`，再由站点部署到 VPS）
+4. 打印同步到 VPS 的 rsync 命令
+
+```bash
+node scripts/publish-vps.js                # 发布当前版本
+node scripts/publish-vps.js --dry-run      # 只预览计划，不动文件
+node scripts/publish-vps.js --notes-file RELEASE_NOTES.md
+node scripts/publish-vps.js --site D:\StarMain\Web   # 换站点目录
+node scripts/publish-vps.js --keep 1       # 历史版本只留 1 个（默认 2）
+npm run verify:vps                         # 自检线上清单是否正常
+```
+
+发布后把文件同步到 VPS（安装包约 85 MB，rsync 支持断点续传），**不用重启服务** —— 清单每次请求都读盘。
+
+### ② GitHub 备用源（`npm run publish:github`）
+
+`scripts/publish-github.js` 会创建 tag `vX.Y.Z` 的 Release、把安装包重命名为
 `TaskManager-Setup-X.Y.Z.exe` 上传，并生成/推送仓库根目录的 `latest.json`。
 可用 `--notes` / `--notes-file` 写更新说明，`--dry-run` 只预览不发布。
 
 > GitHub 单文件上限 100 MB，所以安装包走 Release 附件，不要提交进 Git 仓库。
+
+> 两个源的版本号不必强求同步 —— App 聚合时取**最高版本**，某个源发布慢了不会让用户漏更新。
+
+**更新源地址写在哪？** 内置默认值是 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`
+（**重新打包后才对新装用户生效**）；已安装用户的值存在本机 SQLite 的 `update_sources` 设置里，
+在「设置 → 软件更新 → 更新源」改，不用重新打包。
 
 ## 清理历史打包产物
 
@@ -249,10 +286,10 @@ TaskManager/
 │  ├─ hooks/      # 自定义 hooks
 │  ├─ types/      # 类型定义
 │  └─ styles/     # 全局样式
-├─ scripts/       # 发布脚本 + 端到端测试脚本
+├─ scripts/       # 发布脚本（publish-vps / publish-github）+ 端到端测试脚本
 ├─ docs/          # 设计问答与部署文档
 ├─ build/         # 应用图标（electron-builder 资源）
-├─ latest.json    # 自动更新清单（固定地址，App 读取它）
+├─ latest.json    # GitHub 备用源的更新清单（App 也会读取）
 ├─ dist/          # Vite 产物
 ├─ dist-electron/ # 主进程产物
 └─ release/       # electron-builder 打包输出（不入库）
