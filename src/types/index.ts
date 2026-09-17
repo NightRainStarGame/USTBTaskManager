@@ -68,6 +68,14 @@ export interface Requirement {
   created_at: number;
   course_name?: string;
   course_color?: string;
+  /** 'local' 本地手建 | 'github' 从 GitHub 同步 */
+  source?: 'local' | 'github' | null;
+  /** GitHub 同步条目的稳定 ID（去重键） */
+  remote_id?: string | null;
+  /** 对应的上课日期 YYYY-MM-DD（每节课作业可能不同） */
+  session_date?: string | null;
+  /** 发布人（同步作业携带） */
+  publisher?: string | null;
 }
 
 export interface CalendarEvent {

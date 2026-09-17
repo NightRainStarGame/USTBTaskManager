@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, Clock, Layers } from 'lucide-react';
+import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import { getSemesterWeek } from '@/utils/lunar';
@@ -22,6 +22,9 @@ export default function CoursesPage() {
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('info');
   const [activeCourse, setActiveCourse] = useState<Course | null>(null);
   const [view, setView] = useState<'cards' | 'timetable'>('cards');
+  // 作业发布 / 同步（GitHub 班级作业公告板）
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
 
   // 处理 URL 参数
   useEffect(() => {
@@ -224,6 +227,30 @@ export default function CoursesPage() {
           onClose={() => setDrawerOpen(false)}
           onSaved={async () => { await refreshAll(); }}
           defaultTab={drawerTab}
+        />
+      )}
+
+      {/* 右下角：班级作业发布 / 同步 */}
+      <div className="fixed bottom-6 right-6 z-30 flex items-center gap-2 glass-panel rounded-lg px-3 py-2 border border-neon-green/20 shadow-neon-green">
+        <span className="font-mono text-[10px] text-text-dim hidden md:inline">班级作业</span>
+        <button onClick={() => setPublishOpen(true)} className="btn-neon btn-neon-yellow text-xs">
+          <CloudUpload size={13} /> 发布作业
+        </button>
+        <button onClick={() => setSyncOpen(true)} className="btn-neon text-xs">
+          <CloudDownload size={13} /> 同步作业
+        </button>
+      </div>
+
+      {publishOpen && (
+        <PublishHomeworkModal
+          onClose={() => setPublishOpen(false)}
+          onChanged={async () => { await refreshAll(); }}
+        />
+      )}
+      {syncOpen && (
+        <SyncHomeworkModal
+          onClose={() => setSyncOpen(false)}
+          onSynced={async () => { await refreshAll(); }}
         />
       )}
     </div>
@@ -797,7 +824,10 @@ function CourseHomeworkOverview({ course, onGoTab }: { course: Course; onGoTab: 
                 className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded border border-transparent hover:border-neon-green/30 hover:bg-ink-900/50 transition-colors"
               >
                 <span className="text-sm shrink-0">{r.status === 'done' ? '✅' : typeIcon}</span>
-                <span className={`flex-1 min-w-0 truncate text-xs ${r.status === 'done' ? 'line-through text-text-dim' : 'text-text-secondary'}`}>{r.title}</span>
+                <span className={`flex-1 min-w-0 truncate text-xs ${r.status === 'done' ? 'line-through text-text-dim' : 'text-text-secondary'}`}>
+                  {r.source === 'github' && <span className="inline-flex items-center mr-1 px-1 py-px rounded text-[9px] font-mono border border-neon-green/40 text-neon-green align-middle" title={`来自 GitHub 同步${r.publisher ? ' · 发布人 ' + r.publisher : ''}${r.session_date ? ' · 上课 ' + r.session_date : ''}`}><CloudDownload size={9} /> 同步</span>}
+                  {r.title}
+                </span>
                 <span className={`font-mono text-[10px] shrink-0 ${isOverdue ? 'text-neon-danger' : 'text-text-dim'}`}>{due.format('MM-DD HH:mm')}</span>
                 <span className={`data-pill shrink-0 ${r.status === 'done' ? 'border-neon-green/40 text-neon-green' : r.status === 'in_progress' ? 'border-neon-yellow/40 text-neon-yellow' : isOverdue ? 'border-neon-danger/50 text-neon-danger' : 'border-text-dim/40 text-text-secondary'}`}>
                   {r.status === 'done' ? '已完成' : r.status === 'in_progress' ? '进行中' : isOverdue ? '已逾期' : '待办'}
@@ -901,9 +931,16 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
       </button>
       <span className="text-lg">{typeIcon}</span>
       <div className="flex-1 min-w-0">
-        <div className={`text-sm truncate ${req.status === 'done' ? 'line-through text-text-dim' : ''}`}>{req.title}</div>
+        <div className={`text-sm truncate ${req.status === 'done' ? 'line-through text-text-dim' : ''}`}>
+          {req.source === 'github' && (
+            <span className="inline-flex items-center gap-0.5 mr-1 px-1 py-px rounded text-[9px] font-mono border border-neon-green/40 text-neon-green align-middle" title={`来自 GitHub 同步${req.publisher ? ' · 发布人 ' + req.publisher : ''}${req.session_date ? ' · 上课 ' + req.session_date : ''}`}>
+              <CloudDownload size={9} /> 同步
+            </span>
+          )}
+          {req.title}
+        </div>
         <div className="font-mono text-[10px] text-text-dim mt-0.5">
-          {due.format('MM-DD ddd HH:mm')} · 预计 {req.estimated_hours || '?'}h · 实际 {req.actual_hours || '0'}h · 优先级 {req.priority}
+          {due.format('MM-DD ddd HH:mm')}{req.session_date ? ` · 该节 ${req.session_date.slice(5)}` : ''} · 预计 {req.estimated_hours || '?'}h · 实际 {req.actual_hours || '0'}h · 优先级 {req.priority}
         </div>
       </div>
       <span className={`data-pill ${req.status === 'done' ? 'border-neon-green/40 text-neon-green' : req.status === 'in_progress' ? 'border-neon-yellow/40 text-neon-yellow' : overdue ? 'border-neon-danger/50 text-neon-danger' : 'border-text-dim/40 text-text-secondary'}`}>
@@ -1196,5 +1233,410 @@ function MiniProgramTab({ course }: { course: Course }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ==================================================================
+// ===== 班级作业发布 / 同步（GitHub homework/ 文件夹公告板） =====
+// ==================================================================
+
+type RemoteEntry = {
+  id: string;
+  title: string;
+  sessionDate: string;
+  sessionTime?: string | null;
+  content: string;
+  publisher: string;
+  publishedAt: number;
+  updatedAt: number;
+};
+
+/** 发布作业弹窗：密码验证 →（首次）填令牌 → 选课程/上课日期 → 书写 → 发布 */
+function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => Promise<void> }) {
+  const courses = useStore(s => s.courses);
+  const events = useStore(s => s.events);
+
+  const [step, setStep] = useState<'password' | 'auth' | 'form'>('password');
+  const [busy, setBusy] = useState(false);
+  // 密码
+  const [password, setPassword] = useState('');
+  const [pwError, setPwError] = useState('');
+  // 令牌
+  const [token, setToken] = useState('');
+  const [publisher, setPublisher] = useState('');
+  const [authError, setAuthError] = useState('');
+  // 表单
+  const [courseId, setCourseId] = useState<number | null>(null);
+  const [sessionDate, setSessionDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [sessionTime, setSessionTime] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [type, setType] = useState<'homework' | 'exam' | 'project' | 'reading' | 'other'>('homework');
+  const [content, setContent] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [remote, setRemote] = useState<RemoteEntry[] | null>(null);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [published, setPublished] = useState<{ title: string; sessionDate: string; fileUrl?: string } | null>(null);
+
+  const course = courses.find(c => c.id === courseId) ?? null;
+
+  useEffect(() => {
+    if (courses.length && courseId === null) setCourseId(courses[0].id);
+  }, [courses, courseId]);
+
+  // 已保存的发布人昵称
+  useEffect(() => {
+    window.taskAPI.homework.config().then(cfg => { if (cfg.publisher) setPublisher(cfg.publisher); });
+  }, []);
+
+  // 选中课程后：拉这门课在远端已发布的作业（避免重复发布）
+  useEffect(() => {
+    if (step !== 'form' || !course) return;
+    let alive = true;
+    setRemoteBusy(true); setRemote(null);
+    window.taskAPI.homework.remoteEntries(course.name).then(r => {
+      if (!alive) return;
+      setRemote(r.ok ? r.entries : []);
+      setRemoteBusy(false);
+    });
+    return () => { alive = false; };
+  }, [step, course?.name, published]);
+
+  // 该课程近期上课日期候选（教务导入的具体日期 + 每周时段展开，按离今天远近排序）
+  const sessionOptions = useMemo(() => {
+    if (!course) return [] as Array<{ date: string; time: string }>;
+    const map = new Map<string, string>();
+    events.filter(e => e.course_id === course.id).forEach(e => {
+      const s = dayjs(e.start_at);
+      const time = s.format('HH:mm') + (e.end_at ? `-${dayjs(e.end_at).format('HH:mm')}` : '');
+      if (e.type === 'class') {
+        map.set(s.format('YYYY-MM-DD'), time);
+      } else if (e.recurrence === 'WEEKLY') {
+        const dow = s.day(); // 0=周日
+        const base = dayjs().startOf('day');
+        const thisMonday = dow === 0 ? base.subtract(6, 'day') : base.subtract(dow - 1, 'day');
+        const thisDow = dow === 0 ? 6 : dow - 1;
+        [-1, 0, 1, 2].forEach(off => {
+          const d = thisMonday.add(off * 7 + thisDow, 'day');
+          map.set(d.format('YYYY-MM-DD'), time);
+        });
+      }
+    });
+    const today = dayjs().startOf('day').valueOf();
+    return [...map.entries()]
+      .map(([date, time]) => ({ date, time, ts: dayjs(date).valueOf() }))
+      .sort((a, b) => Math.abs(a.ts - today) - Math.abs(b.ts - today))
+      .slice(0, 12)
+      .sort((a, b) => a.ts - b.ts);
+  }, [course, events]);
+
+  const verifyPassword = async () => {
+    if (busy) return;
+    setBusy(true); setPwError('');
+    try {
+      const r = await window.taskAPI.homework.verifyPassword(password);
+      if (!r.ok) { setPwError('密码不正确'); return; }
+      const cfg = await window.taskAPI.homework.config();
+      setStep(cfg.tokenSet ? 'form' : 'auth');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAuth = async () => {
+    if (busy) return;
+    if (!token.trim()) { setAuthError('请填写 GitHub 令牌（对 USTBTaskManager 仓库有 Contents 读写权限）'); return; }
+    setBusy(true); setAuthError('');
+    try {
+      const r = await window.taskAPI.homework.saveAuth(token.trim(), publisher.trim());
+      if (!r.ok) { setAuthError(r.error || '保存失败'); return; }
+      setStep('form');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (busy || !course) return;
+    if (!title.trim()) { setError('请填写作业标题'); return; }
+    if (!sessionDate) { setError('请选择上课日期'); return; }
+    setBusy(true); setError('');
+    try {
+      const r = await window.taskAPI.homework.publish({
+        password,
+        courseName: course.name,
+        sessionDate,
+        sessionTime,
+        title: title.trim(),
+        content: content.trim(),
+        type,
+        dueDate: dueDate ? new Date(dueDate).getTime() : null,
+      });
+      if (!r.ok) { setError(r.error || '发布失败'); return; }
+      setPublished({ title: r.entry?.title || title.trim(), sessionDate, fileUrl: r.fileUrl });
+      // 发布成功后顺手同步一次：把刚发布的作业（以及其他人的）落到本地课程里
+      await window.taskAPI.homework.sync();
+      await onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const footer = (() => {
+    if (step === 'password') {
+      return <>
+        <button onClick={onClose} className="btn-ghost">取消</button>
+        <button onClick={verifyPassword} disabled={busy || !password} className="btn-neon"><KeyRound size={14} /> {busy ? '验证中…' : '验证密码'}</button>
+      </>;
+    }
+    if (step === 'auth') {
+      return <>
+        <button onClick={onClose} className="btn-ghost">取消</button>
+        <button onClick={saveAuth} disabled={busy} className="btn-neon">{busy ? '保存中…' : '保存并继续'}</button>
+      </>;
+    }
+    if (published) {
+      return <>
+        <button onClick={() => { setPublished(null); setTitle(''); setContent(''); setDueDate(''); }} className="btn-ghost">再发一条</button>
+        <button onClick={onClose} className="btn-neon">完成</button>
+      </>;
+    }
+    return <>
+      <button onClick={onClose} className="btn-ghost">取消</button>
+      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow"><CloudUpload size={14} /> {busy ? '发布中…' : '发布到 GitHub'}</button>
+    </>;
+  })();
+
+  return (
+    <Modal title="发布作业（班级公告板）" onClose={onClose} footer={footer}>
+      <div className="space-y-3">
+        {/* 通用说明 */}
+        <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
+          作业会发布到 GitHub 仓库的 <span className="text-neon-green">homework/</span> 文件夹，同学在课程页点「同步作业」即可拉取。
+        </div>
+
+        {/* 第 1 步：密码 */}
+        {step === 'password' && (
+          <>
+            <Field label="发布密码 *">
+              <input
+                type="password"
+                value={password}
+                autoFocus
+                onChange={(e: any) => { setPassword(e.target.value); setPwError(''); }}
+                onKeyDown={(e: any) => e.key === 'Enter' && verifyPassword()}
+                className="input-neon"
+                placeholder="输入班级发布密码"
+              />
+            </Field>
+            {pwError && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {pwError}</div>}
+          </>
+        )}
+
+        {/* 第 2 步：首次发布需要 GitHub 令牌 */}
+        {step === 'auth' && (
+          <>
+            <div className="p-2.5 rounded-md border border-neon-yellow/30 bg-neon-yellow/5 text-[11px] text-text-secondary">
+              首次发布需要一个有写权限的 GitHub 令牌（<span className="font-mono">fine-grained PAT，仅本仓库、仅 Contents 读写</span>）。
+              令牌只保存在这台电脑的本地数据库里，不会上传。GitHub → Settings → Developer settings → Fine-grained tokens 生成。
+            </div>
+            <Field label="GitHub 令牌 *">
+              <input type="password" value={token} autoFocus onChange={(e: any) => setToken(e.target.value)} className="input-neon" placeholder="github_pat_… 或 ghp_…" />
+            </Field>
+            <Field label="发布人昵称（同步时展示）">
+              <input value={publisher} onChange={(e: any) => setPublisher(e.target.value)} className="input-neon" placeholder="如：学委-张三" />
+            </Field>
+            {authError && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {authError}</div>}
+          </>
+        )}
+
+        {/* 第 3 步：写作业 */}
+        {step === 'form' && !published && course && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="课程 *">
+                <select
+                  value={courseId ?? ''}
+                  onChange={(e: any) => { setCourseId(Number(e.target.value)); setRemote(null); setSessionTime(null); }}
+                  className="input-neon"
+                >
+                  {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+              <Field label="类型">
+                <select value={type} onChange={(e: any) => setType(e.target.value)} className="input-neon">
+                  <option value="homework">作业</option>
+                  <option value="exam">考试</option>
+                  <option value="project">项目</option>
+                  <option value="reading">阅读</option>
+                  <option value="other">其他</option>
+                </select>
+              </Field>
+            </div>
+
+            <Field label="上课日期 *（每节课的作业可能不同）">
+              <input type="date" value={sessionDate} onChange={(e: any) => { setSessionDate(e.target.value); setSessionTime(null); }} className="input-neon" />
+            </Field>
+            {sessionOptions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {sessionOptions.map(o => {
+                  const active = o.date === sessionDate;
+                  return (
+                    <button
+                      key={o.date}
+                      onClick={() => { setSessionDate(o.date); setSessionTime(o.time); }}
+                      className={`px-2 py-1 rounded text-[10px] font-mono border transition-colors ${active ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
+                    >
+                      {o.date.slice(5)} {['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dayjs(o.date).day()]} {o.time}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <Field label="作业标题 *">
+              <input value={title} onChange={(e: any) => setTitle(e.target.value)} className="input-neon" placeholder="如：第三章习题 1-10（本周三这节课布置）" />
+            </Field>
+            <Field label="作业内容">
+              <textarea value={content} onChange={(e: any) => setContent(e.target.value)} rows={4} className="input-neon" placeholder="具体要求、提交方式、注意事项…（同步后同学会原样看到）" />
+            </Field>
+            <Field label="截止时间（可选，默认上课日 23:59）">
+              <input type="datetime-local" value={dueDate} onChange={(e: any) => setDueDate(e.target.value)} className="input-neon" />
+            </Field>
+
+            {/* 该课程远端已发布的作业 */}
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="label-tag">该课程已发布（GitHub）</span>
+                {remoteBusy && <RefreshCw size={11} className="animate-spin text-text-dim" />}
+              </div>
+              {remote === null ? (
+                <div className="py-2 text-center font-mono text-[10px] text-text-dim">加载中…</div>
+              ) : remote.length === 0 ? (
+                <div className="py-2 text-center font-mono text-[10px] text-text-dim">[ ∅ ] 这门课还没发布过作业</div>
+              ) : (
+                <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                  {remote.map(e => (
+                    <div key={e.id} className="flex items-center gap-2 px-2 py-1 rounded bg-ink-base/40 border border-neon-green/10 text-[11px]">
+                      <span className="font-mono text-[10px] text-neon-green shrink-0">{e.sessionDate?.slice(5) || '--'}</span>
+                      <span className="flex-1 min-w-0 truncate text-text-secondary">{e.title}</span>
+                      <span className="font-mono text-[9px] text-text-dim shrink-0">{e.publisher}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {error && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {error}</div>}
+          </>
+        )}
+
+        {/* 发布成功 */}
+        {step === 'form' && published && (
+          <div className="space-y-3">
+            <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5">
+              <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 发布成功，已同步到本地</div>
+              <div className="font-mono text-xs text-text-secondary mt-2">
+                「{published.title}」 · 上课 {published.sessionDate}
+              </div>
+              <div className="font-mono text-[10px] text-text-dim mt-1">
+                同学在课程页点「同步作业」即可收到这条作业。
+              </div>
+            </div>
+            {published.fileUrl && (
+              <button onClick={() => window.taskAPI.updater.openExternal(published.fileUrl!)} className="btn-ghost text-xs">
+                <ExternalLink size={12} /> 在浏览器查看仓库里的作业文件
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** 同步作业弹窗：一键从 GitHub homework/ 拉取全部作业到本地课程 */
+function SyncHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSynced: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    ok: boolean; error?: string; files: number; entries: number; created: number; updated: number;
+    coursesTouched: number; coursesCreated: string[];
+    items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+  } | null>(null);
+  const [lastSync, setLastSync] = useState<number | null>(null);
+
+  useEffect(() => {
+    window.taskAPI.homework.config().then(cfg => setLastSync(cfg.lastSync));
+  }, []);
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true); setResult(null);
+    try {
+      const r = await window.taskAPI.homework.sync();
+      setResult(r);
+      if (r.ok) {
+        setLastSync(r.syncedAt);
+        await onSynced();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="同步作业（从 GitHub 拉取）"
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">关闭</button>
+        <button onClick={run} disabled={busy} className="btn-neon">
+          <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> {busy ? '同步中…' : '立即同步'}
+        </button>
+      </>}
+    >
+      <div className="space-y-3">
+        <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
+          从 GitHub 仓库 homework/ 文件夹拉取全班发布的作业，自动写入对应课程（没有的课程会自动创建）。
+          {lastSync ? <span className="block mt-1">上次同步：{dayjs(lastSync).format('YYYY-MM-DD HH:mm')}</span> : <span className="block mt-1">还没同步过</span>}
+        </div>
+
+        {result?.ok && (
+          <div className="space-y-2">
+            <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5">
+              <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 同步完成</div>
+              <div className="font-mono text-xs text-text-secondary mt-2">
+                新增 <span className="text-neon-green font-bold">{result.created}</span> 条 · 更新 {result.updated} 条 ·
+                共拉取 {result.entries} 条（{result.files} 个课程文件）· 涉及 {result.coursesTouched} 门课程
+              </div>
+              {result.coursesCreated.length > 0 && (
+                <div className="font-mono text-[10px] text-neon-yellow mt-1">自动新建课程：{result.coursesCreated.join('、')}</div>
+              )}
+            </div>
+            {result.items.length > 0 && (
+              <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                {result.items.map((it, i) => (
+                  <div key={i} className="flex items-center gap-2 px-2 py-1 rounded bg-ink-base/40 border border-neon-green/10 text-[11px]">
+                    <span className={`px-1 rounded text-[9px] font-mono shrink-0 ${it.action === 'created' ? 'border border-neon-green/40 text-neon-green' : 'border border-neon-yellow/40 text-neon-yellow'}`}>
+                      {it.action === 'created' ? '新增' : '更新'}
+                    </span>
+                    <span className="text-text-secondary truncate">{it.courseName}</span>
+                    <span className="flex-1 min-w-0 truncate text-text-secondary">· {it.title}</span>
+                    <span className="font-mono text-[9px] text-text-dim shrink-0">{it.sessionDate?.slice(5) || ''}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {result.entries === 0 && (
+              <div className="py-2 text-center font-mono text-xs text-text-dim">还没有人发布过作业</div>
+            )}
+          </div>
+        )}
+
+        {result && !result.ok && (
+          <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap">✗ {result.error || '同步失败'}</div>
+        )}
+      </div>
+    </Modal>
   );
 }

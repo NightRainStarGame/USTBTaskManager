@@ -143,6 +143,39 @@ const api = {
       return () => { ipcRenderer.off('update:available', handler); };
     },
   },
+  // 作业发布 / 同步（GitHub homework/ 文件夹）
+  homework: {
+    config: () => ipcRenderer.invoke('homework:config') as Promise<{
+      repo: string; branch: string; dir: string; repoUrl: string;
+      tokenSet: boolean; publisher: string; lastSync: number | null;
+    }>,
+    /** 保存 GitHub 发布令牌 + 发布人昵称（只存本机） */
+    saveAuth: (token: string, publisher: string) => ipcRenderer.invoke('homework:saveAuth', token, publisher) as Promise<{ ok: boolean; error?: string; tokenSet?: boolean }>,
+    /** 发布密码验证 */
+    verifyPassword: (password: string) => ipcRenderer.invoke('homework:verifyPassword', password) as Promise<{ ok: boolean }>,
+    /** 发布一条作业（写 GitHub） */
+    publish: (payload: {
+      password: string; courseName: string; sessionDate: string;
+      sessionTime?: string | null; title: string; content: string;
+      type?: string; dueDate?: number | null;
+    }) => ipcRenderer.invoke('homework:publish', payload) as Promise<{
+      ok: boolean; error?: string;
+      entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
+      fileUrl?: string;
+    }>,
+    /** 某门课在远端已发布的作业 */
+    remoteEntries: (courseName: string) => ipcRenderer.invoke('homework:remoteEntries', courseName) as Promise<{
+      ok: boolean; error?: string;
+      entries: Array<{ id: string; title: string; sessionDate: string; sessionTime?: string | null; content: string; publisher: string; publishedAt: number; updatedAt: number }>;
+    }>,
+    /** 从 GitHub 同步全部作业到本地课程 */
+    sync: () => ipcRenderer.invoke('homework:sync') as Promise<{
+      ok: boolean; error?: string; files: number; entries: number; created: number; updated: number;
+      coursesTouched: number; coursesCreated: string[];
+      items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+      syncedAt: number;
+    }>,
+  },
   // 全量备份 / 恢复 / 完整性检查
   backup: {
     export: () => ipcRenderer.invoke('backup:export') as Promise<{ ok: boolean; path?: string; counts?: Record<string, number>; canceled?: boolean }>,

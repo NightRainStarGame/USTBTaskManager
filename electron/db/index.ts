@@ -225,6 +225,15 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'course_requirements', 'estimated_hours', 'REAL');
   addColumnIfMissing(db, 'course_requirements', 'actual_hours', 'REAL');
 
+  // 作业同步（GitHub 发布 / 同步）：来源标记 + 远端条目 ID + 上课日期 + 发布人
+  // source: 'local' 本地手建 | 'github' 从 GitHub 同步下来
+  addColumnIfMissing(db, 'course_requirements', 'source', "TEXT DEFAULT 'local'");
+  addColumnIfMissing(db, 'course_requirements', 'remote_id', 'TEXT');
+  // session_date: 该作业对应的上课日期 'YYYY-MM-DD'（每节课作业可能不同）
+  addColumnIfMissing(db, 'course_requirements', 'session_date', 'TEXT');
+  addColumnIfMissing(db, 'course_requirements', 'publisher', 'TEXT');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_req_remote ON course_requirements(remote_id) WHERE remote_id IS NOT NULL`);
+
   // 若从未设置开学日，但库里有教务导入的课程（type='class'）→
   // 用最早一节课所在周的周一当作第 1 周，这样课表/日历能直接显示「第 N 周」
   const hasSemesterStart = db.prepare("SELECT 1 FROM settings WHERE key = 'semester_start'").get();
