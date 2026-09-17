@@ -74,13 +74,14 @@ function check(name, cond, extra = '') {
   check('generateCodes 返回 syncCode(8)', /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(pair.syncCode), `got ${pair.syncCode}`);
   check('generateCodes 返回 publishCode(12)', /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{12}$/.test(pair.publishCode), `got ${pair.publishCode}`);
 
-  // ---------- 2. 验证码对 ----------
-  console.log('\n== 2. 验证码对 ==');
-  const okPair = await evaluate(`window.taskAPI.homework.verifyCodes(${JSON.stringify(pair.syncCode)}, ${JSON.stringify(pair.publishCode)})`);
-  check('正确码对 → ok', okPair.ok === true);
-  const badPair = await evaluate(`window.taskAPI.homework.verifyCodes(${JSON.stringify(pair.syncCode)}, "AAAAAAAAAAAA")`);
-  check('错误发布码 → 拒绝', badPair.ok === false);
-  const lcPair = await evaluate(`window.taskAPI.homework.verifyCodes(${JSON.stringify(pair.syncCode.toLowerCase())}, ${JSON.stringify(pair.publishCode.toLowerCase())})`);
+  // ---------- 2. 验证发布码（自包含：前 8 位即同步码） ----------
+  console.log('\n== 2. 验证发布码 ==');
+  check('publishCode 前 8 位 = syncCode', pair.publishCode.slice(0, 8) === pair.syncCode, `${pair.publishCode} vs ${pair.syncCode}`);
+  const okPair = await evaluate(`window.taskAPI.homework.verifyCodes(${JSON.stringify(pair.publishCode)})`);
+  check('正确发布码 → ok + 解析出 syncCode', okPair.ok === true && okPair.syncCode === pair.syncCode, JSON.stringify(okPair));
+  const badPair = await evaluate(`window.taskAPI.homework.verifyCodes("AAAAAAAAAAAA")`);
+  check('编造发布码 → 拒绝', badPair.ok === false);
+  const lcPair = await evaluate(`window.taskAPI.homework.verifyCodes(${JSON.stringify(pair.publishCode.toLowerCase())})`);
   check('小写输入 → 规范化后仍通过', lcPair.ok === true);
 
   // ---------- 3. 保存发布凭据（用 git credential 的 token） ----------
@@ -164,10 +165,12 @@ function check(name, cond, extra = '') {
     const menu = await evaluate(`(function(){
       const btns = Array.from(document.querySelectorAll('button'));
       return {
+        gen: !!btns.find(b => /生成作业码/.test(b.textContent || '')),
         publish: !!btns.find(b => /发布作业/.test(b.textContent || '')),
         receive: !!btns.find(b => /接收作业/.test(b.textContent || '')),
       };
     })()`);
+    check('点开出现「生成作业码」子按钮', menu.gen === true);
     check('点开出现「发布作业」子按钮', menu.publish === true);
     check('点开出现「接收作业」子按钮', menu.receive === true);
   }

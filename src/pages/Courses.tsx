@@ -22,8 +22,9 @@ export default function CoursesPage() {
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('info');
   const [activeCourse, setActiveCourse] = useState<Course | null>(null);
   const [view, setView] = useState<'cards' | 'timetable'>('cards');
-  // 作业同步（码制：发布作业 / 接收作业）
+  // 作业同步（码制：生成作业码 / 发布作业 / 接收作业）
   const [hwMenuOpen, setHwMenuOpen] = useState(false);
+  const [genCodesOpen, setGenCodesOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
 
@@ -231,10 +232,16 @@ export default function CoursesPage() {
         />
       )}
 
-      {/* 右下角：作业同步入口（点开 → 发布作业 / 接收作业） */}
+      {/* 右下角：作业同步入口（点开 → 生成作业码 / 发布作业 / 接收作业） */}
       <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-2">
         {hwMenuOpen && (
           <div className="glass-panel rounded-lg p-1.5 border border-neon-green/20 shadow-neon-green flex flex-col gap-1.5 animate-in">
+            <button
+              onClick={() => { setHwMenuOpen(false); setGenCodesOpen(true); }}
+              className="btn-neon text-xs whitespace-nowrap"
+            >
+              <KeyRound size={13} /> 生成作业码
+            </button>
             <button
               onClick={() => { setHwMenuOpen(false); setPublishOpen(true); }}
               className="btn-neon btn-neon-yellow text-xs whitespace-nowrap"
@@ -257,6 +264,9 @@ export default function CoursesPage() {
         </button>
       </div>
 
+      {genCodesOpen && (
+        <GenerateCodesModal onClose={() => setGenCodesOpen(false)} />
+      )}
       {publishOpen && (
         <PublishHomeworkModal
           onClose={() => setPublishOpen(false)}
@@ -1272,20 +1282,94 @@ async function copyText(t: string) {
   try { await navigator.clipboard.writeText(t); } catch { /* ignore */ }
 }
 
-/** 发布作业弹窗：输入/生成码对 →（首次）填令牌 → 选课程/上课日期 → 书写 → 发布 */
+/** 生成作业码弹窗：一键生成一对码（发布码 = 密钥，同步码 = 分享码），抄存/复制 */
+function GenerateCodesModal({ onClose }: { onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [generated, setGenerated] = useState<{ syncCode: string; publishCode: string } | null>(null);
+  const [copied, setCopied] = useState<'sync' | 'publish' | null>(null);
+
+  const generatePair = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await window.taskAPI.homework.generateCodes();
+      setGenerated({ syncCode: r.syncCode, publishCode: r.publishCode });
+      setCopied(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCopy = async (which: 'sync' | 'publish') => {
+    if (!generated) return;
+    await copyText(which === 'sync' ? generated.syncCode : generated.publishCode);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  return (
+    <Modal
+      title="生成作业码"
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">关闭</button>
+        <button onClick={generatePair} disabled={busy} className="btn-neon"><KeyRound size={14} /> {busy ? '生成中…' : (generated ? '再生成一对' : '生成新码对')}</button>
+      </>}
+    >
+      <div className="space-y-3">
+        <div className="p-2.5 rounded-md border border-neon-green/20 bg-neon-green/5 text-[11px] text-text-secondary leading-relaxed">
+          一对码对应一个课程的整套作业包：
+          <span className="text-neon-yellow font-mono"> 作业发布码 </span>= 密钥（自己留存，点「发布作业」时输入），
+          <span className="text-neon-green font-mono"> 同步作业码 </span>= 分享码（发给同学，点「接收作业」时输入）。
+        </div>
+
+        {!generated && (
+          <div className="py-6 text-center font-mono text-xs text-text-dim">
+            [ ∅ ] 还没有生成码对，点右下角「生成新码对」
+          </div>
+        )}
+
+        {generated && (
+          <div className="p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
+            <div className="font-mono text-[11px] text-neon-yellow font-bold">✦ 新码对已生成，请抄存两码</div>
+            <div className="font-mono text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-text-dim w-20 shrink-0">作业发布码</span>
+                <span className="text-neon-yellow font-bold tracking-widest">{generated.publishCode}</span>
+                <button onClick={() => doCopy('publish')} className="btn-ghost p-1 text-[9px]">
+                  {copied === 'publish' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-text-dim w-20 shrink-0">同步作业码</span>
+                <span className="text-neon-green font-bold tracking-widest">{generated.syncCode}</span>
+                <button onClick={() => doCopy('sync')} className="btn-ghost p-1 text-[9px]">
+                  {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
+                </button>
+              </div>
+            </div>
+            <div className="font-mono text-[10px] text-text-dim">
+              作业发布码自己留存（继续发布/更新这个包）；同步作业码发给同学（接收作业用）。
+              也可以使用网站申请的码对，效果相同。
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** 发布作业弹窗：输入作业发布码验证 →（首次）填令牌 → 选课程/上课日期 → 书写 → 上传 */
 function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => Promise<void> }) {
   const courses = useStore(s => s.courses);
   const events = useStore(s => s.events);
 
-  const [step, setStep] = useState<'codes' | 'auth' | 'form'>('codes');
+  const [step, setStep] = useState<'code' | 'auth' | 'form'>('code');
   const [busy, setBusy] = useState(false);
-  // 码对
-  const [syncCode, setSyncCode] = useState('');
+  // 发布码（密钥，自己留存）；同步码由验证结果解析而来
   const [publishCode, setPublishCode] = useState('');
+  const [syncCode, setSyncCode] = useState('');
   const [codesError, setCodesError] = useState('');
-  /** 刚生成的新码对（高亮展示 + 一键复制） */
-  const [generated, setGenerated] = useState<{ syncCode: string; publishCode: string } | null>(null);
-  const [copied, setCopied] = useState<'sync' | 'publish' | null>(null);
   // 令牌
   const [token, setToken] = useState('');
   const [publisher, setPublisher] = useState('');
@@ -1355,34 +1439,14 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       .sort((a, b) => a.ts - b.ts);
   }, [course, events]);
 
-  /** 生成一对新码（本地随机 + HMAC 派生） */
-  const generatePair = async () => {
+  /** 验证作业发布码 → 通过则解析出同步码，按需进令牌/表单 */
+  const verifyPublishCode = async () => {
     if (busy) return;
     setBusy(true); setCodesError('');
     try {
-      const r = await window.taskAPI.homework.generateCodes();
+      const r = await window.taskAPI.homework.verifyCodes(publishCode);
+      if (!r.ok || !r.syncCode) { setCodesError('作业发布码无效（12 位密钥，可在「生成作业码」或网站获取）'); return; }
       setSyncCode(r.syncCode);
-      setPublishCode(r.publishCode);
-      setGenerated({ syncCode: r.syncCode, publishCode: r.publishCode });
-      setCopied(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doCopy = async (which: 'sync' | 'publish') => {
-    await copyText(which === 'sync' ? syncCode : publishCode);
-    setCopied(which);
-    setTimeout(() => setCopied(null), 1500);
-  };
-
-  /** 验证码对 → 通过则按需进令牌/表单 */
-  const verifyCodes = async () => {
-    if (busy) return;
-    setBusy(true); setCodesError('');
-    try {
-      const r = await window.taskAPI.homework.verifyCodes(syncCode, publishCode);
-      if (!r.ok) { setCodesError('作业发布码与同步作业码不匹配（两码需成对使用，可点「生成新码对」）'); return; }
       const cfg = await window.taskAPI.homework.config();
       setStep(cfg.tokenSet ? 'form' : 'auth');
     } finally {
@@ -1410,7 +1474,6 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     setBusy(true); setError('');
     try {
       const r = await window.taskAPI.homework.publish({
-        syncCode,
         publishCode,
         courseName: course.name,
         sessionDate,
@@ -1431,16 +1494,15 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   };
 
   const footer = (() => {
-    if (step === 'codes') {
+    if (step === 'code') {
       return <>
         <button onClick={onClose} className="btn-ghost">取消</button>
-        <button onClick={generatePair} disabled={busy} className="btn-ghost"><KeyRound size={14} /> 生成新码对</button>
-        <button onClick={verifyCodes} disabled={busy || !syncCode.trim() || !publishCode.trim()} className="btn-neon"><KeyRound size={14} /> {busy ? '验证中…' : '验证码对'}</button>
+        <button onClick={verifyPublishCode} disabled={busy || !publishCode.trim()} className="btn-neon"><KeyRound size={14} /> {busy ? '验证中…' : '验证发布码'}</button>
       </>;
     }
     if (step === 'auth') {
       return <>
-        <button onClick={() => setStep('codes')} className="btn-ghost">上一步</button>
+        <button onClick={() => setStep('code')} className="btn-ghost">上一步</button>
         <button onClick={saveAuth} disabled={busy} className="btn-neon">{busy ? '保存中…' : '保存并继续'}</button>
       </>;
     }
@@ -1451,81 +1513,38 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       </>;
     }
     return <>
-      <button onClick={() => setStep('codes')} className="btn-ghost">上一步</button>
-      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow"><CloudUpload size={14} /> {busy ? '发布中…' : '发布'}</button>
+      <button onClick={() => setStep('code')} className="btn-ghost">上一步</button>
+      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow"><CloudUpload size={14} /> {busy ? '上传中…' : '上传'}</button>
     </>;
   })();
 
   return (
-    <Modal title="发布作业（码制公告板）" onClose={onClose} footer={footer}>
+    <Modal title="发布作业" onClose={onClose} footer={footer}>
       <div className="space-y-3">
         {/* 通用说明 */}
         <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
           作业发布到 GitHub 仓库 <span className="text-neon-green">homework/&lt;同步作业码&gt;.json</span>，同学凭同步作业码点「接收作业」即可导入。
         </div>
 
-        {/* 第 1 步：码对 */}
-        {step === 'codes' && (
+        {/* 第 1 步：验证作业发布码 */}
+        {step === 'code' && (
           <>
             <div className="p-2.5 rounded-md border border-neon-green/20 bg-neon-green/5 text-[11px] text-text-secondary leading-relaxed">
-              一对码对应一个课程的整套作业包：
-              <span className="text-neon-green font-mono"> 作业发布码 </span>= 密钥（自己留存，发布时输入），
-              <span className="text-neon-yellow font-mono"> 同步作业码 </span>= 分享码（发给同学接收）。
-              可在此生成新码对，也可使用网站申请的码对。
+              输入<span className="text-neon-yellow font-mono"> 作业发布码 </span>（12 位密钥）验证身份。
+              还没有码？点「作业同步 → 生成作业码」，或到网站申请。
             </div>
 
-            <Field label="同步作业码（分享给同学） *">
-              <div className="flex gap-2">
-                <input
-                  value={syncCode}
-                  autoFocus
-                  onChange={(e: any) => { setSyncCode(e.target.value.toUpperCase()); setCodesError(''); setGenerated(null); }}
-                  onKeyDown={(e: any) => e.key === 'Enter' && verifyCodes()}
-                  className="input-neon flex-1 font-mono tracking-widest"
-                  placeholder="8 位，如 7KQ2M4XP"
-                  maxLength={8}
-                />
-                <button onClick={() => doCopy('sync')} disabled={!syncCode} className="btn-ghost shrink-0 text-[10px]" title="复制同步作业码">
-                  {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
-                </button>
-              </div>
-            </Field>
-
             <Field label="作业发布码（密钥，自己留存） *">
-              <div className="flex gap-2">
-                <input
-                  value={publishCode}
-                  onChange={(e: any) => { setPublishCode(e.target.value.toUpperCase()); setCodesError(''); setGenerated(null); }}
-                  onKeyDown={(e: any) => e.key === 'Enter' && verifyCodes()}
-                  className="input-neon flex-1 font-mono tracking-widest"
-                  placeholder="12 位，与同步码成对"
-                  maxLength={12}
-                />
-                <button onClick={() => doCopy('publish')} disabled={!publishCode} className="btn-ghost shrink-0 text-[10px]" title="复制作业发布码">
-                  {copied === 'publish' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
-                </button>
-              </div>
+              <input
+                value={publishCode}
+                autoFocus
+                onChange={(e: any) => { setPublishCode(e.target.value.toUpperCase()); setCodesError(''); }}
+                onKeyDown={(e: any) => e.key === 'Enter' && verifyPublishCode()}
+                className="input-neon font-mono tracking-widest"
+                placeholder="12 位，如 7KQ2M4XP9T3F"
+                maxLength={12}
+              />
             </Field>
-
-            {/* 刚生成的新码对：高亮展示，提醒抄存 */}
-            {generated && (
-              <div className="p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
-                <div className="font-mono text-[11px] text-neon-yellow font-bold">✦ 新码对已生成，请抄存两码</div>
-                <div className="font-mono text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-text-dim w-20 shrink-0">同步作业码</span>
-                    <span className="text-neon-green font-bold tracking-widest">{generated.syncCode}</span>
-                    <button onClick={() => doCopy('sync')} className="btn-ghost p-1 text-[9px]">复制</button>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-text-dim w-20 shrink-0">作业发布码</span>
-                    <span className="text-neon-yellow font-bold tracking-widest">{generated.publishCode}</span>
-                    <button onClick={() => doCopy('publish')} className="btn-ghost p-1 text-[9px]">复制</button>
-                  </div>
-                </div>
-                <div className="font-mono text-[10px] text-text-dim">把同步作业码发给同学（接收作业用）；作业发布码自己留存（继续发布/更新这个包）。</div>
-              </div>
-            )}
 
             {codesError && <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs">✗ {codesError}</div>}
           </>

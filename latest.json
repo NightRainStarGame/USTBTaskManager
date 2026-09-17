@@ -1,10 +1,10 @@
 {
   "version": "1.1.2",
-  "notes": "TaskManager v1.1.2 —— 数据安全加固版\n\n## 课表数据保护（重要）\n- **课表导入前自动安全备份**：无论 Excel 课表导入还是教务系统导入，执行前都会先在 backups/ 里落一份 pre-import 备份，导入结果不满意可随时回滚\n- **自动滚动备份保留份数 7 → 14**：可回溯的时间窗更长\n\n## 说明\n- 1.1.1 用户反馈「升级后课表消失」已查明：并非更新导致，而是开发机上的测试脚本误用了真实数据库；本版已修复该测试脚本，并加上面的两层备份保护\n- 若你的课表曾丢失：到「设置 → 教务系统（贝壳课表）」重新扫码登录并导入即可完整恢复（会自动替换旧数据）\n\n## 从 1.1.1 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.2.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.1.exe`  —— 上一版（保留回退）",
+  "notes": "TaskManager v1.1.2 —— 数据安全加固 + 作业码制重构\n\n## 课表数据保护（重要）\n- **课表导入前自动安全备份**：无论 Excel 课表导入还是教务系统导入，执行前都会先在 backups/ 里落一份 pre-import 备份，导入结果不满意可随时回滚\n- **自动滚动备份保留份数 7 → 14**：可回溯的时间窗更长\n- 1.1.1 用户反馈「升级后课表消失」已查明：并非更新导致，而是开发机上的测试脚本误用了真实数据库；本版已修复该测试脚本，并加上面的两层备份保护\n\n## 作业同步（码制 v2.1）\n- 「作业同步」菜单分三个入口：**生成作业码**（一键生成发布码+同步码）、**发布作业**（只输发布码验证，进入发布界面添加作业并上传）、**接收作业**（输入同步码，作业自动挂到对应课程）\n- 发布码为自包含格式（前 8 位即同步码），网站端按 docs/HOMEWORK-CODES.md 规范实现即可互通\n\n## 从 1.1.1 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.2.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.1.exe`  —— 上一版（保留回退）",
   "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.2.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.2",
-  "sha256": "194971f91339713b9db3921568a0c8a870c5202b9a278417aeb71ea34be15d20",
-  "size": 89686595,
+  "sha256": "9b2f0fc33e05719c2a5aa7e395e098cf7efc8feeaaa8be91c57ea22d54a45f6a",
+  "size": 89686920,
   "fileName": "TaskManager-Setup-1.1.2.exe",
-  "releasedAt": "2026-09-17T12:30:00.000Z"
+  "releasedAt": "2026-09-17T12:40:00.000Z"
 }

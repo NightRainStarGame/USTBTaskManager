@@ -213,11 +213,11 @@ const api = {
     saveAuth: (token: string, publisher: string) => ipcRenderer.invoke('homework:saveAuth', token, publisher) as Promise<{ ok: boolean; error?: string; tokenSet?: boolean }>,
     /** 生成一对新码（同步作业码 + 作业发布码） */
     generateCodes: () => ipcRenderer.invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
-    /** 校验码对是否匹配（本地 HMAC，无需联网） */
-    verifyCodes: (syncCode: string, publishCode: string) => ipcRenderer.invoke('homework:verifyCodes', syncCode, publishCode) as Promise<{ ok: boolean }>,
-    /** 发布一条作业（凭码对 + GitHub 令牌写远端） */
+    /** 校验作业发布码（本地 HMAC，无需联网）；通过则返回解析出的同步码 */
+    verifyCodes: (publishCode: string) => ipcRenderer.invoke('homework:verifyCodes', publishCode) as Promise<{ ok: boolean; syncCode?: string }>,
+    /** 发布一条作业（凭发布码 + GitHub 令牌写远端；发布码自包含同步码） */
     publish: (payload: {
-      syncCode: string; publishCode: string; courseName: string; sessionDate: string;
+      publishCode: string; courseName: string; sessionDate: string;
       sessionTime?: string | null; title: string; content: string;
       type?: string; dueDate?: number | null;
     }) => ipcRenderer.invoke('homework:publish', payload) as Promise<{

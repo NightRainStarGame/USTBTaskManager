@@ -7,8 +7,9 @@
  *     接收方输入此码 → 从 GitHub（或云盘镜像）拉取 homework/<syncCode>.json
  *     → 按课程名匹配本地课程（缺失自动建课）→ 按 remote_id 去重导入。
  *
- *   作业发布码（publishCode）—— 密钥，12 位，由 syncCode 经 HMAC-SHA256 单向派生。
- *     发布方输入此码 → App 本地重算派生比对（验证无需联网、无需服务端）
+ *   作业发布码（publishCode）—— 密钥，12 位 = 同步码(8位) + 校验位(4位)，
+ *     由 syncCode 经 HMAC-SHA256 派生校验位。发布方只需输入这一个码：
+ *     App 本地解析出 syncCode 并校验（无需联网、无需服务端）
  *     → 凭 GitHub 令牌把包写入 homework/<syncCode>.json。
  *
  * 码可由 App 内生成（homework:generateCodes），也可由配套网站生成——
@@ -70,25 +71,41 @@ function bytesToCode(buf: Buffer, len: number): string {
   return out;
 }
 
-/** 生成一对码：随机 syncCode + 由其 HMAC 派生的 publishCode */
+/** 生成一对码：随机 syncCode + 自包含校验的 publishCode */
 export function generateCodePair(): { syncCode: string; publishCode: string } {
   const syncCode = randomCode(SYNC_CODE_LEN);
   return { syncCode, publishCode: derivePublishCode(syncCode) };
 }
 
-/** publishCode = 字母表映射(HMAC-SHA256(SECRET, 'publish:' + syncCode)).slice(0, 12) */
+/**
+ * publishCode = syncCode(8位) + 校验位(4位)。
+ * 前缀直接携带 syncCode（发布作业只需输入这一个码），后 4 位由
+ * HMAC-SHA256(SECRET, 'publish:' + syncCode) 映射到字母表，防止随手编造。
+ */
 export function derivePublishCode(syncCode: string): string {
-  const mac = createHmac('sha256', CODE_SECRET).update(`publish:${syncCode}`).digest();
-  return bytesToCode(mac, PUBLISH_CODE_LEN);
+  const s = (syncCode || '').trim().toUpperCase();
+  const mac = createHmac('sha256', CODE_SECRET).update(`publish:${s}`).digest();
+  return s + bytesToCode(mac, PUBLISH_CODE_LEN - SYNC_CODE_LEN);
 }
 
-/** 校验码对是否匹配（本地重算派生即可，无需联网） */
+/**
+ * 从发布码解析出同步码（发布码自包含：前 8 位即同步码，后 4 位校验）。
+ * 非法/编造的码返回 null。这就是「发布作业只输发布码」的验证入口。
+ */
+export function parsePublishCode(raw: string): string | null {
+  const p = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (p.length !== PUBLISH_CODE_LEN) return null;
+  if (![...p].every((c) => CODE_ALPHABET.includes(c))) return null;
+  const syncCode = p.slice(0, SYNC_CODE_LEN);
+  if (derivePublishCode(syncCode) !== p) return null;
+  return syncCode;
+}
+
+/** 校验码对是否匹配（兼容旧调用：两码都在手上时使用） */
 export function verifyCodePair(syncCode: string, publishCode: string): boolean {
-  const s = (syncCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const p = (publishCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (s.length !== SYNC_CODE_LEN || p.length !== PUBLISH_CODE_LEN) return false;
-  if (![...s].every((c) => CODE_ALPHABET.includes(c))) return false;
-  return derivePublishCode(s) === p;
+  const s = normalizeSyncCode(syncCode);
+  if (!s) return false;
+  return parsePublishCode(publishCode) === s;
 }
 
 /** 规范化 syncCode（去分隔符、大写、校验长度与字符表） */
@@ -134,7 +151,8 @@ export interface CodePair {
 }
 
 export interface PublishPayload {
-  syncCode: string;
+  /** 可不传；传了必须与发布码前缀一致（发布码自包含同步码） */
+  syncCode?: string;
   publishCode: string;
   courseName: string;
   sessionDate: string;
@@ -300,11 +318,13 @@ async function fetchBundleFromAnySource(syncCode: string, token?: string): Promi
  * 幂等：同一课程同一上课日期 + 同标题 → 覆盖更新远端已有条目（保留其 id，接收端无感）。
  */
 export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string }> {
-  // 1) 码对验证（本地 HMAC 派生比对）
-  const syncCode = normalizeSyncCode(payload.syncCode);
-  if (!syncCode) return { ok: false, error: `同步作业码格式不对（${SYNC_CODE_LEN} 位，字母数字，不含 0/O/1/I/L）` };
-  if (!verifyCodePair(syncCode, payload.publishCode)) {
-    return { ok: false, error: '作业发布码与同步作业码不匹配（两码需成对使用）' };
+  // 1) 发布码验证：前 8 位即同步码，后 4 位为 HMAC 校验（本地重算，无需联网）
+  const syncCode = parsePublishCode(payload.publishCode);
+  if (!syncCode) {
+    return { ok: false, error: `作业发布码格式不对（${PUBLISH_CODE_LEN} 位，字母数字，不含 0/O/1/I/L；可在「生成作业码」或网站获取）` };
+  }
+  if (payload.syncCode && normalizeSyncCode(payload.syncCode) !== syncCode) {
+    return { ok: false, error: '作业发布码与同步作业码不匹配' };
   }
 
   const courseName = (payload.courseName || '').trim();
@@ -530,10 +550,11 @@ export function registerHomework(db: DB) {
     return { ok: true, ...pair };
   });
 
-  /** 校验码对（本地 HMAC 比对，无需联网） */
-  ipcMain.handle('homework:verifyCodes', (_e, syncCode: string, publishCode: string) => ({
-    ok: verifyCodePair(syncCode, publishCode),
-  }));
+  /** 校验发布码（本地 HMAC 比对，无需联网）；通过则一并返回解析出的同步码 */
+  ipcMain.handle('homework:verifyCodes', (_e, publishCode: string) => {
+    const syncCode = parsePublishCode(publishCode);
+    return syncCode ? { ok: true, syncCode } : { ok: false };
+  });
 
   ipcMain.handle('homework:publish', async (_e, payload: PublishPayload) => {
     try {

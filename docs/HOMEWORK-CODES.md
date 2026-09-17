@@ -1,6 +1,7 @@
-# 作业同步码制协议 v2（HOMEWORK-CODES）
+# 作业同步码制协议 v2.1（HOMEWORK-CODES）
 
 > TaskManager v1.1.1 起，班级作业发布/接收从「固定密码 + 全量同步」改为「码制 + 按码拉取」。
+> v1.1.2 起，`publishCode` 改为**自包含**格式（前 8 位即 `syncCode`），发布作业只需输入发布码一个码。
 > 本文档是**协议规范**：配套网站（申请码 + 云盘镜像）必须照此实现，才能与 App 互通。
 
 ## 1. 核心概念
@@ -10,12 +11,15 @@
 | 码 | 名称 | 长度 | 角色 | 谁知道 |
 |---|---|---|---|---|
 | `syncCode` | 同步作业码（分享码） | 8 | 标识作业包；接收方凭此码拉取 | 公开，发给同学 |
-| `publishCode` | 作业发布码（密钥） | 12 | 发布方授权凭据；本地 HMAC 派生自 syncCode | 发布者自己留存 |
+| `publishCode` | 作业发布码（密钥） | 12 | 发布方授权凭据；**前 8 位 = syncCode + 后 4 位校验** | 发布者自己留存 |
 
-**关键性质**：`publishCode` 由 `syncCode` 经 HMAC-SHA256 单向派生。
-- 验证码对**无需联网、无需服务端**：App 本地重算派生比对即可。
-- 拿到 `syncCode` 的人**无法**反推 `publishCode`（HMAC 单向）。
+**关键性质**：`publishCode = syncCode(8位) + 校验位(4位)`。
+- 校验位由 `syncCode` 经 HMAC-SHA256 派生，防止随手编造；
+- 发布码**自包含**同步码：发布作业只需输入这一个码，App 本地解析 + 校验即可（无需联网、无需服务端）；
 - 网站端生成码时用相同 SECRET，即可产出与 App 完全兼容的码对。
+
+App 端入口（v1.1.2）：「作业同步」菜单分三个按钮——
+**生成作业码**（生成/展示码对）、**发布作业**（只输发布码）、**接收作业**（只输同步码）。
 
 ## 2. 码的规范
 
@@ -31,13 +35,14 @@
 ### 2.2 生成规则
 
 - `syncCode`：8 位，字符表内**均匀随机**。
-- `publishCode`：12 位，按下式派生（伪代码）：
+- `publishCode`：12 位 = `syncCode(8位) + 校验位(4位)`，校验位按下式派生（伪代码）：
 
 ```
 ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 SECRET   = "StarOS-Homework-Code-v1"        // 派生密钥，网站端必须使用同一字符串
 mac      = HMAC_SHA256(key = SECRET, message = "publish:" + syncCode)
-publishCode = ALPHABET[mac[0] % 31] + ALPHABET[mac[1] % 31] + ... (取前 12 字节)
+check    = ALPHABET[mac[0] % 31] + ALPHABET[mac[1] % 31] + ALPHABET[mac[2] % 31] + ALPHABET[mac[3] % 31]
+publishCode = syncCode + check              // 8 + 4 = 12 位
 ```
 
 参考实现（Node.js）：
@@ -56,26 +61,29 @@ function randomCode(len) {
 
 function derivePublishCode(syncCode) {
   const mac = createHmac('sha256', SECRET).update(`publish:${syncCode}`).digest();
-  let s = '';
-  for (let i = 0; i < 12; i++) s += ALPHABET[mac[i] % ALPHABET.length];
-  return s;
+  let check = '';
+  for (let i = 0; i < 4; i++) check += ALPHABET[mac[i] % ALPHABET.length];
+  return syncCode + check;   // 前 8 位就是 syncCode 本身
 }
 
 // 网站端「申请发布码」按钮：
 const syncCode = randomCode(8);            // 如 "7KQ2M4XP"
-const publishCode = derivePublishCode(syncCode); // 如 "A9XK2M7QP4ZE"
+const publishCode = derivePublishCode(syncCode); // 如 "7KQ2M4XPT9F3"
 ```
 
 > ⚠️ 改动 `SECRET` 会使所有已分发的发布码失效。如需升级算法， bump 版本后缀（如 `StarOS-Homework-Code-v2`）并做兼容。
 
 ### 2.3 验证规则
 
+发布码自包含，验证（也是解析）只需一个码：
+
 ```
-valid(syncCode, publishCode)
-  = normalize(syncCode).length == 8
- && normalize(publishCode).length == 12
- && 每个字符都在字符表内
- && derivePublishCode(normalize(syncCode)) == normalize(publishCode)
+parse(publishCode) -> syncCode | null
+  p = normalize(publishCode)              // 大写 + 去非字母数字
+  = null, 若 p.length != 12
+  = null, 若任一字符不在字符表内
+  = null, 若 derivePublishCode(p.slice(0, 8)) != p
+  = p.slice(0, 8), 其他情况               // 前 8 位即同步码
 ```
 
 ## 3. 存储布局
@@ -152,10 +160,10 @@ GET {CLOUD_SOURCE_BASE}/<syncCode>/homework.json
 
 ### 发布（PublishHomeworkModal）
 
-1. 输入或生成码对（`homework:generateCodes` / 网站申请）；
-2. `homework:verifyCodes` 本地验证码对匹配；
+1. 「作业同步 → 生成作业码」或网站申请得到码对（发布码 = 密钥，同步码 = 分享码）；
+2. 「发布作业」输入 `publishCode` → `homework:verifyCodes` 本地解析校验（顺带得到 `syncCode`）；
 3. 首次发布需配置 GitHub 令牌（`homework:saveAuth`，存本机 settings 表）；
-4. 选课程 / 上课日期 → 写标题内容 → `homework:publish` 写 GitHub `homework/<syncCode>.json`；
+4. 进入发布界面：选课程 / 上课日期 → 写标题内容 → `homework:publish` 写 GitHub `homework/<syncCode>.json`；
 5. 发布成功后自动按此码接收一次，落到本地课程。
 
 ### 接收（ReceiveHomeworkModal）
