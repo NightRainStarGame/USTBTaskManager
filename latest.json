@@ -1,10 +1,10 @@
 {
-  "version": "1.1.1",
-  "notes": "TaskManager v1.1.1 —— 多源更新 + 码制作业同步\n\n## 作业同步（重大改版）\n- 去掉固定发布密码，改为**码制**：一个作业包 = 一个课程的整套作业\n- 「作业同步」入口 → 发布作业 / 接收作业\n- 发布：输入或**生成新码对**（同步作业码=分享给同学 + 作业发布码=自己留存的密钥），验证后选课程书写发布\n- 接收：输入同步作业码，自动从 GitHub（或云盘镜像）拉取整包作业导入课程\n- 码对由 HMAC-SHA256 本地派生验证，无需联网验证；协议文档见仓库 docs/HOMEWORK-CODES.md\n\n## 软件更新\n- 支持多个更新源（默认 GitHub leastversion，云盘源占位）\n- 启动时静默检查更新，发现新版本弹 NEW 浮窗\n- NSIS 升级时主动清空运行时缓存，避免新旧文件堆叠\n- 「无法连接 GitHub」hosts 修复教程链接\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.1.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.0.exe`  —— 上一版（保留回退）\n\n## 从 1.1.0 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.1.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.1",
-  "sha256": "16a53afcebfaabb147a9dd1fca665b69445d879f30fc33c2017134fa4c3e9e06",
-  "size": 89686379,
-  "fileName": "TaskManager-Setup-1.1.1.exe",
-  "releasedAt": "2026-09-17T11:30:00.000Z"
+  "version": "1.1.2",
+  "notes": "TaskManager v1.1.2 —— 数据安全加固版\n\n## 课表数据保护（重要）\n- **课表导入前自动安全备份**：无论 Excel 课表导入还是教务系统导入，执行前都会先在 backups/ 里落一份 pre-import 备份，导入结果不满意可随时回滚\n- **自动滚动备份保留份数 7 → 14**：可回溯的时间窗更长\n\n## 说明\n- 1.1.1 用户反馈「升级后课表消失」已查明：并非更新导致，而是开发机上的测试脚本误用了真实数据库；本版已修复该测试脚本，并加上面的两层备份保护\n- 若你的课表曾丢失：到「设置 → 教务系统（贝壳课表）」重新扫码登录并导入即可完整恢复（会自动替换旧数据）\n\n## 从 1.1.1 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.2.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.1.exe`  —— 上一版（保留回退）",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.2.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.2",
+  "sha256": "194971f91339713b9db3921568a0c8a870c5202b9a278417aeb71ea34be15d20",
+  "size": 89686595,
+  "fileName": "TaskManager-Setup-1.1.2.exe",
+  "releasedAt": "2026-09-17T12:30:00.000Z"
 }

@@ -85,9 +85,14 @@ async function main() {
   delete env.NODE_ENV;
   const isPackaged = providedExe && providedExe.endsWith('.exe');
   const cwd = isPackaged ? path.dirname(path.resolve(projectRoot, providedExe)) : projectRoot;
-  const args = isPackaged ? [`--remote-debugging-port=${APP_PORT}`] : ['.', `--remote-debugging-port=${APP_PORT}`];
+  // 关键：测试必须使用独立的 userData，绝不能碰真实用户数据库（含 settings 还原逻辑）
+  const testProfile = path.join(os.tmpdir(), `e2e-update-profile-${Date.now()}`);
+  fs.mkdirSync(testProfile, { recursive: true });
+  const args = isPackaged
+    ? [`--remote-debugging-port=${APP_PORT}`, `--user-data-dir=${testProfile}`]
+    : ['.', `--remote-debugging-port=${APP_PORT}`, `--user-data-dir=${testProfile}`];
   const bin = isPackaged ? path.resolve(projectRoot, providedExe) : electronBin;
-  console.log('启动应用:', bin);
+  console.log('启动应用:', bin, '（隔离 profile:', testProfile, '）');
   const child = spawn(bin, args, { cwd, env, stdio: 'ignore' });
 
   try {

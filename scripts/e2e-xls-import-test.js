@@ -103,7 +103,12 @@ async function realClick(cdp, x, y) {
 (async () => {
   // 启动 App
   console.log('启动 App:', EXE);
-  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`], {
+  // 关键：测试必须使用独立的 userData，绝不能碰真实用户数据库
+  // （2026-09-17 事故：本脚本曾用真实 DB 跑，importFromXls 的 replaceExisting
+  //   连带删除了用户教务导入的全部课程，导致用户课表被清空）
+  const testProfile = path.join(os.tmpdir(), `e2e-xls-profile-${Date.now()}`);
+  fs.mkdirSync(testProfile, { recursive: true });
+  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${testProfile}`], {
     cwd: path.dirname(EXE), env: cleanEnv, stdio: 'ignore', detached: false,
   });
   child.on('error', (e) => console.error('App 启动错误:', e.message));

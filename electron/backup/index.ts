@@ -30,7 +30,7 @@ export function backupsDir(): string {
  * 启动时的自动滚动备份：每天最多一份，保留最近 7 份。
  * 使用 better-sqlite3 的 backup API（在线备份，WAL 下安全）。
  */
-export async function autoRollingBackup(db: Database, keep = 7): Promise<string | null> {
+export async function autoRollingBackup(db: Database, keep = 14): Promise<string | null> {
   const dir = backupsDir();
   const today = new Date().toISOString().slice(0, 10);
   const existing = fs.readdirSync(dir).filter((f) => f.startsWith('auto-') && f.endsWith('.db'));

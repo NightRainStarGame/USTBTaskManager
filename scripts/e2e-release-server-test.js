@@ -182,7 +182,10 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.NODE_ENV;
   console.log('启动应用:', exePath);
-  const child = spawn(exePath, [`--remote-debugging-port=${APP_PORT}`], { cwd: path.dirname(exePath), env, stdio: 'ignore' });
+  // 关键：测试必须使用独立的 userData，绝不能碰真实用户数据库
+  const testProfile = path.join(os.tmpdir(), `e2e-relsvr-profile-${Date.now()}`);
+  fs.mkdirSync(testProfile, { recursive: true });
+  const child = spawn(exePath, [`--remote-debugging-port=${APP_PORT}`, `--user-data-dir=${testProfile}`], { cwd: path.dirname(exePath), env, stdio: 'ignore' });
 
   try {
     let wsUrl = null;

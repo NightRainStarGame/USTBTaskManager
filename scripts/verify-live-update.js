@@ -127,12 +127,17 @@ async function main() {
   }
   console.log(`  App：${path.relative(ROOT, EXE)}\n`);
 
-  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`], {
+  // 关键：宿主环境可能带着 ELECTRON_RUN_AS_NODE / NODE_OPTIONS，
+  // 会让 Electron 应用退化成纯 Node 进程（报 "bad option: --remote-debugging-port"）。
+  // 另外必须使用独立的 userData——更新链路验证不需要真实数据，
+  // 且曾因使用真实 DB 导致测试后数据被连带清理（2026-09-17 课表丢失事故）。
+  const testProfile = path.join(require('node:os').tmpdir(), `verify-update-profile-${Date.now()}`);
+  fs.mkdirSync(testProfile, { recursive: true });
+
+  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${testProfile}`], {
     cwd: path.dirname(EXE),
     stdio: 'ignore',
     detached: false,
-    // 关键：宿主环境可能带着 ELECTRON_RUN_AS_NODE / NODE_OPTIONS，
-    // 会让 Electron 应用退化成纯 Node 进程（报 "bad option: --remote-debugging-port"）。
     env: cleanEnv(),
   });
 

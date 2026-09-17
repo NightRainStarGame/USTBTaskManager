@@ -132,7 +132,12 @@ async function main() {
   }
   console.log(`  App：${path.relative(ROOT, EXE)}\n`);
 
-  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`], {
+  // 关键：测试必须使用独立的 userData，绝不能碰真实用户数据库
+  const os = require('os');
+  const testProfile = path.join(os.tmpdir(), `e2e-homework-profile-${Date.now()}`);
+  fs.mkdirSync(testProfile, { recursive: true });
+
+  const child = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${testProfile}`], {
     cwd: path.dirname(EXE),
     stdio: 'ignore',
     detached: false,

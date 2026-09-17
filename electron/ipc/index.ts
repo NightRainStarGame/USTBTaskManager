@@ -467,7 +467,7 @@ import {
   type UstbContext,
 } from '../ustb/api';
 import { importCurriculum } from '../ustb/importer';
-import { registerBackup } from '../backup/index';
+import { registerBackup, safetyBackup } from '../backup/index';
 import { registerUpdater } from '../updater/index';
 import { registerHomework } from '../homework/index';
 import { registerXlsImport } from '../timetable-xls/index';
@@ -565,6 +565,8 @@ function registerUstb(db: DB) {
     await getByytUserInfo(ctx);
     const { items, periods } = await loadAndParse(ctx, opts.xn, String(opts.xq));
     if (!items.length) throw new Error('该学期没有解析到任何课程');
+    // 导入会替换既有课表 —— 先做安全备份（backups/pre-import-*.db），出问题可回滚
+    try { await safetyBackup(db); } catch { /* 备份失败不阻断导入 */ }
     return importCurriculum(db, items, {
       xn: opts.xn,
       xq: String(opts.xq),

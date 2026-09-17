@@ -2,6 +2,7 @@ import { dialog, ipcMain } from 'electron';
 import type { Database } from 'better-sqlite3';
 import * as XLSX from 'xlsx';
 import { parseWeeksText, type ParsedClassItem } from '../ustb/api';
+import { safetyBackup } from '../backup';
 
 const DAY = 86400000;
 
@@ -388,7 +389,12 @@ export function registerXlsImport(db: Database) {
   ipcMain.handle('xls:pickFile', () => pickFile());
   ipcMain.handle('xls:parseFile', (_e, filePath: string) => parseFile(filePath));
   ipcMain.handle('xls:reparse', (_e, parsed: ParseResult, mapping: FieldMapping) => reparse(parsed, mapping));
-  ipcMain.handle('xls:importItems', (_e, items: ParsedClassItem[], opts: ImportOptions) => importFromXls(db, items, opts));
+  // 导入会按 replaceExisting 连带删除已有 XLS/教务课表 —— 执行前先做安全备份（backups/pre-import-*.db），
+  // 一旦导入结果不符合预期，用户可从备份找回（2026-09-17 课表丢失事故的教训）。
+  ipcMain.handle('xls:importItems', async (_e, items: ParsedClassItem[], opts: ImportOptions) => {
+    try { await safetyBackup(db); } catch { /* 备份失败不阻断导入，但一般不会失败 */ }
+    return importFromXls(db, items, opts);
+  });
   ipcMain.handle('xls:lastImport', () => {
     const r = db.prepare("SELECT value FROM settings WHERE key='xls_last_sync'").get() as { value: string } | undefined;
     const c = db.prepare("SELECT value FROM settings WHERE key='xls_imported_courses'").get() as { value: string } | undefined;

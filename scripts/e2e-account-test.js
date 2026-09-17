@@ -37,7 +37,12 @@ async function main() {
   console.log('启动应用:', exe);
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(exe, [`--remote-debugging-port=${PORT}`], { env, stdio: 'ignore', detached: false });
+  // 关键：测试必须使用独立的 userData，绝不能碰真实用户数据库
+  const os = require('os');
+  const fs = require('fs');
+  const userData = path.join(os.tmpdir(), `e2e-account-profile-${Date.now()}`);
+  fs.mkdirSync(userData, { recursive: true });
+  const child = spawn(exe, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`], { env, stdio: 'ignore', detached: false });
   let done = false;
   try {
     const wsUrl = await findPageWs();
