@@ -470,6 +470,7 @@ import { importCurriculum } from '../ustb/importer';
 import { registerBackup } from '../backup/index';
 import { registerUpdater } from '../updater/index';
 import { registerHomework } from '../homework/index';
+import { registerXlsImport } from '../timetable-xls/index';
 
 function registerUstb(db: DB) {
   const getSetting = (key: string): string | undefined =>
@@ -619,4 +620,5 @@ export function registerAllIpc(db: DB) {
   registerBackup(db, getDbPath());
   registerUpdater(db);
   registerHomework(db);
+  registerXlsImport(db);
 }

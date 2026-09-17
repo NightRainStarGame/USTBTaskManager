@@ -185,3 +185,44 @@ export interface UpdateProgress {
   path?: string;
   sha256?: string;
 }
+
+// ===== 课表 XLS 导入 =====
+export interface XlsFieldMapping {
+  className: number;
+  teacher: number;
+  weeks: number;
+  day: number;
+  period: number;
+  location: number;
+}
+
+export interface XlsPreviewItem {
+  day: number;
+  period: number;
+  className: string;
+  teacher: string;
+  weeksText: string;
+  weeks: number[];
+  location: string;
+  periodName: string;
+}
+
+export interface XlsParseResult {
+  sheetName: string;
+  headers: string[];
+  rows: Record<string, string>[];
+  totalRows: number;
+  mapping: XlsFieldMapping;
+  preview: XlsPreviewItem[];
+  items: XlsPreviewItem[];
+  warnings: string[];
+  badRows: { row: number; reason: string }[];
+}
+
+export interface XlsImportSummary {
+  courses: number;
+  events: number;
+  items: number;
+  courseIds: number[];
+  warnings: string[];
+}

@@ -8,6 +8,8 @@ dist/
 dist-electron/
 release/
 release-*/
+xls-build/
+xls-build-stale/
 release-manifest/
 out-app*/
 *.tsbuildinfo

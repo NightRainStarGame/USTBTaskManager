@@ -197,6 +197,28 @@ const api = {
     }>,
     makeSafety: () => ipcRenderer.invoke('backup:makeSafety') as Promise<{ ok: boolean; path: string }>,
   },
+  // 课表 Excel 导入
+  xls: {
+    pickFile: () => ipcRenderer.invoke('xls:pickFile') as Promise<string | null>,
+    parseFile: (filePath: string) => ipcRenderer.invoke('xls:parseFile', filePath) as Promise<{
+      sheetName: string;
+      headers: string[];
+      rows: Record<string, string>[];
+      totalRows: number;
+      mapping: { className: number; teacher: number; weeks: number; day: number; period: number; location: number };
+      preview: Array<{ day: number; period: number; className: string; teacher: string; weeksText: string; weeks: number[]; location: string; periodName: string }>;
+      items: Array<{ day: number; period: number; className: string; teacher: string; weeksText: string; weeks: number[]; location: string; periodName: string }>;
+      warnings: string[];
+      badRows: { row: number; reason: string }[];
+    }>,
+    reparse: (parsed: any, mapping: { className: number; teacher: number; weeks: number; day: number; period: number; location: number }) =>
+      ipcRenderer.invoke('xls:reparse', parsed, mapping),
+    importItems: (items: any[], opts: { xn: string; xq: '1' | '2'; semesterStart: number; replaceExisting: boolean }) =>
+      ipcRenderer.invoke('xls:importItems', items, opts) as Promise<{
+        courses: number; events: number; items: number; courseIds: number[]; warnings: string[];
+      }>,
+    lastImport: () => ipcRenderer.invoke('xls:lastImport') as Promise<{ lastSync: number; courseCount: number }>,
+  },
 };
 
 contextBridge.exposeInMainWorld('taskAPI', api);
