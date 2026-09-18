@@ -1368,6 +1368,8 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   // 可选 secret edit
   const [secretMode, setSecretMode] = useState(false);
   const [publishCode, setPublishCode] = useState('');
+  // v1.1.4：发布目标（GitHub 令牌 / 北科云盘·校园网）
+  const [target, setTarget] = useState<'github' | 'cloud'>('github');
 
   const [error, setError] = useState('');
   const [published, setPublished] = useState<{
@@ -1418,6 +1420,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     try {
       const r = await window.taskAPI.homework.publish({
         publishCode: secretMode && publishCode ? publishCode : undefined,
+        target,
         courseId: course.id,
         courseName: course.name,
         sessionDate,
@@ -1453,7 +1456,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     return <>
       <button onClick={onClose} className="btn-ghost">取消</button>
       <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow">
-        <CloudUpload size={14} /> {busy ? '上传中…' : '上传到 GitHub'}
+        <CloudUpload size={14} /> {busy ? '上传中…' : target === 'cloud' ? '上传到北科云盘' : '上传到 GitHub'}
       </button>
     </>;
   })();
@@ -1488,9 +1491,23 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
           <>
             {/* 说明 */}
             <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim leading-relaxed">
-              直接填写下面的作业内容，提交后会保存到本地「{course?.name ?? '?'}」课程，并上传到 GitHub 仓库的
-              <span className="text-neon-green"> homework/&lt;同步作业码&gt;.json</span>。
+              直接填写下面的作业内容，提交后会保存到本地「{course?.name ?? '?'}」课程，并上传到所选同步源。
               每次为该课程首次发布时会自动生成一个 8 位同步作业码（持久化到本机），同学凭此码「接收作业」。
+            </div>
+
+            {/* 发布目标（v1.1.4） */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-dim shrink-0">发布到</span>
+              {([['github', 'GitHub'], ['cloud', '北科云盘']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setTarget(v)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-mono border transition-colors ${target === v ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
+                >
+                  {label}{v === 'cloud' ? '（需校园网）' : ''}
+                </button>
+              ))}
             </div>
 
             {/* 课程 + 类型 */}

@@ -42,3 +42,18 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# ==================== v1.1.4 开发临时产物（探测/回环测试，safe-delete 拦截无法删，忽略即可） ====================
+_yunpan_*
+_probe_exe.js
+e2e_cdp_probe*
+release-v1.1.4/
+release-v1.1.4b/
+release-v1.1.4-final/
+release-v1.1.4-e2e/
+release-v1.1.4-verify/
+debug.log
+_check_exe.js
+_rel-*.json
+rel-*.tmp.json
+_tmp_msg.txt

@@ -1,6 +1,13 @@
 // E2E：软件更新模块（本地模拟更新源 + 真实 Electron 应用 + CDP 真实交互）
 // 用法：node e2e-update-test.js [可选 exe 路径，默认用源码构建加载 dist/]
 //
+// ⚠️ 2026-09-18（v1.1.4）标记为**过时**：本脚本针对 v1.1.0 单源 UI
+//   （placeholder「留空 = 未配置」+「保存地址」按钮），v1.1.1 起多源化后这两个
+//   UI 元素已不存在，B-H 用例必然失败（A0 仍可用）。
+//   更新链路的现行覆盖：scripts/e2e-cloud-source-test.js（多源 checkAll）+
+//   scripts/verify-live-update.js（真实远端 latest.json）。
+//   待需要时按新多源 UI 重写（点开「源管理」编辑器 → 填「版本清单 JSON 直链」placeholder）。
+//
 // 覆盖：
 //   A 未配置更新源 → 明确提示
 //   B 保存更新源地址 → 落库

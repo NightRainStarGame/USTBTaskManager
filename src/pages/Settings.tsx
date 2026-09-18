@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
-import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar } from 'lucide-react';
+import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
@@ -10,6 +10,10 @@ interface UpdateSource {
   url: string;
   enabled: boolean;
   primary: boolean;
+  /** v1.1.4：'anyshare' = 北科云盘外链源 */
+  type?: 'anyshare' | 'http';
+  /** anyshare 源的提取码 */
+  password?: string;
 }
 
 interface PerSourceResult {
@@ -101,6 +105,7 @@ export default function SettingsPage() {
       forced?: boolean;
       sourceName?: string;
       source?: string;
+      sourceIndex?: number;
     } | null;
     perSource: Array<{ source: UpdateSource; result: any }>;
     checkedAt: number;
@@ -110,6 +115,15 @@ export default function SettingsPage() {
   const [dlPath, setDlPath] = useState<string | null>(null);
   const [updateAuto, setUpdateAuto] = useState(true);
   const [showSrcEditor, setShowSrcEditor] = useState(false);
+
+  // ===== 作业同步（v1.1.4：GitHub 令牌 + 北科云盘源） =====
+  const [hwToken, setHwToken] = useState('');
+  const [hwPublisher, setHwPublisher] = useState('');
+  const [hwTokenSet, setHwTokenSet] = useState(false);
+  const [hwAuthSaved, setHwAuthSaved] = useState(false);
+  const [hwCloud, setHwCloud] = useState<{ url: string; password: string; enabled: boolean }>({ url: '', password: '', enabled: true });
+  const [hwCloudSaved, setHwCloudSaved] = useState(false);
+  const [hwCloudErr, setHwCloudErr] = useState('');
 
   // ===== 课表 Excel 导入 =====
   const [xlsOpen, setXlsOpen] = useState(false);
@@ -145,8 +159,43 @@ export default function SettingsPage() {
         setActiveIndex(cfg.activeIndex ?? 0);
         setUpdateAuto(cfg.autoCheck);
       } catch { /* 忽略 */ }
+      try {
+        const hw = await window.taskAPI.homework.config();
+        setHwTokenSet(!!hw.tokenSet);
+        setHwPublisher(hw.publisher || '');
+        if (hw.cloud) {
+          setHwCloud({
+            url: `${hw.cloud.baseUrl}/link/${hw.cloud.linkId}`,
+            password: hw.cloud.password || '',
+            enabled: hw.cloud.enabled !== false,
+          });
+        }
+      } catch { /* 忽略 */ }
     })();
   }, []);
+
+  /** 保存 GitHub 发布令牌 + 发布人昵称 */
+  const saveHwAuth = async () => {
+    const r = await window.taskAPI.homework.saveAuth(hwToken.trim(), hwPublisher.trim());
+    if (!r.ok) { alert(r.error || '保存失败'); return; }
+    setHwTokenSet(!!r.tokenSet);
+    setHwToken('');
+    setHwAuthSaved(true);
+    setTimeout(() => setHwAuthSaved(false), 1800);
+  };
+
+  /** 保存北科云盘作业同步源 */
+  const saveHwCloud = async () => {
+    setHwCloudErr('');
+    const r = await window.taskAPI.homework.saveCloud({
+      url: hwCloud.url.trim(),
+      password: hwCloud.password.trim(),
+      enabled: hwCloud.enabled,
+    });
+    if (!r.ok) { setHwCloudErr(r.error || '保存失败'); return; }
+    setHwCloudSaved(true);
+    setTimeout(() => setHwCloudSaved(false), 1800);
+  };
 
   // 下载进度订阅
   useEffect(() => {
@@ -218,6 +267,9 @@ export default function SettingsPage() {
         const perSource = r.perSource.map(({ source, result }) => ({
           name: source.name,
           url: source.url,
+          type: source.type,
+          password: source.password,
+          sourceIndex: result.sourceIndex,
           ok: result.ok,
           latestVersion: result.latestVersion,
           reason: result.reason,
@@ -242,10 +294,13 @@ export default function SettingsPage() {
     setUpdateMsg(null);
     setDl({ running: true, percent: 0, received: 0, total: 0 });
     try {
+      // 北科云盘源的 downloadUrl 是云盘里的文件名，后端要靠 source（提取码）换签名直链
+      const src = w.sourceIndex != null ? aggregate?.perSource?.[w.sourceIndex]?.source : null;
       const r = await window.taskAPI.updater.download({
         url: w.downloadUrl,
         version: w.latestVersion || 'latest',
         sha256: w.sha256 || null,
+        source: src || null,
       });
       if (!r.ok) {
         setDl(null);
@@ -725,6 +780,9 @@ export default function SettingsPage() {
                   ) : (
                     <button onClick={() => setAsPrimary(i)} className="px-1.5 py-0.5 rounded text-[9px] border border-text-dim/30 text-text-dim hover:border-neon-green hover:text-neon-green" title="设为主源">置主</button>
                   )}
+                  {s.type === 'anyshare' && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/40 shrink-0" title="北科云盘外链源（需北京科技大学校园网）">云盘</span>
+                  )}
                   <input
                     value={s.name}
                     onChange={(e) => updateSourceLocal(i, { name: e.target.value })}
@@ -737,6 +795,15 @@ export default function SettingsPage() {
                     placeholder="版本清单 JSON 直链 / 网盘分享页"
                     className="input-neon flex-1 py-0.5 px-2 text-xs"
                   />
+                  {s.type === 'anyshare' && (
+                    <input
+                      value={s.password || ''}
+                      onChange={(e) => updateSourceLocal(i, { password: e.target.value })}
+                      placeholder="提取码"
+                      className="input-neon w-20 py-0.5 px-2 text-xs"
+                      title="北科云盘提取码"
+                    />
+                  )}
                   <button onClick={() => removeSource(i)} className="btn-ghost text-neon-danger p-1" title="删除该源">
                     <Trash2 size={12} />
                   </button>
@@ -749,6 +816,27 @@ export default function SettingsPage() {
                 <Plus size={12} /> 添加源
               </button>
               <button
+                onClick={() => {
+                  if (sources.some((s) => s.type === 'anyshare' || /\/link\//.test(s.url))) {
+                    alert('已存在北科云盘源');
+                    return;
+                  }
+                  setSources([...sources, {
+                    name: '北科云盘（需校园网）',
+                    url: 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469',
+                    password: 'kc26',
+                    type: 'anyshare',
+                    enabled: true,
+                    primary: false,
+                  }]);
+                  setShowSrcEditor(true);
+                }}
+                className="btn-ghost text-xs py-1"
+                title="添加北科云盘更新源（需要北京科技大学校园网）"
+              >
+                <Plus size={12} /> 北科云盘源
+              </button>
+              <button
                 onClick={() => saveSources(sources, activeIndex)}
                 disabled={!sources.length}
                 className="btn-neon text-xs py-1"
@@ -756,9 +844,10 @@ export default function SettingsPage() {
                 {srcSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : <><Save size={12} /> 保存源</>}
               </button>
               <span className="font-mono text-[10px] text-text-dim">
-                内置两个源：<strong className="text-neon-green">StarOS（nrsc.games）</strong>为主源，
-                <strong className="text-neon-green">GitHub leastversion</strong>为备用镜像；
-                检查更新时会两个一起查，取版本最高的那个升级。
+                内置三个源：<strong className="text-neon-green">StarOS（nrsc.games）</strong>为主源，
+                <strong className="text-neon-green">GitHub leastversion</strong>与
+                <strong className="text-neon-yellow">北科云盘（需校园网）</strong>为备用镜像；
+                检查更新时会一起查，取版本最高的那个升级。
               </span>
             </div>
 
@@ -869,6 +958,78 @@ export default function SettingsPage() {
             ✓ 安装包已下载：{dlPath}
           </div>
         )}
+      </Section>
+
+      {/* 作业同步（v1.1.4） */}
+      <Section icon={<CloudUpload size={14} />} title="作业同步">
+        <Row label="GitHub 发布令牌">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={hwToken}
+                onChange={(e) => setHwToken(e.target.value)}
+                placeholder={hwTokenSet ? '已配置（留空不修改）' : 'ghp_… / github_pat_…'}
+                className="input-neon flex-1"
+              />
+              <button onClick={saveHwAuth} className="btn-neon text-xs py-1.5 shrink-0">
+                {hwAuthSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : '保存'}
+              </button>
+            </div>
+            <div className="font-mono text-[10px] text-text-dim">
+              发布作业到 GitHub 时需要（fine-grained PAT，勾选本仓库 Contents 读写）。接收作业<strong className="text-neon-green">不需要令牌</strong>（v1.1.4 起读走 raw CDN，不受 API 每小时 60 次限制）。
+            </div>
+          </div>
+        </Row>
+
+        <Row label="发布人昵称">
+          <input
+            value={hwPublisher}
+            onChange={(e) => setHwPublisher(e.target.value)}
+            placeholder="接收方看到的发布人名字（如：豆芽）"
+            className="input-neon"
+          />
+        </Row>
+
+        <Row label="北科云盘同步源">
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hwCloud.enabled}
+                onChange={(e) => setHwCloud({ ...hwCloud, enabled: e.target.checked })}
+                className="accent-[#00FF88]"
+              />
+              <span className="text-xs text-text-secondary">
+                启用后「接收作业」除 GitHub 外也会查北科云盘；「发布作业」可选发布到云盘。
+                <strong className="text-neon-yellow">需要北京科技大学校园网</strong>。
+              </span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                value={hwCloud.url}
+                onChange={(e) => setHwCloud({ ...hwCloud, url: e.target.value })}
+                placeholder="https://yunpan.ustb.edu.cn/link/XXXX…"
+                className="input-neon flex-1 font-mono text-xs"
+              />
+              <input
+                value={hwCloud.password}
+                onChange={(e) => setHwCloud({ ...hwCloud, password: e.target.value })}
+                placeholder="提取码"
+                className="input-neon w-24 font-mono text-xs"
+              />
+              <button onClick={saveHwCloud} className="btn-neon text-xs py-1.5 shrink-0">
+                {hwCloudSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : '保存'}
+              </button>
+            </div>
+            {hwCloudErr && (
+              <div className="font-mono text-[10px] text-neon-danger">✗ {hwCloudErr}</div>
+            )}
+            <div className="font-mono text-[10px] text-text-dim">
+              作业包存在云盘分享根目录（文件名 <code>&lt;同步码&gt;-&lt;时间戳&gt;.json</code>），接收方按前缀取最新一份。云盘里旧文件不会自动清理，可偶尔登录云盘手动删。
+            </div>
+          </div>
+        </Row>
       </Section>
 
       {/* 关于 */}

@@ -1,8 +1,9 @@
-# 作业同步码制协议 v2.2（HOMEWORK-CODES）
+# 作业同步码制协议 v2.3（HOMEWORK-CODES）
 
 > TaskManager v1.1.1 起，班级作业发布/接收从「固定密码 + 全量同步」改为「码制 + 按码拉取」。
 > v1.1.2 起，`publishCode` 改为**自包含**格式（前 8 位即 `syncCode`），发布作业只需输入发布码一个码。
 > v1.1.3 起，`publishCode` 改为**可选 secret edit**；每门课程持久化一个 `syncCode`；发布作业**直接进入添加作业 UI**；接收作业**找不到同名课程时弹窗告知**。
+> v1.1.4 起，新增「北科云盘（AnyShare）」作为第二同步源（**校园网**），接收方按前缀取最新一份；GitHub 读路径改走 `raw.githubusercontent.com` CDN 解决 60 次/小时速率限制。
 > 本文档是**协议规范**：配套网站（申请码 + 云盘镜像）必须照此实现，才能与 App 互通。
 
 ## 1. 核心概念
@@ -98,31 +99,30 @@ homework/<syncCode>.json     ← 作业包本体（一个码一个文件）
 - **读**：公开仓库匿名可读（GitHub Contents API `GET /repos/.../contents/homework/<syncCode>.json`，或 raw.githubusercontent.com 直链）。
 - **写**：需要 GitHub 令牌（fine-grained PAT，仅本仓库、仅 Contents 读写）。令牌只存在发布者本机，不经网站。
 
-### 3.2 云盘源（第二源，网站负责）
+### 3.2 云盘源（第二源，v1.1.4 起：AnyShare 外链）
 
-网站「申请发布码」按钮应做两件事：
+v1.1.4 起内置「北科云盘」（爱数 AnyShare）作为第二同步源。仅在**北京科技大学校园网**内可达。
 
-1. **生成码对**（按 §2.2 规则）并展示给用户；
-2. **在云盘建目录**：`/<syncCode>/`（以同步作业码命名），预留 `homework.json`。
-
-之后每当有发布动作，镜像一份与 GitHub 相同的 JSON 到：
+**约定布局（App 与云盘共享）**：
 
 ```
-/<syncCode>/homework.json    ← 与 homework/<syncCode>.json 内容完全一致
+分享根目录/<syncCode>-<unix_ts>.json     ← 作业包本体
 ```
 
-App 端云盘源的约定（网站按此提供 HTTP 接口即可被 App 读取）：
+匿名分享的 AnyShare 外链**不能覆盖 / 不能删除**同名文件；为避免歧义，发布端每次写一个新文件，文件名为 `<syncCode>-<时间戳>.json`。接收端按前缀取修改时间最新的一份。
 
-```
-GET {CLOUD_SOURCE_BASE}/<syncCode>/homework.json
-  200 → 作业包 JSON（见 §4）
-  404 → 该源没有此码（App 会继续尝试下一源）
-```
+**App 端读取方式**：走 `electron/anyshare.ts` 客户端：
+1. POST `/link` 表单（id=外链ID, type=anonymous, password=提取码）→ 302 Set-Cookie `link_token:<id>=ory_at_xxx`
+2. 后续一律 `Authorization: Bearer <token>`：
+   - `POST /api/efast/v1/dir/list {docid=根}`  → `{files: [{name, docid, rev, size, modified}]}`
+   - `POST /api/open-doc/v1/file-download {doc:[{id, version}]}` → `{items: [{url: 签名直链}]}`
+   - `POST /api/efast/v1/file/osbeginupload` → S3 multipart 直传 → `osendupload`
 
-`CLOUD_SOURCE_BASE` 在 App 的 `electron/homework/index.ts` 中配置（当前为 null = 未启用）。
-网站上线后把 base URL 告诉 App 维护者填入即可，无需改协议。
+**v1.1.4 UI**：发布弹窗「发布到」切换 `GitHub` / `北科云盘（需校园网）`；Settings 页「作业同步」区可改外链/提取码/启停。
 
-**源优先级**：App 先查 GitHub，再查云盘；第一个命中即用。某源故障（超时/5xx）不阻断其他源。
+**网站端指引**（若要兼容）：
+- 在云盘分享根目录里建一个 `<syncCode>/homework.json` 镜像 GitHub 内容即可，App 当前不会去解析 `<syncCode>/` 子目录，而是按 `<syncCode>-<ts>.json` 平铺；
+- 接收失败（404 / 超时）时 App 自动回落到 GitHub 源。
 
 ## 4. 作业包 JSON 格式
 

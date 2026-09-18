@@ -32,6 +32,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { DB } from '../db/index';
+import {
+  parseAnyShareUrl, downloadTextFile, findShareFile, getFileDownloadUrl,
+  type AnyShareConfig,
+} from '../anyshare';
 
 /**
  * ⬇️⬇️⬇️ 默认更新源地址（发布新版本时维护这里）⬇️⬇️⬇️
@@ -51,6 +55,15 @@ import type { DB } from '../db/index';
  * 若某个源落后于另一个也不影响升级（聚合时取最高版本）。
  * 用户也可在「设置 → 软件更新 → 更新源」里增删源、切换主源或换成第三方镜像。
  */
+/**
+ * v1.1.4 起新增第 3 个内置源：
+ *
+ *   3) 北科云盘（AnyShare 外链 + 提取码）—— 校园网内速度最快
+ *      ⚠️ 仅在北京科技大学校园网内可达；不在校园网时该源会超时失败，
+ *         不影响其他源（多源并行、取版本最高）。
+ *      清单是云盘分享里的 latest.json；清单里 url 字段填**安装包在云盘里的文件名**
+ *      （下载时 App 会自动换签成名直链）。
+ */
 export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
     name: 'StarOS / nrsc.games',
@@ -61,6 +74,14 @@ export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
     name: 'GitHub / leastversion',
     url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
+    enabled: true,
+    primary: false,
+  },
+  {
+    name: '北科云盘（需校园网）',
+    url: 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469',
+    password: 'kc26',
+    type: 'anyshare',
     enabled: true,
     primary: false,
   },
@@ -77,10 +98,14 @@ const SETTING_SKIPPED = 'update_skipped_version';
 const SETTING_LAST_CHECK = 'update_last_check';
 
 export interface UpdateSource {
-  name: string;       // 显示名（如「StarOS / nrsc.games」「GitHub / leastversion」）
-  url: string;        // 清单地址（latest.json 直链）
+  name: string;       // 显示名（如「StarOS / nrsc.games」「北科云盘（需校园网）」）
+  url: string;        // 清单地址（latest.json 直链；anyshare 型为外链地址）
   enabled: boolean;   // 是否启用
   primary: boolean;   // 是否为主源（UI 里标"主"）
+  /** v1.1.4：'anyshare' = 北科云盘外链（url 为分享链接 + password 提取码）；缺省 'http' */
+  type?: 'anyshare' | 'http';
+  /** anyshare 型源的提取码 */
+  password?: string;
 }
 
 export interface UpdateManifest {
@@ -230,6 +255,20 @@ function setSetting(db: DB, key: string, value: string) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
 
+/** 把源的 url/type 归一化：能被 parseAnyShareUrl 识别的一律标记为 anyshare 型 */
+function normalizeSource(s: any, i: number): UpdateSource {
+  const url = String(s?.url || '').trim().slice(0, 2048);
+  const asUrl = url ? parseAnyShareUrl(url) : null;
+  return {
+    name: String(s?.name || `源 ${i + 1}`).slice(0, 40),
+    url,
+    enabled: s?.enabled !== false,
+    primary: s?.primary === true,
+    type: asUrl ? 'anyshare' : (s?.type === 'anyshare' ? 'anyshare' : 'http'),
+    ...(asUrl || s?.type === 'anyshare' ? { password: String(s?.password || '').trim().slice(0, 64) } : {}),
+  };
+}
+
 /** 把用户归并/补全的源：第一个 primary = 主源；至少保留 DEFAULT_UPDATE_SOURCES[0] */
 export function getSources(db: DB | null): UpdateSource[] {
   const raw = getSetting(db, SETTING_SOURCES);
@@ -239,19 +278,14 @@ export function getSources(db: DB | null): UpdateSource[] {
       if (Array.isArray(arr) && arr.length) {
         return arr
           .filter((s: any) => s && typeof s.url === 'string' && s.url.trim())
-          .map((s: any, i: number): UpdateSource => ({
-            name: String(s.name || `源 ${i + 1}`).slice(0, 40),
-            url: String(s.url).trim().slice(0, 2048),
-            enabled: s.enabled !== false,
-            primary: s.primary === true,
-          }));
+          .map((s: any, i: number) => normalizeSource(s, i));
       }
     } catch { /* fallthrough */ }
   }
   // 兼容旧库：把 update_source（单字符串）当成唯一的一个自定义源
   const legacy = (getSetting(db, SETTING_SOURCES_LEGACY) || '').trim();
   if (legacy) {
-    return [{ name: '自定义源（旧版设置）', url: legacy, enabled: true, primary: true }];
+    return [normalizeSource({ name: '自定义源（旧版设置）', url: legacy, enabled: true, primary: true }, 0)];
   }
   return DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s }));
 }
@@ -261,12 +295,7 @@ export function setSources(db: DB | null, sources: UpdateSource[]): UpdateSource
   // 仅在所有源 url 都空时回退到默认源；填了 url 的源靠前参与实际拉取。
   const cleaned = (sources || [])
     .filter((s) => s && typeof s === 'object')
-    .map((s) => ({
-      name: String(s.name || '源').slice(0, 40),
-      url: typeof s.url === 'string' ? s.url.trim().slice(0, 2048) : '',
-      enabled: s.enabled !== false,
-      primary: !!s.primary,
-    }));
+    .map((s: any, i: number) => normalizeSource(s, i));
   const filled = cleaned.filter((s) => s.url);
   const drafts = cleaned.filter((s) => !s.url);
   const ordered = [...filled, ...drafts];
@@ -345,6 +374,38 @@ function describeError(e: any): string {
   return msg || '未知错误';
 }
 
+// ===================== 北科云盘源支持（v1.1.4） =====================
+/** 源 → AnyShare 配置（url 是外链且填了提取码才可用） */
+function anyshareCfgFromSource(src: UpdateSource | undefined | null): AnyShareConfig | null {
+  if (!src?.url) return null;
+  const parsed = parseAnyShareUrl(src.url);
+  if (!parsed) return null;
+  if (!src.password) return null;
+  return { ...parsed, password: src.password };
+}
+
+/** 拉取某源的清单文本：http 型直接 GET；anyshare 型从云盘里下载 latest.json */
+async function fetchManifestText(src: UpdateSource): Promise<string> {
+  const cfg = anyshareCfgFromSource(src);
+  if (cfg) return downloadTextFile(cfg, 'latest.json', MAX_MANIFEST_BYTES);
+  return fetchText(src.url);
+}
+
+/**
+ * 解析安装包下载地址。清单 url 是 http(s) 直链则原样返回；
+ * 是文件名（anyshare 源：清单里 url 填云盘内的文件名）则换签名直链。
+ */
+async function resolveDownloadUrl(url: string, source?: UpdateSource | null): Promise<string> {
+  if (/^https?:\/\//i.test(url)) return url;
+  const cfg = anyshareCfgFromSource(source);
+  if (cfg) {
+    const f = await findShareFile(cfg, url);
+    if (!f) throw new Error(`北科云盘分享里没有安装包「${url}」，请等发布者上传后再试`);
+    return getFileDownloadUrl(cfg, f);
+  }
+  throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
+}
+
 // ===================== 检查更新（单源） =====================
 /**
  * 检查单个源的更新。
@@ -378,9 +439,11 @@ export async function checkForUpdate(
 
   let text: string;
   try {
-    text = await fetchText(src.url);
+    text = await fetchManifestText(src);
   } catch (e: any) {
-    return { ...base, reason: 'network', message: describeError(e) };
+    const cfg = anyshareCfgFromSource(src);
+    const hint = cfg ? '（北科云盘源：请确认在校园网内、提取码正确、分享里有 latest.json）' : '';
+    return { ...base, reason: 'network', message: describeError(e) + hint };
   }
 
   const manifest = parseManifest(text, src.url);
@@ -463,6 +526,8 @@ export async function checkAllSources(db: DB | null): Promise<UpdateAggregate> {
 
 // ===================== 下载安装包 =====================
 function pickFileName(url: string, version: string): string {
+  // anyshare 源：url 直接就是云盘里的文件名
+  if (!/^https?:\/\//i.test(url) && /\.(exe|msi|zip|7z)$/i.test(url)) return url;
   try {
     const base = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
     if (/\.(exe|msi|zip|7z)$/i.test(base)) return base;
@@ -497,12 +562,19 @@ let downloadAbort: AbortController | null = null;
 async function downloadUpdate(
   url: string,
   version: string,
-  sha256?: string | null
+  sha256?: string | null,
+  source?: UpdateSource | null
 ): Promise<DownloadResult> {
-  if (!/^https?:\/\//i.test(url)) return { ok: false, error: '下载地址无效（需以 http/https 开头）' };
-
   // 先清掉旧的下载文件，避免多次升级后版本堆积
   cleanStaleDownloads();
+
+  // anyshare 源：url 是云盘里的文件名 → 先换签名直链（10 分钟内有效，够下载）
+  let realUrl = url;
+  try {
+    realUrl = await resolveDownloadUrl(url, source);
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
 
   const dir = path.join(app.getPath('temp'), 'taskmanager-update');
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
@@ -519,7 +591,7 @@ async function downloadUpdate(
   };
 
   try {
-    const res = await net.fetch(url, {
+    const res = await net.fetch(realUrl, {
       redirect: 'follow',
       signal: ctrl.signal,
       headers: { 'User-Agent': userAgent(), Accept: '*/*' },
@@ -619,8 +691,8 @@ export function registerUpdater(db: DB | null) {
 
   ipcMain.handle('update:checkAll', () => checkAllSources(db));
 
-  ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null }) =>
-    downloadUpdate(opts.url, opts.version, opts.sha256)
+  ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null; source?: { type?: string; url?: string; password?: string } | null }) =>
+    downloadUpdate(opts.url, opts.version, opts.sha256, opts.source as UpdateSource | null | undefined)
   );
 
   ipcMain.handle('update:cancel', () => {
@@ -688,9 +760,13 @@ export async function autoCheckUpdate(db: DB | null, win: BrowserWindow | null) 
     const agg = await checkAllSources(db);
     if (agg.winner) {
       // payload 里附上多源结果供 UI 展示（"X 源可用 Y 源失败"）
+      // v1.1.4：带 type/password —— 北科云盘源下载安装包时渲染层要凭它换签名直链
       const perSource = agg.perSource.map(({ source, result }) => ({
         name: source.name,
         url: source.url,
+        type: source.type,
+        password: source.password,
+        sourceIndex: result.sourceIndex,
         ok: result.ok,
         latestVersion: result.latestVersion,
         reason: result.reason,

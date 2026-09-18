@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+/** 更新源（v1.1.4：type='anyshare' 为北科云盘外链源，password 是提取码） */
+type UpdateSourceDTO = {
+  name: string;
+  url: string;
+  enabled: boolean;
+  primary: boolean;
+  type?: 'anyshare' | 'http';
+  password?: string;
+};
+
 // 渲染进程可调用的 API
 const api = {
   // 窗口
@@ -116,8 +126,8 @@ const api = {
   // 软件更新
   updater: {
     config: () => ipcRenderer.invoke('update:config') as Promise<{
-      defaultSources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
-      sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
+      defaultSources: UpdateSourceDTO[];
+      sources: UpdateSourceDTO[];
       activeIndex: number;
       /** 兼容旧字段：当前主源 URL */
       source: string;
@@ -150,7 +160,7 @@ const api = {
         checkedAt?: number;
       } | null;
       perSource: Array<{
-        source: { name: string; url: string; enabled: boolean; primary: boolean };
+        source: UpdateSourceDTO;
         result: {
           ok: boolean;
           configured: boolean;
@@ -173,21 +183,22 @@ const api = {
       }>;
       checkedAt: number;
     }>,
-    download: (opts: { url: string; version: string; sha256?: string | null }) =>
+    /** v1.1.4：北科云盘源的下载需带上源信息（type/url/password），后端据此换签名直链 */
+    download: (opts: { url: string; version: string; sha256?: string | null; source?: UpdateSourceDTO | null }) =>
       ipcRenderer.invoke('update:download', opts) as Promise<{ ok: boolean; path?: string; size?: number; error?: string; canceled?: boolean }>,
     cancel: () => ipcRenderer.invoke('update:cancel'),
     install: (filePath: string) => ipcRenderer.invoke('update:install', filePath) as Promise<{ ok: boolean; error?: string }>,
     openExternal: (url: string) => ipcRenderer.invoke('update:openExternal', url) as Promise<{ ok: boolean; error?: string }>,
     skipVersion: (version: string) => ipcRenderer.invoke('update:skipVersion', version),
     /** 兼容旧 API：用单源替换（保留旧行为） */
-    setSource: (source: string) => ipcRenderer.invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }> }>,
+    setSource: (source: string) => ipcRenderer.invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: UpdateSourceDTO[] }>,
     /** 新 API：整体保存多源 + 切换主源 */
     setSources: (payload: {
-      sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>;
+      sources: UpdateSourceDTO[];
       activeIndex: number;
-    }) => ipcRenderer.invoke('update:setSources', payload) as Promise<{ ok: boolean; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }>; activeIndex: number }>,
+    }) => ipcRenderer.invoke('update:setSources', payload) as Promise<{ ok: boolean; sources: UpdateSourceDTO[]; activeIndex: number }>,
     /** 仅切换激活的主源（不动其他配置） */
-    setActiveSource: (index: number) => ipcRenderer.invoke('update:setActiveSource', index) as Promise<{ ok: boolean; activeIndex: number; sources: Array<{ name: string; url: string; enabled: boolean; primary: boolean }> }>,
+    setActiveSource: (index: number) => ipcRenderer.invoke('update:setActiveSource', index) as Promise<{ ok: boolean; activeIndex: number; sources: UpdateSourceDTO[] }>,
     setAutoCheck: (enabled: boolean) => ipcRenderer.invoke('update:setAutoCheck', enabled) as Promise<{ ok: boolean; enabled: boolean }>,
     /** 订阅下载进度，返回取消订阅函数 */
     onProgress: (cb: (p: any) => void) => {
@@ -208,18 +219,25 @@ const api = {
       repo: string; branch: string; dir: string; repoUrl: string;
       tokenSet: boolean; publisher: string; lastSync: number | null;
       cloudSourceEnabled: boolean;
+      /** v1.1.4：北科云盘同步源配置（null = 未配置） */
+      cloud: { baseUrl: string; linkId: string; password: string; enabled: boolean } | null;
     }>,
     /** 保存 GitHub 发布令牌 + 发布人昵称（只存本机） */
     saveAuth: (token: string, publisher: string) => ipcRenderer.invoke('homework:saveAuth', token, publisher) as Promise<{ ok: boolean; error?: string; tokenSet?: boolean }>,
+    /** v1.1.4：保存北科云盘作业同步源（外链地址 + 提取码 + 启用开关） */
+    saveCloud: (cfg: { url?: string; password?: string; enabled?: boolean }) =>
+      ipcRenderer.invoke('homework:saveCloud', cfg) as Promise<{ ok: boolean; error?: string; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean } }>,
     /** 生成一对新码（同步作业码 + 作业发布码） */
     generateCodes: () => ipcRenderer.invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
     /** 校验作业发布码（本地 HMAC，无需联网）；通过则返回解析出的同步码 */
     verifyCodes: (publishCode: string) => ipcRenderer.invoke('homework:verifyCodes', publishCode) as Promise<{ ok: boolean; syncCode?: string }>,
     /** v1.1.3：取某课程对应的同步作业码（首次自动生成）。用作发布时定位远端 bundle */
     courseSyncCode: (courseId: number | null | undefined) => ipcRenderer.invoke('homework:courseSyncCode', courseId) as Promise<{ ok: boolean; syncCode: string; error?: string }>,
-    /** 发布一条作业。publishCode 可选；如未填 syncCode 但传了 courseId，会用该课程持久化的 syncCode（首次自动生成） */
+    /** 发布一条作业。publishCode 可选；如未填 syncCode 但传了 courseId，会用该课程持久化的 syncCode（首次自动生成）。
+     *  v1.1.4：target = 'cloud' 时发布到北科云盘（需校园网），默认 'github' */
     publish: (payload: {
       publishCode?: string; syncCode?: string; courseId?: number | null;
+      target?: 'github' | 'cloud';
       courseName: string; sessionDate: string;
       sessionTime?: string | null; title: string; content: string;
       type?: string; dueDate?: number | null;
