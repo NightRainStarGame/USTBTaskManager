@@ -11,6 +11,8 @@
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.node.json && tsc -p tsconfig.json && node scripts/copy-static-assets.js && vite build",
+    "build:mobile": "tsc -p tsconfig.json && vite build --config vite.mobile.config.ts && node -e \"require('fs').copyFileSync('dist-mobile/index-mobile.html','dist-mobile/index.html')\"",
+    "cap:sync": "npm run build:mobile && npx cap sync android",
     "build:exe": "npm run build && electron-builder --win nsis --x64",
     "release:manifest": "node scripts/release.js",
     "release:verify": "node scripts/release.js --verify",
@@ -24,6 +26,7 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.2",
     "better-sqlite3": "^11.5.0",
     "dayjs": "^1.11.13",
     "http-proxy-agent": "^7.0.2",
@@ -32,15 +35,19 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
+    "sql.js": "^1.14.2",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
     "@electron/rebuild": "^3.7.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",

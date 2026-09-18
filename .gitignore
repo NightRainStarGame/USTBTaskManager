@@ -48,12 +48,15 @@ _yunpan_*
 _probe_exe.js
 e2e_cdp_probe*
 e2e_cloud_probe_*
+e2e_debug3_probe/
+e2e_v115_debug3_test/
 release-v1.1.4/
 release-v1.1.4b/
 release-v1.1.4-final/
 release-v1.1.4-e2e/
 release-v1.1.4-verify/
-release-v1.1.5-debug*/
+release-v1.1.5*/
+.cdp-profile*/
 debug.log
 _check_exe.js
 _rel-*.json
@@ -64,3 +67,7 @@ _rel_msg.txt
 leastversion/TaskManager-Setup-1.1.3.exe
 # 编译产物偶尔被某些脚本错放到根目录
 anyshare.js
+
+# ==================== 移动端（Capacitor）临时产物 ====================
+dist-mobile/
+_mobile_dom.html

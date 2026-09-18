@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 移动端：禁缩放由 WebView 自己管理；允许用户缩放便于小屏查看 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- CSP：比桌面宽——homework/updater 要直连 GitHub raw/API，USTB 要连校园网 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: http:;" />
+    <title>TaskManager · StarOS</title>
+  </head>
+  <body class="bg-ink-base text-text-primary font-sans overflow-hidden">
+    <div id="root"></div>
+    <script type="module" src="/src/mobile/bootstrap.ts"></script>
+  </body>
+</html>

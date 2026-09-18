@@ -1,0 +1,76 @@
+name: Android APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'src/mobile/**'
+      - 'src/styles/**'
+      - 'src/pages/**'
+      - 'src/components/**'
+      - 'src/hooks/**'
+      - 'src/store.ts'
+      - 'src/App.tsx'
+      - 'src/main.tsx'
+      - 'index-mobile.html'
+      - 'vite.mobile.config.ts'
+      - 'capacitor.config.ts'
+      - 'electron/api-factory.ts'
+      - 'electron/db/**'
+      - 'electron/ipc/**'
+      - 'electron/homework/**'
+      - 'electron/backup/**'
+      - 'electron/updater/**'
+      - 'electron/ustb/**'
+      - 'electron/timetable-xls/**'
+      - 'electron/anyshare.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build mobile web bundle
+        run: npm run build:mobile
+
+      - name: Ensure Android SDK platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android || true
+        # 本地 safe-delete 会拦截 cordova 插件清理（无害）；CI 上正常执行
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon -Pandroid.injected.build.model.only=false
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskManager-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

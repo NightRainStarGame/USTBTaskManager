@@ -20,6 +20,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "electron/preload-types.d.ts"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src", "electron/preload-types.d.ts"]
 }
