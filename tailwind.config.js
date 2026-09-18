@@ -4,18 +4,21 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 霓虹绿系（主品牌色）
+        // 霓虹主题色（v1.1.5：跟随 [data-theme] CSS 变量切换）
+        // 用 rgb(var(--c-primary-rgb) / <alpha-value>) 模式保留 bg-neon-green/40 等透明度修饰符
         neon: {
-          green: '#00FF88',
-          'green-bright': '#00FFC8',
-          'green-dim': '#00B86B',
-          'green-deep': '#008F4D',
+          green: 'rgb(var(--c-primary-rgb) / <alpha-value>)',
+          'green-bright': 'rgb(var(--c-primary-bright-rgb) / <alpha-value>)',
+          'green-dim': 'rgb(var(--c-primary-dim-rgb) / <alpha-value>)',
+          'green-deep': 'rgb(var(--c-primary-deep-rgb) / <alpha-value>)',
+          // 黄色（更新提示用，不随主题切换）
           yellow: '#FFEA00',
           'yellow-bright': '#FFFF66',
           'yellow-dim': '#CCBA00',
+          // 语义色（危险/逾期，不随主题切换）
           danger: '#FF3366',
         },
-        // 背景层级
+        // 背景层级（深色结构色，不随主题切换）
         ink: {
           base: '#000000',
           900: '#0A0F0D',
@@ -24,11 +27,11 @@ export default {
           600: '#243029',
           500: '#2F3D36',
         },
-        // 文本
+        // 文本（v1.1.5：跟随主题切换）
         text: {
-          primary: '#E8FFEE',
-          secondary: '#8FA89B',
-          dim: '#4A5C52',
+          primary: 'var(--c-text)',
+          secondary: 'var(--c-text-secondary)',
+          dim: 'var(--c-text-dim)',
         },
       },
       fontFamily: {
@@ -36,8 +39,10 @@ export default {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        'neon-green': '0 0 8px rgba(0,255,136,0.6), 0 0 24px rgba(0,255,136,0.25)',
-        'neon-green-strong': '0 0 12px rgba(0,255,136,0.9), 0 0 32px rgba(0,255,136,0.5)',
+        // v1.1.5：跟随主题的霓虹光晕（neon-green 在 starry 主题下自动变青蓝）
+        'neon-green': '0 0 8px rgb(var(--c-primary-rgb) / 0.6), 0 0 24px rgb(var(--c-primary-rgb) / 0.25)',
+        'neon-green-strong': '0 0 12px rgb(var(--c-primary-rgb) / 0.9), 0 0 32px rgb(var(--c-primary-rgb) / 0.5)',
+        // 黄色光晕（固定）
         'neon-yellow': '0 0 8px rgba(255,234,0,0.7), 0 0 20px rgba(255,234,0,0.3)',
         'glass': 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.6)',
       },
@@ -66,7 +71,8 @@ export default {
         },
       },
       backgroundImage: {
-        'grid-neon': "linear-gradient(rgba(0,255,136,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.06) 1px, transparent 1px)",
+        // v1.1.5：网格背景色跟随主题
+        'grid-neon': "linear-gradient(rgb(var(--c-primary-rgb) / 0.06) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--c-primary-rgb) / 0.06) 1px, transparent 1px)",
       },
     },
   },

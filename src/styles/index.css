@@ -2,38 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   主题系统（v1.1.5 引入）
+   - 用 CSS 变量定义主题色，Tailwind 通过 rgb(var(--xxx) / <alpha-value>)
+     实现 opacity 修饰符（bg-neon-green/40 等）正常工作
+   - 默认 neon-green；[data-theme="starry"] 切换为青蓝荧光
+   - 切换方法：document.documentElement.dataset.theme = 'starry'
+   ============================================================ */
+
 @layer base {
+  /* 默认主题：霓虹绿 */
+  :root,
+  [data-theme="neon-green"] {
+    /* 主色 RGB 三元组（供 Tailwind rgb(var() / <alpha-value>) 用） */
+    --c-primary-rgb: 0 255 136;
+    --c-primary-bright-rgb: 0 255 200;
+    --c-primary-dim-rgb: 0 184 107;
+    --c-primary-deep-rgb: 0 143 77;
+    /* 兼容老用法：完整 hex */
+    --c-primary: #00FF88;
+    --c-primary-bright: #00FFC8;
+    --c-bg-deep: #000000;
+    --c-bg-glow: rgba(0, 255, 136, 0.06);
+    --c-text: #E8FFEE;
+    --c-text-secondary: #8FA89B;
+    --c-text-dim: #4A5C52;
+  }
+
+  /* 星辉主题：青蓝荧光渐变（v1.1.5 新增） */
+  [data-theme="starry"] {
+    --c-primary-rgb: 0 212 255;
+    --c-primary-bright-rgb: 102 234 255;
+    --c-primary-dim-rgb: 0 153 204;
+    --c-primary-deep-rgb: 0 80 153;
+    --c-primary: #00D4FF;
+    --c-primary-bright: #66EAFF;
+    --c-bg-deep: #020817;
+    --c-bg-glow: rgba(0, 212, 255, 0.07);
+    --c-text: #DCEFFF;
+    --c-text-secondary: #7AA0C4;
+    --c-text-dim: #3D5C7D;
+  }
+
   html, body, #root {
     height: 100vh;
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background-color: #000000;
-    color: #E8FFEE;
+    background-color: var(--c-bg-deep);
+    color: var(--c-text);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.4s ease, color 0.4s ease;
+  }
+
+  /* 星辉主题：body 加一层径向荧光渐变背景，比纯黑更耐看 */
+  [data-theme="starry"] body {
+    background:
+      radial-gradient(ellipse at 30% 0%, rgba(0,212,255,0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 70% 100%, rgba(0,80,153,0.12) 0%, transparent 50%),
+      var(--c-bg-deep);
   }
 
   *::-webkit-scrollbar { width: 8px; height: 8px; }
-  *::-webkit-scrollbar-track { background: rgba(0, 255, 136, 0.04); }
-  *::-webkit-scrollbar-thumb { background: rgba(0, 255, 136, 0.3); border-radius: 4px; }
-  *::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 136, 0.6); }
+  *::-webkit-scrollbar-track { background: rgb(var(--c-primary-rgb) / 0.04); }
+  *::-webkit-scrollbar-thumb { background: rgb(var(--c-primary-rgb) / 0.30); border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-primary-rgb) / 0.60); }
 
-  ::selection { background: rgba(0, 255, 136, 0.4); color: #fff; }
+  ::selection { background: rgb(var(--c-primary-rgb) / 0.40); color: #fff; }
 }
 
 @layer components {
   /* 荧光边框按钮 */
   .btn-neon {
     @apply relative inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md
-           bg-ink-900/80 border border-neon-green/40 text-neon-green
+           bg-ink-900/80 border text-neon-green
            font-mono text-sm uppercase tracking-wider
-           transition-all duration-200
+           transition-colors duration-200
            hover:bg-neon-green/10 hover:border-neon-green
            hover:shadow-neon-green
            active:scale-95;
+    border-color: rgb(var(--c-primary-rgb) / 0.4);
+  }
+  .btn-neon:hover {
+    background-color: rgb(var(--c-primary-rgb) / 0.10);
   }
   .btn-neon-yellow {
+    /* 黄色是「更新提示」专用色，不随主题切换 */
     @apply border-neon-yellow/40 text-neon-yellow
            hover:bg-neon-yellow/10 hover:border-neon-yellow
            hover:shadow-neon-yellow;
@@ -43,33 +98,42 @@
            text-text-secondary hover:text-neon-green hover:bg-neon-green/5
            transition-colors duration-150 text-sm;
   }
+  .btn-ghost:hover {
+    background-color: rgb(var(--c-primary-rgb) / 0.05);
+  }
 
   /* 玻璃拟态卡片 */
   .glass-panel {
-    @apply bg-ink-900/70 backdrop-blur-md border border-neon-green/15
-           rounded-lg shadow-glass;
+    @apply bg-ink-900/70 backdrop-blur-md border rounded-lg shadow-glass;
+    border-color: rgb(var(--c-primary-rgb) / 0.15);
   }
 
   /* 输入框 */
   .input-neon {
     @apply w-full px-3 py-2 rounded-md
-           bg-ink-base/60 border border-neon-green/30
+           bg-ink-base/60 border
            text-text-primary placeholder-text-dim
            font-mono text-sm
            focus:outline-none focus:border-neon-green focus:shadow-neon-green
-           transition-all duration-150;
+           transition-colors duration-150;
+    border-color: rgb(var(--c-primary-rgb) / 0.30);
+  }
+  .input-neon:focus {
+    border-color: rgb(var(--c-primary-rgb) / 1);
   }
 
   /* 标题小标签 */
   .label-tag {
-    @apply font-mono text-[10px] uppercase tracking-[0.2em] text-neon-green/70;
+    @apply font-mono text-[10px] uppercase tracking-[0.2em];
+    color: rgb(var(--c-primary-rgb) / 0.7);
   }
 
   /* 数据胶囊 */
   .data-pill {
     @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded
-           bg-ink-base/60 border border-neon-green/30
-           font-mono text-xs text-neon-green;
+           bg-ink-base/60 border font-mono text-xs;
+    border-color: rgb(var(--c-primary-rgb) / 0.30);
+    color: rgb(var(--c-primary-rgb) / 1);
   }
 
   /* 状态点 */
@@ -84,13 +148,17 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, transparent 0%, rgba(0,255,136,0.03) 50%, transparent 100%);
+    background: linear-gradient(180deg, transparent 0%, rgb(var(--c-primary-rgb) / 0.03) 50%, transparent 100%);
     background-size: 100% 4px;
     pointer-events: none;
     animation: scanLine 8s linear infinite;
   }
 
-  /* 文字荧光 */
+  /* 文字荧光（跟随主题） */
+  .text-glow {
+    text-shadow: 0 0 8px rgb(var(--c-primary-rgb) / 0.6), 0 0 16px rgb(var(--c-primary-rgb) / 0.3);
+  }
+  /* 兼容老用法 */
   .text-glow-green {
     text-shadow: 0 0 8px rgba(0,255,136,0.6), 0 0 16px rgba(0,255,136,0.3);
   }

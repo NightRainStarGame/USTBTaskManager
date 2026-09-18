@@ -123,7 +123,9 @@ export default function UpdateNotification({ externalTrigger }: Props) {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 w-[420px] max-w-[92vw] rounded-lg border border-neon-yellow/50 bg-ink-900/95 backdrop-blur-md shadow-2xl overflow-hidden"
+      // v1.1.5: 外层 pointer-events-none 避免挡住右下角其他按钮（保存设置、Calendar + 按钮）；
+      // 内部按钮 / 链接 pointer-events-auto 让 toast 自己仍可点击
+      className="fixed bottom-4 right-4 z-50 w-[420px] max-w-[92vw] rounded-lg border border-neon-yellow/50 bg-ink-900/95 backdrop-blur-md shadow-2xl overflow-hidden pointer-events-none"
       style={{ boxShadow: '0 0 24px rgba(255, 214, 10, 0.25)' }}
     >
       {/* 头部 */}
@@ -139,7 +141,7 @@ export default function UpdateNotification({ externalTrigger }: Props) {
             </span>
           )}
         </div>
-        <button onClick={close} className="text-text-secondary hover:text-text-primary">
+        <button onClick={close} className="text-text-secondary hover:text-text-primary pointer-events-auto">
           <X size={14} />
         </button>
       </div>
@@ -216,7 +218,7 @@ export default function UpdateNotification({ externalTrigger }: Props) {
       </div>
 
       {/* 底部按钮 */}
-      <div className="flex flex-wrap gap-2 px-3 py-2 border-t border-neon-green/15 bg-ink-base/60">
+      <div className="flex flex-wrap gap-2 px-3 py-2 border-t border-neon-green/15 bg-ink-base/60 pointer-events-auto">
         {dlPath && (
           <button onClick={install} className="btn-neon btn-neon-yellow text-xs py-1">
             <Sparkles size={12} /> 立即安装并重启

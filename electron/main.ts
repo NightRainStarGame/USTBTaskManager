@@ -38,6 +38,61 @@ if (process.argv.includes('--disable-gpu') || process.env.TASKMGR_SOFTWARE_RENDE
 }
 
 let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
+let splashHidden = false;
+
+/** 关掉 splash、显示主窗口；幂等，多次调用安全 */
+function hideSplashAndShowMain() {
+  if (splashHidden) return;
+  splashHidden = true;
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.hide();
+    setTimeout(() => {
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy();
+      splashWindow = null;
+    }, 200);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  bootLog('splash hidden, main shown');
+}
+
+function createSplash() {
+  splashWindow = new BrowserWindow({
+    width: 480,
+    height: 360,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,           // 不出现在任务栏
+    show: false,
+    paintWhenInitiallyHidden: true, // 即使 hidden 也要 paint，否则 CSS 动画不会跑
+    backgroundColor: '#000000',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  // 先挂事件，再 loadFile（避免错过 ready-to-show）
+  splashWindow.once('ready-to-show', () => {
+    splashWindow?.show();
+    bootLog('splash shown');
+  });
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+
+  // 防呆：若主窗口长时间未 ready（5 秒还没关 splash），强制兜底
+  setTimeout(() => {
+    if (!splashHidden) {
+      bootLog('splash fallback: force-hide after 5s timeout');
+      hideSplashAndShowMain();
+    }
+  }, 5000);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -66,7 +121,7 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => { /* 等待渲染层 app:ready-to-show IPC 统一收尾 */ });
 
   // ====== 渲染进程崩溃自愈 ======
   // Chromium 渲染进程崩溃（GPU/内存/OOM）时自动重载；连续崩溃超过 3 次则提示用户
@@ -108,8 +163,23 @@ ipcMain.handle('window:maximize', () => {
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 
+// 渲染层完成 React mount + store.refreshAll() 后通过这个 channel 通知主进程"可以显示了"
+ipcMain.on('app:ready-to-show', () => {
+  bootLog('renderer reports ready-to-show');
+  hideSplashAndShowMain();
+});
+
 app.whenReady().then(() => {
   bootLog('app ready');
+
+  // v1.1.5：先把 splash 挂出来占住屏幕，避免「点击图标后空窗期」
+  try {
+    createSplash();
+    bootLog('splash created');
+  } catch (e: any) {
+    bootLog('SPLASH CREATE FAILED (继续启动主窗口): ' + (e?.stack || String(e)));
+  }
+
   let dbReady = false;
   try {
     initDatabase();

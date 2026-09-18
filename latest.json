@@ -1,10 +1,10 @@
 {
-  "version": "1.1.4",
-  "notes": "TaskManager v1.1.4 —— 北科云盘（AnyShare）作业/更新双源 + 解除 GitHub API 速率限制\n\n## 作业同步：新增北科云盘同步源（需校园网）\n- 内置「北科云盘（爱数 AnyShare）」作为第二同步源，匿名上传/下载，**无需账号**\n- 发布弹窗新增「发布到」切换：GitHub（默认，需要令牌）/ 北科云盘（校园网）\n- 接收作业自动试两源，按 `<syncCode>-<时间戳>.json` 前缀取最新一份\n- 设置页「作业同步 → 北科云盘同步源」可改外链 / 提取码 / 启停\n- 限制：仅**北京科技大学校园网**内可达；外网自动失败，不影响 GitHub 主源\n\n## 软件更新：内置北科云盘更新源\n- Settings 多出第三源「北科云盘（需校园网）」\n- 「+ 添加源」旁新增「+ 北科云盘源」一键按钮（自动填好 link/密码占位）\n- share 链接型源按云盘文件名换签名直链下载安装包；非校园网失败不影响其他源\n\n## 解除 GitHub API 速率限制\n- 接收作业读路径改走 `raw.githubusercontent.com` CDN（无限速）；仅写路径走 Contents API\n- 公告：发布方仍需 GitHub PAT（fine-grained，仅本仓库 Contents 读写）\n\n## 其他\n- 协议文档升 v2.3：`docs/HOMEWORK-CODES.md` 新增 AnyShare 章节\n- TypeScript 编译零错误\n\n## 从 1.1.3 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.4.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.3.exe`  —— 上一版（保留回退）",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.4.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.4",
-  "sha256": "166eb9e8002d7f0ee10b738ae4102ca77b40c369a79347978cf4d2acae89ce28",
-  "size": 89693721,
-  "fileName": "TaskManager-Setup-1.1.4.exe",
+  "version": "1.1.5",
+  "notes": "TaskManager v1.1.5 —— 启动动画、星辉主题、输入修复、USTB 学期更新\n\n## 启动动画（Splash）\n- 应用启动时先显示 StarOS 品牌 splash，填充「点击图标到主窗口出现」的空窗期\n- 渲染进程加载完成后自动过渡，超时 5 秒兜底关闭\n\n## 新增「星辉」主题\n- 设置 → 主题切换新增「星辉（青蓝荧光）」\n- 霓虹绿与星辉两套主题统一走 CSS 变量，粒子背景、发光边框实时跟随主题\n\n## 输入框问题修复\n- 修复中文输入法（IME）在同步码/发布码输入框中被打断、无法输入的问题\n- 设置页用户资料字段不再因 IPC 回写而覆盖正在编辑的内容\n\n## 教务同步更新\n- USTB 教务同步学期列表新增「2026-2027-1」，默认学期切换为 2026-2027 秋学期\n\n## 其他\n- 更新弹窗操作区恢复鼠标可点击\n- TypeScript 编译零错误\n- 打包产物包含 splash.html\n\n## 从 1.1.4 升级\n应用内「设置 → 软件更新 → 检查更新」直接升级，或到 Releases 页下载覆盖安装（数据保留）。\n\n## 安装包分两个目录（仓库内固定下载）\n- `leastversion/TaskManager-Setup-1.1.5.exe` —— 最新版\n- `oldversion/TaskManager-Setup-1.1.4.exe`  —— 上一版（保留回退）",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.5.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.5",
+  "sha256": "7963d12dade5b432ccd9835d2ce3db429137b11f434c249a2b7de62cdf657a08",
+  "size": 89696665,
+  "fileName": "TaskManager-Setup-1.1.5.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z"
 }

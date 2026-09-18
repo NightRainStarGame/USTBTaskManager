@@ -122,6 +122,8 @@ const api = {
       platform: string;
       packaged: boolean;
     }>,
+    /** v1.1.5：渲染层完成 React mount + store.refreshAll() 后调用，通知主进程关 splash */
+    ready: () => ipcRenderer.send('app:ready-to-show'),
   },
   // 软件更新
   updater: {

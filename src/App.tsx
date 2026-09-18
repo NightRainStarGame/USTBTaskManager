@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import CalendarPage from './pages/Calendar';
@@ -9,14 +9,26 @@ import SettingsPage from './pages/Settings';
 import MiniProgramPage from './pages/MiniProgram';
 import UpdateNotification from './components/UpdateNotification';
 import { useStore } from './store';
+import { useApplyTheme } from './hooks/useApplyTheme';
 
 export default function App() {
   const refreshAll = useStore((s) => s.refreshAll);
   const updateInfo = useStore((s) => s.updateInfo);
   const { pathname } = useLocation();
+  const readySignaledRef = useRef(false);
+
+  // v1.1.5：把 settings.theme 应用到 <html data-theme="...">
+  useApplyTheme();
 
   useEffect(() => {
     refreshAll();
+    // v1.1.5：首次 refreshAll 完成后通知主进程关 splash、显示主窗口
+    if (!readySignaledRef.current) {
+      readySignaledRef.current = true;
+      try {
+        (window.taskAPI as any).app?.ready?.();
+      } catch { /* 浏览器预览模式无 IPC，忽略 */ }
+    }
   }, [refreshAll, pathname]);
 
   return (

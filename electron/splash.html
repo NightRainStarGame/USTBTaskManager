@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <title>StarOS 启动中…</title>
+    <style>
+      :root {
+        --c-bg: #000000;
+        --c-primary: #00FF88;
+        --c-primary-bright: #00FFC8;
+        --c-text: #E8FFEE;
+        --c-text-dim: #4A5C52;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        height: 100vh;
+        background: var(--c-bg);
+        color: var(--c-text);
+        font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        background:
+          radial-gradient(circle at 50% 45%, rgba(0,255,136,0.10) 0%, transparent 55%),
+          var(--c-bg);
+      }
+      .stage { position: relative; width: 140px; height: 140px; }
+
+      /* 中心 logo 方块 */
+      .core {
+        position: absolute;
+        inset: 35%;
+        background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-bright) 100%);
+        border-radius: 10px;
+        box-shadow:
+          0 0 18px rgba(0,255,136,0.7),
+          0 0 38px rgba(0,255,136,0.35),
+          inset 0 1px 0 rgba(255,255,255,0.18);
+        animation: pulseCore 2.4s ease-in-out infinite;
+      }
+
+      /* 三道扩散环 */
+      .ring {
+        position: absolute;
+        inset: 0;
+        border: 1.5px solid var(--c-primary);
+        border-radius: 50%;
+        opacity: 0;
+        animation: ring 2.6s ease-out infinite;
+      }
+      .ring.r2 { animation-delay: 0.85s; }
+      .ring.r3 { animation-delay: 1.70s; }
+
+      /* 旋转的扫描线 */
+      .sweep {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(from 0deg,
+          transparent 0deg,
+          rgba(0,255,136,0.55) 30deg,
+          rgba(0,255,136,0.0) 90deg,
+          transparent 360deg);
+        -webkit-mask: radial-gradient(circle, transparent 38%, black 39%, black 100%);
+                mask: radial-gradient(circle, transparent 38%, black 39%, black 100%);
+        animation: spin 4s linear infinite;
+        opacity: 0.85;
+      }
+
+      .wordmark {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.35em;
+        text-transform: uppercase;
+        text-shadow: 0 0 8px rgba(0,255,136,0.55), 0 0 22px rgba(0,255,136,0.30);
+        margin-left: 0.35em; /* 视觉居中补偿 letter-spacing */
+      }
+      .tagline {
+        font-size: 10px;
+        letter-spacing: 0.3em;
+        color: var(--c-text-dim);
+        text-transform: uppercase;
+      }
+
+      /* 进度条 */
+      .bar-wrap {
+        margin-top: 12px;
+        width: 220px;
+        height: 2px;
+        background: rgba(0,255,136,0.10);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--c-primary) 0%, var(--c-primary-bright) 100%);
+        box-shadow: 0 0 6px rgba(0,255,136,0.7);
+        animation: fill 2.6s cubic-bezier(.55,.05,.45,.95) infinite;
+      }
+
+      @keyframes pulseCore {
+        0%, 100% { transform: scale(1); filter: brightness(1); }
+        50%      { transform: scale(1.06); filter: brightness(1.18); }
+      }
+      @keyframes ring {
+        0%   { transform: scale(0.5); opacity: 0.8; }
+        100% { transform: scale(1.35); opacity: 0; }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
+      @keyframes fill {
+        0%   { width: 0%; }
+        60%  { width: 92%; }
+        100% { width: 100%; opacity: 0.55; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="sweep"></div>
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="ring r3"></div>
+      <div class="core"></div>
+    </div>
+    <div class="wordmark">StarOS</div>
+    <div class="tagline">made by Lasarac</div>
+    <div class="bar-wrap"><div class="bar-fill"></div></div>
+  </body>
+</html>

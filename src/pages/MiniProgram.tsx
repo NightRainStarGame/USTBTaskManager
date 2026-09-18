@@ -182,10 +182,10 @@ interface UstbItem {
 }
 
 const USTB_TERMS = [
-  { value: '2025-2026-2', label: '2025-2026 春学期', xn: '2025-2026', xq: '2' },
-  { value: '2025-2026-1', label: '2025-2026 秋学期', xn: '2025-2026', xq: '1' },
   { value: '2026-2027-1', label: '2026-2027 秋学期', xn: '2026-2027', xq: '1' },
   { value: '2026-2027-2', label: '2026-2027 春学期', xn: '2026-2027', xq: '2' },
+  { value: '2025-2026-2', label: '2025-2026 春学期', xn: '2025-2026', xq: '2' },
+  { value: '2025-2026-1', label: '2025-2026 秋学期', xn: '2025-2026', xq: '1' },
 ];
 
 const WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -194,7 +194,7 @@ function BeikeTimetable() {
   const refreshAll = useStore((s) => s.refreshAll);
   const settings = useStore((s) => s.settings);
   const [status, setStatus] = useState<{ loggedIn: boolean; user: { name: string; school: string; userId: string } | null; lastSync: number | null; importedCount: number } | null>(null);
-  const [term, setTerm] = useState('2025-2026-2');
+  const [term, setTerm] = useState('2026-2027-1');
   const [semStart, setSemStart] = useState(dayjs().format('YYYY-MM-DD'));
   const [qr, setQr] = useState<{ sessionId: string; image: string } | null>(null);
   const [qrState, setQrState] = useState<'loading' | 'waiting' | 'scanned' | 'expired' | 'error'>('loading');

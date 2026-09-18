@@ -8,6 +8,7 @@ interface ParticleBgProps {
 /**
  * Canvas 动态背景：网格 + 粒子 + 鼠标光晕
  * 低开销，自动适配窗口大小
+ * v1.1.5：颜色从 CSS 变量读取，跟随主题切换（neon-green / starry）
  */
 export default function ParticleBg({ density = 60, className = '' }: ParticleBgProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -22,11 +23,22 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
     let raf = 0;
     let particles: Array<{ x: number; y: number; vx: number; vy: number; r: number }> = [];
 
+    /** 从 <html> 的 CSS 变量读出当前主题色三元组，例如 "0 212 255" */
+    const readRgb = () => {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--c-primary-rgb').trim();
+      // v 形如 "0 255 136"
+      return v || '0 255 136';
+    };
+    const readBgDeep = () =>
+      getComputedStyle(document.documentElement).getPropertyValue('--c-bg-deep').trim() || '#000000';
+    const readBgPanel = () =>
+      getComputedStyle(document.documentElement).getPropertyValue('--c-bg-deep').trim() || '#0A0F0D';
+
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = canvas.clientWidth * dpr;
       canvas.height = canvas.clientHeight * dpr;
-      ctx.scale(dpr, dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     const initParticles = () => {
@@ -47,7 +59,8 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
     const drawGrid = () => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      ctx.strokeStyle = 'rgba(0,255,136,0.06)';
+      const rgb = readRgb();
+      ctx.strokeStyle = `rgba(${rgb}, 0.06)`;
       ctx.lineWidth = 1;
       const step = 40;
       ctx.beginPath();
@@ -65,10 +78,11 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
     const drawMouseGlow = () => {
       const m = mouseRef.current;
       if (m.x < 0) return;
+      const rgb = readRgb();
       const grad = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, 220);
-      grad.addColorStop(0, 'rgba(0,255,136,0.18)');
-      grad.addColorStop(0.5, 'rgba(0,255,136,0.05)');
-      grad.addColorStop(1, 'rgba(0,255,136,0)');
+      grad.addColorStop(0, `rgba(${rgb}, 0.18)`);
+      grad.addColorStop(0.5, `rgba(${rgb}, 0.05)`);
+      grad.addColorStop(1, `rgba(${rgb}, 0)`);
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     };
@@ -76,6 +90,7 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
     const drawParticles = () => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
+      const rgb = readRgb();
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -88,9 +103,9 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
         const dist = Math.sqrt(dx * dx + dy * dy);
         const intensity = Math.max(0, 1 - dist / 200);
 
-        ctx.fillStyle = `rgba(0,255,136,${0.3 + intensity * 0.7})`;
+        ctx.fillStyle = `rgba(${rgb}, ${0.3 + intensity * 0.7})`;
         ctx.shadowBlur = intensity * 8;
-        ctx.shadowColor = '#00FF88';
+        ctx.shadowColor = `rgb(${rgb})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r + intensity * 1.2, 0, Math.PI * 2);
         ctx.fill();
@@ -99,13 +114,14 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
     };
 
     const drawLinks = () => {
+      const rgb = readRgb();
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const dx = particles[i].x - particles[j].x;
           const dy = particles[i].y - particles[j].y;
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < 110) {
-            ctx.strokeStyle = `rgba(0,255,136,${0.15 * (1 - dist / 110)})`;
+            ctx.strokeStyle = `rgba(${rgb}, ${0.15 * (1 - dist / 110)})`;
             ctx.lineWidth = 0.5;
             ctx.beginPath();
             ctx.moveTo(particles[i].x, particles[i].y);
@@ -118,13 +134,13 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
 
     const tick = () => {
       ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-      // 黑色渐变背景
+      // 主题背景渐变
       const bgGrad = ctx.createRadialGradient(
         canvas.clientWidth / 2, canvas.clientHeight / 2, 0,
         canvas.clientWidth / 2, canvas.clientHeight / 2, Math.max(canvas.clientWidth, canvas.clientHeight) / 1.2
       );
-      bgGrad.addColorStop(0, '#0A0F0D');
-      bgGrad.addColorStop(1, '#000000');
+      bgGrad.addColorStop(0, readBgPanel());
+      bgGrad.addColorStop(1, readBgDeep());
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 

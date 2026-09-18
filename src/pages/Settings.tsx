@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload } from 'lucide-react';
 import Modal from '@/components/Modal';
@@ -340,6 +340,8 @@ export default function SettingsPage() {
     setAggregate((a) => (a && a.winner ? { ...a, winner: { ...a.winner } as any } : a));
   };
 
+  // 只在挂载时从 store 拉一次用户资料到本地编辑态；之后由用户编辑 + 保存驱动，
+  // 避免 settings / userProfile 任意更新（updater 推送、refreshAll 等）反向覆盖正在编辑的内容。
   useEffect(() => {
     if (settings.theme) setTheme(settings.theme);
     if (settings.semester) setSemester(settings.semester);
@@ -347,17 +349,21 @@ export default function SettingsPage() {
       const d = new Date(Number(settings.semester_start));
       setSemesterStart(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
     }
-  }, [settings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // 只在「profile.id 从无到有」或切换到另一个 profile 时同步，避免 store 重复推送覆盖输入
+  const profileIdRef = useRef<number | null>(null);
   useEffect(() => {
-    if (userProfile) {
-      setProfile({ ...userProfile });
-      setPrivacyMode(!!userProfile.privacy_mode);
-      try {
-        const cf = JSON.parse(userProfile.custom_fields || '[]');
-        setCustomFields(Array.isArray(cf) ? cf : []);
-      } catch { setCustomFields([]); }
-    }
+    if (!userProfile) return;
+    if (profileIdRef.current === userProfile.id) return; // 同一个 profile 的后续更新不再覆盖
+    profileIdRef.current = userProfile.id;
+    setProfile({ ...userProfile });
+    setPrivacyMode(!!userProfile.privacy_mode);
+    try {
+      const cf = JSON.parse(userProfile.custom_fields || '[]');
+      setCustomFields(Array.isArray(cf) ? cf : []);
+    } catch { setCustomFields([]); }
   }, [userProfile]);
 
   const save = async () => {
@@ -646,6 +652,7 @@ export default function SettingsPage() {
         <Row label="主题预设">
           <select value={theme} onChange={(e) => setTheme(e.target.value)} className="input-neon w-48">
             <option value="neon-green">霓虹绿（默认）</option>
+            <option value="starry">星辉（青蓝荧光）</option>
             <option value="neon-yellow">霓虹黄</option>
             <option value="mixed">绿黄混合</option>
           </select>

@@ -1578,7 +1578,11 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
                 <div className="mt-2">
                   <input
                     value={publishCode}
-                    onChange={(e: any) => setPublishCode(e.target.value.toUpperCase())}
+                    onChange={(e: any) => {
+                      // IME 合成中保留原文，避免打断中文输入；合成结束再 toUpperCase
+                      const v = e.target.value;
+                      setPublishCode(e.nativeEvent?.isComposing ? v : v.toUpperCase());
+                    }}
                     className="input-neon font-mono tracking-widest text-xs"
                     placeholder="12 位发布码（如 7KQ2M4XPT9F3）"
                     maxLength={12}
@@ -1677,7 +1681,12 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
           <input
             value={syncCode}
             autoFocus
-            onChange={(e: any) => { setSyncCode(e.target.value.toUpperCase()); setResult(null); }}
+            onChange={(e: any) => {
+              // IME 合成中保留原文，避免打断中文输入
+              const v = e.target.value;
+              setSyncCode(e.nativeEvent?.isComposing ? v : v.toUpperCase());
+              setResult(null);
+            }}
             onKeyDown={(e: any) => e.key === 'Enter' && run()}
             className="input-neon font-mono tracking-widest"
             placeholder="8 位，如 7KQ2M4XP"
