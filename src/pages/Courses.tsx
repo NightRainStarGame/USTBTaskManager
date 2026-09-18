@@ -1429,7 +1429,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
         type,
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
       });
-      if (!r.ok) { setError(r.error || '发布失败'); return; }
+      if (!r.ok) { setError(r.error || '发布失败'); if ((r as any).anyshareRaw) setError(prev => prev + `\n[debug] ${(r as any).anyshareRaw}`); return; }
       setPublished({ title: r.entry?.title || title.trim(), sessionDate, syncCode: r.syncCode, bundleCreated: r.bundleCreated, fileUrl: r.fileUrl });
       // 自动把刚发布的作业落到本地课程（与远端 ID 对齐）
       if (r.syncCode) await window.taskAPI.homework.receive(r.syncCode);

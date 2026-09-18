@@ -60,3 +60,5 @@ _tmp_msg.txt
 _commit_msg.txt
 _rel_msg.txt
 leastversion/TaskManager-Setup-1.1.3.exe
+# 编译产物偶尔被某些脚本错放到根目录
+anyshare.js

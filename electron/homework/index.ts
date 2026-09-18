@@ -406,7 +406,7 @@ function getCourseSyncCode(db: DB, courseId: number | null | undefined): string 
  * - syncCode 可选：填了直接用；空且 courseId 给了 → 用该课程持久化的（首次自动生成）；
  *   都没有 → 返回错误
  */
-export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean }> {
+export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string }> {
   // 1) 发布码验证（可选；填了就要通过 HMAC）
   let syncCode: string | undefined;
   if (payload.publishCode && payload.publishCode.trim()) {
@@ -461,7 +461,13 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     try {
       await uploadTextFile(cfg, cloudName, JSON.stringify(merged.file, null, 2));
     } catch (e: any) {
-      return { ok: false, error: `上传北科云盘失败：${e?.message || e}` };
+      // v1.1.5: 把 asFetch 透传的 anyshareRaw 一并回给前端，方便排障
+      const raw = (e as any)?.anyshareRaw;
+      return {
+        ok: false,
+        error: `上传北科云盘失败：${e?.message || e}`,
+        anyshareRaw: raw ? JSON.stringify(raw) : undefined,
+      };
     }
     return {
       ok: true,

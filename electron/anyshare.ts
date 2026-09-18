@@ -93,7 +93,12 @@ async function asFetch(
       // 外网访问北科云盘时 fetch 经常会以 "Redirect was cancelled" / "ERR_NAME_NOT_RESOLVED" / "ENETUNREACH" 失败
       // —— 这些都不是真正的业务错误，而是「不在校园网」的网络层表现，翻译成人话
       const msg = String(e?.message || e || '');
-      throw new Error(`北科云盘不可达（${msg.includes('Redirect') || /NAME|ENETUNREACH|ETIMEDOUT|ECONN/i.test(msg) ? '请确认在北科校园网内' : msg}）`);
+      const raw = { msg, name: e?.name, code: e?.code, cause: e?.cause?.message || String(e?.cause || '') };
+      console.error('[anyshare asFetch]', opts.method || 'GET', url, '→ net.fetch threw:', raw);
+      // 透传原始消息供上层判定：到底是网络层还是其它
+      const tagged = new Error(`北科云盘不可达（${msg.includes('Redirect') || /NAME|ENETUNREACH|ETIMEDOUT|ECONN/i.test(msg) ? '请确认在北科校园网内' : msg}）`);
+      (tagged as any).anyshareRaw = raw;
+      throw tagged;
     }
     const text = await res.text();
     return {
