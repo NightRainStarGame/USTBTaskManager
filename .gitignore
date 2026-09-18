@@ -47,11 +47,13 @@ desktop.ini
 _yunpan_*
 _probe_exe.js
 e2e_cdp_probe*
+e2e_cloud_probe_*
 release-v1.1.4/
 release-v1.1.4b/
 release-v1.1.4-final/
 release-v1.1.4-e2e/
 release-v1.1.4-verify/
+release-v1.1.5-debug*/
 debug.log
 _check_exe.js
 _rel-*.json

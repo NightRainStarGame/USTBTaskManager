@@ -20,7 +20,18 @@
  *   - 该服务通常仅在**北京科技大学校园网**内可达（UI 上要标注）。
  *   - link_token 有效期未知（观察约小时级），本模块带缓存并在 401 时自动重取。
  */
-import { net } from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import https from 'node:https';
+import http from 'node:http';
+import { URL } from 'node:url';
+
+/** v1.1.5 debug: asFetch 失败时把原始 error 写到独立日志（packaged 模式 stdout 被吞） */
+const AS_DEBUG_LOG = path.join(os.tmpdir(), 'taskmanager-anyshare.log');
+function asDebug(msg: string) {
+  try { fs.appendFileSync(AS_DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch { /* ignore */ }
+}
 
 export interface AnyShareConfig {
   /** 站点根，如 https://yunpan.ustb.edu.cn */
@@ -73,48 +84,117 @@ interface AsFetchResult {
   getSetCookie(): string[];
 }
 
+/**
+ * v1.1.5 重写：用 Node 原生 `https.request` / `http.request`，彻底绕开 Electron 的
+ * Chromium net 层。
+ *
+ * 背景：Electron 33 在 Windows 主进程下，**`net.fetch` 和 `net.request` 都对 3xx
+ * 响应抛 `Redirect was cancelled`**（实测 POST /link → 302 必触发）。这条
+ * Chromium net::URLRequest 的 bug 在 Windows 上特别顽固，跟 `redirect: 'manual'`
+ * 还是 `'follow'` 无关 —— 它发生在 Chromium 内部 redirect 处理阶段。
+ *
+ * Node 的 http/https 模块走的是另一套 socket，不走 Chromium net stack，redirect
+ * 完全由调用方控制。AnyShare 接口都是 https，redirect 都是 302，目标是拿到
+ * Set-Cookie 里的 link_token；用 Node 直接读 response.statusCode 和
+ * response.headers['set-cookie'] 即可。
+ *
+ * 行为与 `net.fetch` 兼容：传入同样的 {method, headers, body, timeoutMs}，
+ * 返回 {status, ok, text, getSetCookie()}。timeout 用 setTimeout + req.destroy 兜底。
+ */
 async function asFetch(
   url: string,
   opts: { method?: string; headers?: Record<string, string>; body?: any; timeoutMs?: number } = {}
 ): Promise<AsFetchResult> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 20000);
-  try {
-    let res;
-    try {
-      res = await net.fetch(url, {
-        method: opts.method || 'GET',
-        headers: opts.headers,
-        body: opts.body,
-        redirect: 'manual',
-        signal: ctrl.signal,
+  const timeoutMs = opts.timeoutMs ?? 20000;
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try { parsed = new URL(url); } catch (e: any) {
+      return reject(new Error(`北科云盘 URL 解析失败：${e?.message || e}`));
+    }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const headers: Record<string, string> = { ...(opts.headers || {}) };
+    const reqOpts: https.RequestOptions = {
+      method: opts.method || 'GET',
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers,
+    };
+    const req = lib.request(reqOpts, (res) => {
+      const status = res.statusCode || 0;
+      const setCookieRaw = res.headers['set-cookie'];
+      const setCookie: string[] = Array.isArray(setCookieRaw)
+        ? setCookieRaw as string[]
+        : (setCookieRaw ? [setCookieRaw as string] : []);
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        resolve({
+          status,
+          ok: status >= 200 && status < 300,
+          text: Buffer.concat(chunks).toString('utf8'),
+          getSetCookie: () => setCookie,
+        });
       });
-    } catch (e: any) {
-      // 外网访问北科云盘时 fetch 经常会以 "Redirect was cancelled" / "ERR_NAME_NOT_RESOLVED" / "ENETUNREACH" 失败
-      // —— 这些都不是真正的业务错误，而是「不在校园网」的网络层表现，翻译成人话
+      res.on('error', (err) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        const msg = String((err as any)?.message || err || '');
+        const raw = { msg, name: (err as any)?.name, code: (err as any)?.code };
+        console.error('[anyshare asFetch] response error:', raw);
+        asDebug(`asFetch ${opts.method || 'GET'} ${url} → response error ${JSON.stringify(raw)}`);
+        reject(Object.assign(
+          new Error(`北科云盘不可达（${/NAME|ENETUNREACH|ETIMEDOUT|ECONN|Redirect/i.test(msg) ? '请确认在北科校园网内' : msg}）`),
+          { anyshareRaw: raw }
+        ));
+      });
+    });
+    let settled = false;
+    const timer = setTimeout(() => {
+      try { req.destroy(new Error('timeout')); } catch { /* ignore */ }
+      if (settled) return;
+      settled = true;
+      reject(new Error(`北科云盘请求超时（${timeoutMs / 1000} 秒）`));
+    }, timeoutMs);
+    req.on('error', (e: any) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       const msg = String(e?.message || e || '');
       const raw = { msg, name: e?.name, code: e?.code, cause: e?.cause?.message || String(e?.cause || '') };
-      console.error('[anyshare asFetch]', opts.method || 'GET', url, '→ net.fetch threw:', raw);
-      // 透传原始消息供上层判定：到底是网络层还是其它
-      const tagged = new Error(`北科云盘不可达（${msg.includes('Redirect') || /NAME|ENETUNREACH|ETIMEDOUT|ECONN/i.test(msg) ? '请确认在北科校园网内' : msg}）`);
-      (tagged as any).anyshareRaw = raw;
-      throw tagged;
+      console.error('[anyshare asFetch]', opts.method || 'GET', url, '→ request error:', raw);
+      asDebug(`asFetch ${opts.method || 'GET'} ${url} → request error ${JSON.stringify(raw)}`);
+      reject(Object.assign(
+        new Error(`北科云盘不可达（${/NAME|ENETUNREACH|ETIMEDOUT|ECONN|Redirect/i.test(msg) ? '请确认在北科校园网内' : msg}）`),
+        { anyshareRaw: raw }
+      ));
+    });
+    try {
+      if (opts.body !== undefined && opts.body !== null) {
+        if (Buffer.isBuffer(opts.body) || opts.body instanceof Uint8Array) {
+          req.write(opts.body);
+        } else if (typeof opts.body === 'string') {
+          req.write(opts.body);
+        } else {
+          req.write(JSON.stringify(opts.body));
+        }
+      }
+      req.end();
+    } catch (e: any) {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      const msg = String(e?.message || e || '');
+      reject(Object.assign(
+        new Error(`北科云盘不可达（${/NAME|ENETUNREACH|ETIMEDOUT|ECONN|Redirect/i.test(msg) ? '请确认在北科校园网内' : msg}）`),
+        { anyshareRaw: { msg, name: e?.name, code: e?.code, where: 'req.end' } }
+      ));
     }
-    const text = await res.text();
-    return {
-      status: res.status,
-      ok: res.ok,
-      text,
-      getSetCookie: () => {
-        const anyRes = res as any;
-        if (typeof anyRes.headers?.getSetCookie === 'function') return anyRes.headers.getSetCookie() as string[];
-        const single = res.headers.get('set-cookie');
-        return single ? [single] : [];
-      },
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 /** 提取码登录：拿 link_token（带缓存） */
