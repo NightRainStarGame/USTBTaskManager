@@ -71,3 +71,7 @@ anyshare.js
 # ==================== 移动端（Capacitor）临时产物 ====================
 dist-mobile/
 _mobile_dom.html
+
+# ==================== safe-delete 拦不住、用 mv 兜底的废弃产物 ====================
+_deprecated_garbage/
+_deprecated*/
