@@ -13,6 +13,13 @@
 ;   cleanStaleAppFiles —— 在 installApplicationFiles 之前调用
 ; ============================================================
 
+; GetParameters / GetOptions 来自 NSIS 自带的 FileFunc.nsh；
+; ${IfNot} 来自 LogicLib.nsh。
+; electron-builder 模板不会自动 include 这两个文件，这里手动引入以便
+; .onInit 解析 /S 并走 silent 分支。
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+
 !macro cleanStaleAppFiles
   ${if} ${FileExists} "$INSTDIR\resources\app\Cache"
     RMDir /r "$INSTDIR\resources\app\Cache"
@@ -47,33 +54,31 @@
   !insertmacro cleanStaleAppFiles
 !macroend
 
-; .onInit 在 NSIS 启动时最先跑（向导页加载前）。
-; 检测命令行：含 /S 视为「应用内主动更新调用」→ 设 silentInstall，
-; electron-builder 模板的 MUI_PAGE_*_GRAY 会把对应向导页变成 no-op，
-; 整个安装流程不再弹任何窗口。
+; electron-builder 模板已经定义 Function .onInit，并在内部 !insertmacro
+; customInit 钩子，我们直接挂 customInit 即可避免「Function .onInit already
+; exists」报错。
 ;
-; 注意：
-; - electron-builder 的 NSIS 模板默认 silentInstall 只对 oneClick=true
-;   真正生效。我们这里加 .onInit 钩子强制覆盖，让 oneClick=false 也能
-;   在 /S 时跳过欢迎页 / 目录页 / 安装页 / 完成页。
-; - 不动双击 Setup（不含 /S）的体验，用户仍可手选安装位置和确认安装。
-Function .onInit
-  Push $0
-  Push $1
-  ; 在 /S 或 /D=<path> 出现时把 silentInstall 旗打开
-  StrCpy $0 ""
-  StrCpy $1 ""
-  ${GetParameters} $0
-  ${GetOptions} $0 "/S" $1
+; 检测命令行：含 /S 视为「应用内主动更新调用」→ SetSilent silent，
+; 让 MUI_PAGE_WELCOME / DIRECTORY / INSTFILES / FINISH 全部隐藏。
+; 双击 Setup 时不走 /S，向导正常渲染（用户仍可手选目录）。
+;
+; 注意 electron-builder 默认 SilentInstall=normal，理论上 /S 就该静默，
+; 但实际渲染仍会闪 INSTFILES 进度页。SetSilent silent 是更激进的方案，
+; 让所有页面 no-op，彻底「点一下就完事」。
+!macro customInit
+  Push $R0
+  Push $R1
+  StrCpy $R0 ""
+  StrCpy $R1 ""
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/S" $R1
   ${IfNot} ${Errors}
     SetSilent silent
-    SetSilentInstall silent
   ${EndIf}
-  ; silentInstall 旗只控制 MUI 是否渲染向导页，不影响 installApplicationFiles 执行。
-  ; 即：文件仍会照常解压 + 落盘，只是没有窗口。
-  Pop $1
-  Pop $0
-FunctionEnd
+  Pop $R1
+  Pop $R0
+!macroend
 
 ; 安装成功后自动拉起新版本。
 ;   - 不论 Setup 是被用户双击、还是被 App 通过 /S 静默拉起的，都走这条路径

@@ -67,7 +67,7 @@
     "appId": "com.douya.taskmanager",
     "productName": "TaskManager",
     "directories": {
-      "output": "release-v1.1.8-fresh"
+      "output": "release-v${version}"
     },
     "files": [
       "dist/**",
