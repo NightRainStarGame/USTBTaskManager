@@ -618,11 +618,28 @@ export function registerUpdater(db: DB | null) {
 
   ipcMain.handle('update:install', async (_e, filePath: string) => {
     if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '安装包不存在，请重新下载' };
-    const err = await shell.openPath(filePath);
-    if (err) return { ok: false, error: err };
-    // 旧应用立即退出，让 NSIS 拿到干净的 $INSTDIR；app.exit 同步强制，app.quit 要等异步
-    setTimeout(() => app.exit(0), 200);
-    return { ok: true };
+
+    // NSIS 静默安装：/S = 无 UI 无交互（不弹目录选择、不点 Install）。
+    // 安装路径沿用上一次安装（NSIS 从注册表读 InstallLocation）。
+    // detached+unref 让 NSIS 完全独立运行，主进程退出不影响它。
+    const { spawn } = await import('node:child_process');
+    try {
+      const child = spawn(filePath, ['/S'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+    } catch (e: any) {
+      return { ok: false, error: '启动安装包失败：' + (e?.message || e) };
+    }
+
+    // NSIS 完成后由 installer.nsh 的 .onInstSuccess 自动拉起新版本 TaskManager.exe
+    // 这里把主进程退掉，把 $INSTDIR 留给 NSIS 写新文件
+    setTimeout(() => {
+      try { app.exit(0); } catch {}
+    }, 300);
+    return { ok: true, silent: true };
   });
 
   ipcMain.handle('update:openExternal', async (_e, url: string) => {

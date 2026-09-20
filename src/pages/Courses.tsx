@@ -1410,6 +1410,8 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   const [error, setError] = useState('');
   const [published, setPublished] = useState<{
     title: string; sessionDate: string; syncCode?: string; bundleCreated?: boolean; fileUrl?: string;
+    entriesCount?: number;
+    perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; entriesCount?: number; error?: string }>;
   } | null>(null);
   const [copied, setCopied] = useState<'sync' | null>(null);
 
@@ -1466,7 +1468,15 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
         dueDate: dueDate ? new Date(dueDate).getTime() : null,
       });
       if (!r.ok) { setError(r.error || '发布失败'); if ((r as any).anyshareRaw) setError(prev => prev + `\n[debug] ${(r as any).anyshareRaw}`); return; }
-      setPublished({ title: r.entry?.title || title.trim(), sessionDate, syncCode: r.syncCode, bundleCreated: r.bundleCreated, fileUrl: r.fileUrl });
+      setPublished({
+        title: r.entry?.title || title.trim(),
+        sessionDate,
+        syncCode: r.syncCode,
+        bundleCreated: r.bundleCreated,
+        fileUrl: r.fileUrl,
+        entriesCount: r.entriesCount,
+        perTarget: r.perTarget,
+      });
       // 自动把刚发布的作业落到本地课程（与远端 ID 对齐）
       if (r.syncCode) await window.taskAPI.homework.receive(r.syncCode);
       await onChanged();
@@ -1512,8 +1522,11 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
             <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5 space-y-2">
               <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 发布成功，已落到本地</div>
               <div className="font-mono text-xs text-text-secondary">「{published.title}」 · 上课 {published.sessionDate}</div>
-              <div className="font-mono text-[10px] text-text-dim">
-                {published.bundleCreated ? '✦ 首次发布 — 新建了一个码包' : '已追加到现有码包'}。把下面这个 8 位「同步作业码」发给同学，同学点「接收作业」即可导入：
+              <div className="font-mono text-[10px] text-text-dim leading-relaxed">
+                {published.bundleCreated
+                  ? '✦ 首次发布 — 新建了一个码包'
+                  : <>本码包现在共 <span className="text-neon-green font-bold">{published.entriesCount ?? '?'}</span> 条作业</>}
+                。把下面这个 8 位「同步作业码」发给同学，同学点「接收作业」即可一次导入全部 {published.entriesCount ?? ''} 条：
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-text-dim text-xs shrink-0 w-20">同步作业码</span>
@@ -1522,6 +1535,15 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
                   {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
                 </button>
               </div>
+              {published.perTarget && published.perTarget.length > 1 && (
+                <div className="font-mono text-[10px] text-text-dim pt-1 border-t border-neon-green/15">
+                  {published.perTarget.map((t) => (
+                    <span key={t.target} className={`mr-2 ${t.ok ? 'text-neon-green' : 'text-neon-danger'}`}>
+                      {t.target === 'github' ? 'GitHub' : '北科云盘'}{t.ok ? ` ✓ ${t.entriesCount ?? 0} 条` : ` ✗ ${t.error || '失败'}`}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             {published.fileUrl && (
               <button onClick={() => window.taskAPI.updater.openExternal(published.fileUrl!)} className="btn-ghost text-xs">

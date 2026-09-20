@@ -1,25 +1,16 @@
 ; ============================================================
 ; build/installer.nsh —— NSIS 自定义脚本（electron-builder 自动 include）
 ;
-; 目的：升级安装时主动清理可能堆叠的旧文件，避免「代码堆叠 / 旧版新版混文件」。
-;
-; 工作机制：
-;   - electron-builder 在 `installApplicationFiles` 之前调用 `uninstallOldVersion`
-;     把旧版整个 $INSTDIR 重命名为 $PLUGINSDIR\old-install，再装新版。
-;   - 但 `resources/app/` 里的 .pak、.bin、cache、Code Cache 等可能因浏览器升级而出现
-;     新文件。如果新版不再包含某些文件，旧文件会留下来（虽然罕见）。
-;   - 这个脚本做**最后一道保险**：在 installApplicationFiles 之前，对几个
-;     容易堆叠的临时/缓存目录做 RMDir /r 清空。
-;   - 真正的安全网是 uninstallOldVersion 的 rename —— 这里只是兜底。
+; 目的：
+;   1. 升级安装时清掉 Electron 运行时缓存（避免代码堆叠）
+;   2. 静默安装（/S）完成后自动拉起新版本 TaskManager.exe，
+;      实现「点更新按钮 → 等一会自己起来」的无感升级
 ;
 ; 提供的宏：
 ;   cleanStaleAppFiles —— 在 installApplicationFiles 之前调用
 ; ============================================================
 
 !macro cleanStaleAppFiles
-  ; 安装过程中 SetOutPath 已经到 $INSTDIR
-  ; 清理容易在升级时堆叠的运行时缓存 / 临时目录
-  ; 这些目录里的内容都会被新版运行时重新创建，所以可以安全删除
   ${if} ${FileExists} "$INSTDIR\resources\app\Cache"
     RMDir /r "$INSTDIR\resources\app\Cache"
   ${endif}
@@ -50,6 +41,16 @@
 !macroend
 
 !macro customInstall
-  ; 在新文件被复制到 $INSTDIR 之前，先清掉上面列出的缓存目录
   !insertmacro cleanStaleAppFiles
 !macroend
+
+; 安装成功后自动拉起新版本。
+;   - 不论 Setup 是被用户双击、还是被 App 通过 /S 静默拉起的，都走这条路径
+;   - 升级场景下用户已经「确认要装新版」——不管是点了 NSIS 的 Install 按钮、还是点了 App 里的更新按钮——都期望新版自动起来
+;   - .onInstSuccess 在 installApplicationFiles 完成后触发，$INSTDIR 里已经是新文件，再拉起就是新版本
+;   - ExecShell 是异步的，NSIS 自己退出后拉起的 exe 仍正常运行
+Function .onInstSuccess
+  ${If} ${FileExists} "$INSTDIR\TaskManager.exe"
+    ExecShell "" '"$INSTDIR\TaskManager.exe"' "" SW_SHOWNORMAL
+  ${EndIf}
+FunctionEnd

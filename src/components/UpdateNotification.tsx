@@ -49,6 +49,8 @@ export default function UpdateNotification({ externalTrigger }: Props) {
   const [dl, setDl] = useState<DownloadState | null>(null);
   const [dlPath, setDlPath] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installingStarted, setInstallingStarted] = useState(false);
 
   // 监听主进程推送（启动自动检查）
   useEffect(() => {
@@ -113,8 +115,15 @@ export default function UpdateNotification({ externalTrigger }: Props) {
   };
   const install = async () => {
     if (!dlPath) return;
+    setInstalling(true);
     const r = await window.taskAPI.updater.install(dlPath);
-    if (!r.ok) setErr(r.error || '启动安装包失败');
+    if (!r.ok) {
+      setErr(r.error || '启动安装包失败');
+      setInstalling(false);
+      return;
+    }
+    // 静默安装已启动，主进程会退出，NSIS 完成后自动拉起新版
+    setInstallingStarted(true);
   };
   const openPage = async () => {
     const url = payload.pageUrl || payload.source || '';
@@ -219,10 +228,15 @@ export default function UpdateNotification({ externalTrigger }: Props) {
 
       {/* 底部按钮 */}
       <div className="flex flex-wrap gap-2 px-3 py-2 border-t border-neon-green/15 bg-ink-base/60 pointer-events-auto">
-        {dlPath && (
-          <button onClick={install} className="btn-neon btn-neon-yellow text-xs py-1">
-            <Sparkles size={12} /> 立即安装并重启
+        {dlPath && !installingStarted && (
+          <button onClick={install} disabled={installing} className="btn-neon btn-neon-yellow text-xs py-1">
+            <Sparkles size={12} /> {installing ? '启动安装…' : '重启并静默安装'}
           </button>
+        )}
+        {installingStarted && (
+          <div className="font-mono text-[10px] text-neon-yellow bg-neon-yellow/5 border border-neon-yellow/30 rounded px-2 py-1">
+            安装中…App 退出后新版会自动打开，请勿手动启动。
+          </div>
         )}
         {!dlPath && !dl && payload.downloadUrl && (
           <button onClick={startDownload} className="btn-neon btn-neon-yellow text-xs py-1">

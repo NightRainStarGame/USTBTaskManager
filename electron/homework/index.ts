@@ -203,7 +203,7 @@ function decodeBase64Utf8(b64: string): string {
   return Buffer.from(b64, 'base64').toString('utf8');
 }
 
-async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean } = {}) {
+async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean; ifNoneMatch?: string } = {}) {
   const url = path.startsWith('http') ? path : `${API}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -211,8 +211,13 @@ async function ghFetch(path: string, opts: { method?: string; token?: string; bo
     const headers: Record<string, string> = {
       Accept: opts.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
       'User-Agent': 'TaskManager-Homework',
+      // GitHub Contents API 默认 max-age=60，库里的 cache-Control=public 会让浏览器/中间 CDN 命中 60s 内返回旧值
+      // 发 no-store 强制每次回源（多发连点「再发一条」能拿到最新 sha，不会 409 死循环）
+      'Cache-Control': 'no-store',
+      'Pragma': 'no-cache',
     };
     if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+    if (opts.ifNoneMatch) headers['If-None-Match'] = opts.ifNoneMatch;
     let body: string | undefined;
     if (opts.body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -220,7 +225,7 @@ async function ghFetch(path: string, opts: { method?: string; token?: string; bo
     }
     const res = await net.fetch(url, { method: opts.method || 'GET', headers, body, signal: controller.signal });
     const text = await res.text();
-    return { status: res.status, ok: res.ok, text };
+    return { status: res.status, ok: res.ok, text, etag: res.headers.get('etag') || '' };
   } finally {
     clearTimeout(timer);
   }
@@ -390,7 +395,8 @@ function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): str
 export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Promise<{
   ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string;
   targets?: ('github' | 'cloud')[];
-  perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }>;
+  entriesCount?: number;
+  perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }>;
 }> {
   const def = (getSetting(db, 'homework_default_targets') || '').trim();
   let targets: ('github' | 'cloud')[] = [];
@@ -408,13 +414,13 @@ export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Pro
   }
   if (!targets.length) targets = ['github'];
 
-  const perTarget: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }> = [];
+  const perTarget: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }> = [];
   let lastOk: any = null;
   let firstErr: string | undefined;
   let firstAny: string | undefined;
   for (const t of targets) {
     const r: any = await publishHomework(db, { ...payload, target: t, targets: undefined });
-    perTarget.push({ target: t, ok: !!r.ok, error: r.error, fileUrl: r.fileUrl, anyshareRaw: r.anyshareRaw });
+    perTarget.push({ target: t, ok: !!r.ok, error: r.error, fileUrl: r.fileUrl, anyshareRaw: r.anyshareRaw, entriesCount: r.entriesCount });
     if (r.ok) lastOk = r;
     else { if (!firstErr) firstErr = r.error; if (!firstAny && r.anyshareRaw) firstAny = r.anyshareRaw; }
   }
@@ -426,13 +432,14 @@ export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Pro
     fileUrl: lastOk?.fileUrl,
     syncCode: lastOk?.syncCode,
     bundleCreated: lastOk?.bundleCreated,
+    entriesCount: lastOk?.entriesCount,
     anyshareRaw: firstAny,
     targets,
     perTarget,
   };
 }
 
-export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string }> {
+export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string; entriesCount?: number }> {
   let syncCode: string | undefined;
   if (payload.publishCode && payload.publishCode.trim()) {
     const decoded = parsePublishCode(payload.publishCode);
@@ -499,7 +506,15 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
         : null;
       if (!latest) {
         const { files } = await listDir(cfg, pubDir.docid);
-        const jsons = files.filter((f) => f.name.endsWith('.json')).sort((a, b) => (b.modified || 0) - (a.modified || 0));
+        // 按文件名里的时间戳降序——AnyShare 的 `modified` 字段可能不准确（秒级丢失、时区漂移），
+        // 但我们写入的文件名本身就是 `<courseKey>-<Date.now()>.json`，按时间戳倒排是确定性的
+        const tsOf = (n: string) => {
+          const m = n.match(/-(\d+)\.json$/);
+          return m ? parseInt(m[1], 10) : 0;
+        };
+        const jsons = files
+          .filter((f) => f.name.endsWith('.json'))
+          .sort((a, b) => tsOf(b.name) - tsOf(a.name));
         latest = jsons[0] || null;
       }
       if (!latest) latest = await findLatestByPrefix(cfg, `${syncCode}-`);
@@ -515,7 +530,9 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
     const merged = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid, courseKey });
     // 匿名无法覆盖同名 → 每次发布写一个新文件 <courseKey>-<时间戳>.json
-    const cloudName = `${courseKey || syncCode}-${Date.now()}.json`;
+    // 时间戳用真实单调的 Date.now()，并在末尾加毫秒+随机后缀保证唯一（同一毫秒内多次上传也能区分）
+    const tsNow = Date.now();
+    const cloudName = `${courseKey || syncCode}-${tsNow}.json`;
     try {
       await uploadTextFileToDir(cfg, pubDir.docid, cloudName, JSON.stringify(merged.file, null, 2));
     } catch (e: any) {
@@ -532,6 +549,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
       fileUrl: `${cfg.baseUrl}/link/${cfg.linkId}`,
       syncCode,
       bundleCreated: !merged.existing,
+      entriesCount: merged.file.entries.length,
     };
   }
 
@@ -541,28 +559,30 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   let file: HomeworkFile;
   let sha: string | undefined;
-  {
-    const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}`, { token });
-    if (r.status === 404) {
-      file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
-    } else if (!r.ok) {
-      return { ok: false, error: describeStatus(r.status, r.text) };
-    } else {
-      try {
-        const meta = JSON.parse(r.text);
-        sha = meta.sha;
-        file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-        if (!Array.isArray(file.entries)) file.entries = [];
-        file.courseName = courseName;
-      } catch {
-        return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
-      }
+  // 最多两次 GET（一次主、一次 409 重试）。每次都发 no-store 头防 CDN 60s 缓存命中旧 sha
+  const fetchFile = async () => ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
+  let r = await fetchFile();
+  if (r.status === 404) {
+    file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
+  } else if (!r.ok) {
+    return { ok: false, error: describeStatus(r.status, r.text) };
+  } else {
+    try {
+      const meta = JSON.parse(r.text);
+      sha = meta.sha;
+      file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
+      if (!Array.isArray(file.entries)) file.entries = [];
+      file.courseName = courseName;
+      if (courseKey && !file.courseKey) file.courseKey = courseKey;
+      if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
+    } catch {
+      return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
     }
   }
 
   const { file: mergedFile, entry, existing } = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
 
-  // 一次 409/422 冲突重试
+  // 一次 409/422 冲突重试；重试时也用 no-store 重新拿最新 sha
   const put = async (currentSha?: string) => {
     const body = {
       message: `homework: ${existing ? '更新' : '发布'} [${syncCode}] ${courseName} ${sessionDate} ${title}`,
@@ -572,13 +592,27 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     };
     return ghFetch(`/contents/${filePath}`, { method: 'PUT', token, body });
   };
-  let r = await put(sha);
-  if (r.status === 409 || r.status === 422) {
-    const g = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}`, { token });
-    if (g.ok) { try { sha = JSON.parse(g.text).sha; } catch {} }
-    r = await put(sha);
+  let putRes = await put(sha);
+  if (putRes.status === 409 || putRes.status === 422) {
+    // 真冲突：别人改了 → 重新 GET 拿最新内容 + sha，再合并本次新增条目（避免覆盖别人的提交）
+    const g = await fetchFile();
+    if (g.ok) {
+      try {
+        const meta = JSON.parse(g.text);
+        sha = meta.sha;
+        const fresh = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
+        if (Array.isArray(fresh.entries)) {
+          // 在最新的远端包基础上再合并一次本次新条目
+          const rebased = mergeEntry(fresh, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
+          // 替换 mergedFile 用最新的合并产物
+          mergedFile.entries = rebased.file.entries;
+          mergedFile.updatedAt = rebased.file.updatedAt;
+        }
+      } catch { /* fall through 保留原 mergedFile */ }
+    }
+    putRes = await put(sha);
   }
-  if (!r.ok) return { ok: false, error: describeStatus(r.status, r.text) };
+  if (!putRes.ok) return { ok: false, error: describeStatus(putRes.status, putRes.text) };
 
   return {
     ok: true,
@@ -586,6 +620,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     fileUrl: `${REPO_URL}/${syncCode}.json`,
     syncCode,
     bundleCreated: !existing,
+    entriesCount: mergedFile.entries.length,
   };
 }
 

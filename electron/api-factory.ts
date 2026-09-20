@@ -290,8 +290,9 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
         syncCode?: string; bundleCreated?: boolean;
         fileUrl?: string;
+        entriesCount?: number;
         targets?: ('github' | 'cloud')[];
-        perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }>;
+        perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }>;
       }>,
       /** 某个码包在远端已发布的作业 */
       remoteEntries: (syncCode: string) => invoke('homework:remoteEntries', syncCode) as Promise<{
