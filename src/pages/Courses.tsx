@@ -1384,32 +1384,36 @@ function GenerateCodesModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** 发布作业弹窗（v1.1.3）：点开直接进入「添加作业」界面，填完直接上传到 GitHub。
- *  - 不再要求先输作业发布码（GitHub PAT 已是身份认证）
- *  - 可选「secret edit」开关：勾上后才需要填 12 位发布码（HMAC 校验），避免被人改自己的码包
- *  - 每门课程一个持久化的同步作业码（settings homework_sync_<courseId>），首次发布自动生成
+/** 发布作业弹窗（v1.1.8）：同节课可一次性发多条作业条目。
+ *  - 顶部：课程 + 上课日期（共享）+ 发布目标 + secret edit（这些是码包级配置）
+ *  - 中间：作业条目列表（每条独立标题/内容/类型/截止），"+ 添加作业条目" 按钮加行，× 删除单条
+ *  - 提交：把有效条目（标题非空）一次传给后端 → 后端逐条 merge 到同一个码包
+ *  - 自动 receive 让刚发布的作业落到本地（用新 entriesPublished 统计）
  */
 function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => Promise<void> }) {
   const courses = useStore(s => s.courses);
   const events = useStore(s => s.events);
 
+  type EntryDraft = { type: 'homework' | 'exam' | 'project' | 'reading' | 'other'; title: string; content: string; dueDate: string };
+  const blankEntry = (): EntryDraft => ({ type: 'homework', title: '', content: '', dueDate: '' });
+
   const [busy, setBusy] = useState(false);
-  // 表单字段（与「添加作业」同款 UI）
+  // 码包级字段
   const [courseId, setCourseId] = useState<number | null>(null);
-  const [type, setType] = useState<'homework' | 'exam' | 'project' | 'reading' | 'other'>('homework');
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
   const [sessionDate, setSessionDate] = useState(dayjs().format('YYYY-MM-DD'));
-  const [dueDate, setDueDate] = useState('');
+  // 批量条目（默认一条空条目）
+  const [items, setItems] = useState<EntryDraft[]>([blankEntry()]);
   // 可选 secret edit
   const [secretMode, setSecretMode] = useState(false);
   const [publishCode, setPublishCode] = useState('');
-  // v1.1.6：发布目标列表（可同时推 GitHub + 北科云盘；默认两个都勾）
+  // 发布目标列表（默认两个都勾）
   const [targets, setTargets] = useState<{ github: boolean; cloud: boolean }>({ github: true, cloud: true });
 
   const [error, setError] = useState('');
   const [published, setPublished] = useState<{
-    title: string; sessionDate: string; syncCode?: string; bundleCreated?: boolean; fileUrl?: string;
+    entriesPublished: number;
+    sessionDate: string;
+    syncCode?: string; bundleCreated?: boolean; fileUrl?: string;
     entriesCount?: number;
     perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; entriesCount?: number; error?: string }>;
   } | null>(null);
@@ -1450,9 +1454,11 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
       .sort((a, b) => a.ts - b.ts);
   }, [course, events]);
 
+  const validItems = items.filter((it) => it.title.trim());
+  const canSubmit = !!course && validItems.length > 0 && !busy;
+
   const submit = async () => {
-    if (busy || !course) return;
-    if (!title.trim()) { setError('请填写作业标题'); return; }
+    if (!canSubmit) return;
     if (secretMode && publishCode && publishCode.length !== 12) { setError('作业发布码需为 12 位（不填则关闭 secret edit 模式）'); return; }
     setBusy(true); setError('');
     try {
@@ -1462,14 +1468,18 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
         courseId: course.id,
         courseName: course.name,
         sessionDate,
-        title: title.trim(),
-        content: content.trim(),
-        type,
-        dueDate: dueDate ? new Date(dueDate).getTime() : null,
+        // 批量条目（每条独立标题/内容/类型/截止；sessionDate 用码包级）
+        entries: validItems.map((it) => ({
+          title: it.title.trim(),
+          content: it.content.trim(),
+          type: it.type,
+          sessionDate,
+          dueDate: it.dueDate ? new Date(it.dueDate).getTime() : null,
+        })),
       });
       if (!r.ok) { setError(r.error || '发布失败'); if ((r as any).anyshareRaw) setError(prev => prev + `\n[debug] ${(r as any).anyshareRaw}`); return; }
       setPublished({
-        title: r.entry?.title || title.trim(),
+        entriesPublished: r.entriesPublished ?? validItems.length,
         sessionDate,
         syncCode: r.syncCode,
         bundleCreated: r.bundleCreated,
@@ -1492,23 +1502,26 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     setTimeout(() => setCopied(null), 1500);
   };
 
+  const addItem = () => setItems((arr) => [...arr, blankEntry()]);
+  const removeItem = (idx: number) => setItems((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr));
+  const updateItem = (idx: number, patch: Partial<EntryDraft>) => setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+
   const footer = (() => {
     if (published) {
       return <>
-        <button onClick={() => { setPublished(null); setTitle(''); setContent(''); setDueDate(''); }} className="btn-ghost">再发一条</button>
+        <button onClick={() => { setPublished(null); setItems([blankEntry()]); }} className="btn-ghost">再发一组</button>
         <button onClick={onClose} className="btn-neon">完成</button>
       </>;
     }
+    const btnLabel = busy ? '上传中…' : (
+      targets.cloud && targets.github ? `上传 ${validItems.length || ''} 条到 GitHub + 云盘`
+      : targets.cloud ? `上传 ${validItems.length || ''} 条到北科云盘`
+      : `上传 ${validItems.length || ''} 条到 GitHub`
+    );
     return <>
       <button onClick={onClose} className="btn-ghost">取消</button>
-      <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow">
-        <CloudUpload size={14} /> {busy
-          ? '上传中…'
-          : (targets.cloud && targets.github
-            ? '上传到 GitHub + 云盘'
-            : targets.cloud
-            ? '上传到北科云盘'
-            : '上传到 GitHub')}
+      <button onClick={submit} disabled={!canSubmit} className="btn-neon btn-neon-yellow">
+        <CloudUpload size={14} /> {btnLabel}
       </button>
     </>;
   })();
@@ -1516,12 +1529,13 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   return (
     <Modal title="发布作业" onClose={onClose} footer={footer}>
       <div className="space-y-3">
-        {/* 发布成功后：分享同步码 */}
         {published ? (
           <div className="space-y-3">
             <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5 space-y-2">
               <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 发布成功，已落到本地</div>
-              <div className="font-mono text-xs text-text-secondary">「{published.title}」 · 上课 {published.sessionDate}</div>
+              <div className="font-mono text-xs text-text-secondary">
+                本次发布 <span className="text-neon-green font-bold">{published.entriesPublished}</span> 条作业 · 上课 {published.sessionDate}
+              </div>
               <div className="font-mono text-[10px] text-text-dim leading-relaxed">
                 {published.bundleCreated
                   ? '✦ 首次发布 — 新建了一个码包'
@@ -1536,7 +1550,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
                 </button>
               </div>
               {published.perTarget && published.perTarget.length > 1 && (
-                <div className="font-mono text-[10px] text-text-dim pt-1 border-t border-neon-green/15">
+                <div className="font-mono text-[10px] text-text-dim border-t border-neon-green/15 pt-1">
                   {published.perTarget.map((t) => (
                     <span key={t.target} className={`mr-2 ${t.ok ? 'text-neon-green' : 'text-neon-danger'}`}>
                       {t.target === 'github' ? 'GitHub' : '北科云盘'}{t.ok ? ` ✓ ${t.entriesCount ?? 0} 条` : ` ✗ ${t.error || '失败'}`}
@@ -1555,11 +1569,10 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
           <>
             {/* 说明 */}
             <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim leading-relaxed">
-              直接填写下面的作业内容，提交后会保存到本地「{course?.name ?? '?'}」课程，并上传到所选同步源。
-              每次为该课程首次发布时会自动生成一个 8 位同步作业码（持久化到本机），同学凭此码「接收作业」。
+              同节课可一次性发布多条作业（每条独立标题/截止），共享同一个同步作业码。接收方输入这个码能一次拿到全部条目。
             </div>
 
-            {/* 发布目标（v1.1.6：可同时勾 GitHub + 北科云盘） */}
+            {/* 发布目标 */}
             <div className="flex items-center gap-3">
               <span className="text-xs text-text-dim shrink-0">发布到</span>
               {([['github', 'GitHub'], ['cloud', '北科云盘（需校园网）']] as const).map(([v, label]) => (
@@ -1578,7 +1591,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               ))}
             </div>
 
-            {/* 课程 + 类型 */}
+            {/* 课程 + 上课日期（共享给所有条目） */}
             <div className="grid grid-cols-2 gap-3">
               <Field label="课程 *">
                 <select
@@ -1590,21 +1603,10 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
                   {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </Field>
-              <Field label="类型">
-                <select value={type} onChange={(e: any) => setType(e.target.value)} className="input-neon">
-                  <option value="homework">作业</option>
-                  <option value="exam">考试</option>
-                  <option value="project">项目</option>
-                  <option value="reading">阅读</option>
-                  <option value="other">其他</option>
-                </select>
+              <Field label="上课日期 *（本节作业日期）">
+                <input type="date" value={sessionDate} onChange={(e: any) => setSessionDate(e.target.value)} className="input-neon" />
               </Field>
             </div>
-
-            {/* 上课日期 + 候选 */}
-            <Field label="上课日期 *（每节课的作业可能不同）">
-              <input type="date" value={sessionDate} onChange={(e: any) => setSessionDate(e.target.value)} className="input-neon" />
-            </Field>
             {sessionOptions.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {sessionOptions.map(o => {
@@ -1622,16 +1624,28 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               </div>
             )}
 
-            {/* 标题 + 内容 + 截止 */}
-            <Field label="作业标题 *">
-              <input value={title} onChange={(e: any) => setTitle(e.target.value)} className="input-neon" placeholder="如：第三章习题 1-10（本周三这节课布置）" autoFocus />
-            </Field>
-            <Field label="作业内容">
-              <textarea value={content} onChange={(e: any) => setContent(e.target.value)} rows={4} className="input-neon" placeholder="具体要求、提交方式、注意事项…（接收方会原样看到）" />
-            </Field>
-            <Field label="截止时间（可选，默认上课日 23:59）">
-              <input type="datetime-local" value={dueDate} onChange={(e: any) => setDueDate(e.target.value)} className="input-neon" />
-            </Field>
+            {/* 作业条目列表（v1.1.8+ 批量发布） */}
+            <div className="rounded-md border border-neon-green/20 bg-ink-base/40 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="label-tag text-[11px]">本节作业 · {items.length} 条 · {validItems.length} 已填</span>
+                <button
+                  onClick={addItem}
+                  className="px-2 py-0.5 rounded text-[10px] font-mono border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/20 transition-colors"
+                >
+                  <Plus size={11} className="inline -mt-0.5" /> 添加作业条目
+                </button>
+              </div>
+              {items.map((it, idx) => (
+                <EntryEditor
+                  key={idx}
+                  item={it}
+                  canRemove={items.length > 1}
+                  autoFocus={idx === items.length - 1}
+                  onChange={(patch) => updateItem(idx, patch)}
+                  onRemove={() => removeItem(idx)}
+                />
+              ))}
+            </div>
 
             {/* secret edit（可选） */}
             <div className="p-2 rounded-md border border-neon-yellow/20 bg-neon-yellow/5">
@@ -1667,6 +1681,71 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   );
 }
 
+/** 单条作业条目编辑器（用于批量发布弹窗内的列表项） */
+function EntryEditor({
+  item, onChange, onRemove, canRemove, autoFocus,
+}: {
+  item: { type: 'homework' | 'exam' | 'project' | 'reading' | 'other'; title: string; content: string; dueDate: string };
+  onChange: (patch: Partial<{ type: 'homework' | 'exam' | 'project' | 'reading' | 'other'; title: string; content: string; dueDate: string }>) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+  autoFocus?: boolean;
+}) {
+  return (
+    <div className="rounded border border-neon-green/15 bg-ink-base/30 p-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <select
+          value={item.type}
+          onChange={(e: any) => onChange({ type: e.target.value })}
+          className="input-neon text-[11px] px-1.5 py-0.5"
+          style={{ width: '78px' }}
+        >
+          <option value="homework">作业</option>
+          <option value="exam">考试</option>
+          <option value="project">项目</option>
+          <option value="reading">阅读</option>
+          <option value="other">其他</option>
+        </select>
+        <input
+          value={item.title}
+          onChange={(e: any) => onChange({ title: e.target.value })}
+          className="input-neon text-xs flex-1"
+          placeholder="如：第三章习题 1-10"
+          autoFocus={autoFocus}
+        />
+        {canRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="p-1 rounded text-neon-danger/70 hover:text-neon-danger hover:bg-neon-danger/10 transition-colors"
+            title="删除这条"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+      <textarea
+        value={item.content}
+        onChange={(e: any) => onChange({ content: e.target.value })}
+        rows={2}
+        className="input-neon text-xs w-full"
+        placeholder="具体要求（可选）"
+      />
+      <div className="flex items-center gap-2 text-[10px]">
+        <span className="text-text-dim shrink-0 font-mono">截止</span>
+        <input
+          type="datetime-local"
+          value={item.dueDate}
+          onChange={(e: any) => onChange({ dueDate: e.target.value })}
+          className="input-neon text-[11px] py-0.5"
+          style={{ width: 'auto' }}
+        />
+        <span className="text-text-dim font-mono">（默认上课日 23:59）</span>
+      </div>
+    </div>
+  );
+}
+
 /** 接收作业弹窗：输入同步作业码 → 从 GitHub 拉取这个包 → 匹配本地课程 → 自动挂载。
  *  v1.1.3：远端 bundle 引用的本地课程缺失时不再自动建课，而是弹窗告知让用户主动同步课程。
  */
@@ -1679,7 +1758,9 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
     courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
     entries: number; created: number; updated: number;
     coursesTouched: number; coursesCreated: string[];
-    items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+    /** v1.1.8+：按课程分组的精确挂载计数（多平行班时分别列出） */
+    perCourse?: Array<{ courseId: number; courseName: string; entries: number; created: number; updated: number }>;
+    items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
   } | null>(null);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -1828,8 +1909,26 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
               <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 接收成功</div>
               <div className="font-mono text-xs text-text-secondary mt-2">
                 课程「{result.courseName}」· 来源 {result.source === 'cloud' ? '云盘' : 'GitHub'} ·
-                新增 <span className="text-neon-green font-bold">{result.created}</span> 条 · 更新 {result.updated} 条
+                远端共 <span className="text-text-secondary font-bold">{result.entries}</span> 条作业
+                {result.coursesTouched > 1 && <> · 命中 <span className="text-neon-green font-bold">{result.coursesTouched}</span> 门课程</>}
               </div>
+              {/* 多课程时按课程分组展示精确挂载数（v1.1.8+） */}
+              {result.perCourse && result.perCourse.length > 1 ? (
+                <div className="mt-2 space-y-1">
+                  {result.perCourse.map((pc) => (
+                    <div key={pc.courseId} className="flex items-center gap-2 px-2 py-1 rounded bg-ink-base/40 border border-neon-green/15 text-[11px] font-mono">
+                      <span className="text-text-secondary truncate">{pc.courseName}</span>
+                      <span className="ml-auto text-text-dim text-[10px] shrink-0">{pc.entries} 条</span>
+                      <span className="text-neon-green shrink-0">新增 {pc.created}</span>
+                      <span className="text-neon-yellow shrink-0">更新 {pc.updated}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="font-mono text-[10px] text-text-secondary mt-1">
+                  新增 <span className="text-neon-green font-bold">{result.created}</span> 条 · 更新 <span className="text-neon-yellow font-bold">{result.updated}</span> 条
+                </div>
+              )}
               {result.coursesCreated.length > 0 && (
                 <div className="font-mono text-[10px] text-neon-yellow mt-1">本次新建课程：{result.coursesCreated.join('、')}</div>
               )}

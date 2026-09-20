@@ -151,6 +151,16 @@ export interface CodePair {
   publishCode: string;
 }
 
+export interface PublishEntry {
+  title: string;
+  content: string;
+  type?: HomeworkType;
+  /** 单条可独立指定上课日期；缺省用外层 sessionDate */
+  sessionDate?: string;
+  sessionTime?: string | null;
+  dueDate?: number | null;
+}
+
 export interface PublishPayload {
   syncCode?: string;
   publishCode?: string;
@@ -159,12 +169,15 @@ export interface PublishPayload {
   target?: 'github' | 'cloud';
   courseId?: number;
   courseName: string;
+  /** 默认上课日期；entries 里没指定 sessionDate 的条目用这个 */
   sessionDate: string;
   sessionTime?: string | null;
   title: string;
   content: string;
   type?: HomeworkType;
   dueDate?: number | null;
+  /** v1.1.8+：批量发布条目。存在时 title/content/type/dueDate 被忽略，每个条目独立 */
+  entries?: PublishEntry[];
 }
 
 export interface SyncResult {
@@ -178,7 +191,9 @@ export interface SyncResult {
   updated: number;
   coursesTouched: number;
   coursesCreated: string[];
-  items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+  /** v1.1.8+：按 courseId 分组的挂载明细（精确到每个课程每条作业的 created/updated） */
+  perCourse?: Array<{ courseId: number; courseName: string; entries: number; created: number; updated: number }>;
+  items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
   syncedAt: number;
   courseNotFound?: boolean;
   courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
@@ -439,7 +454,7 @@ export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Pro
   };
 }
 
-export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string; entriesCount?: number }> {
+export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string; entriesCount?: number; entriesPublished?: number }> {
   let syncCode: string | undefined;
   if (payload.publishCode && payload.publishCode.trim()) {
     const decoded = parsePublishCode(payload.publishCode);
@@ -459,11 +474,40 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   }
 
   const courseName = (payload.courseName || '').trim();
-  const title = (payload.title || '').trim();
   const sessionDate = (payload.sessionDate || '').trim();
   if (!courseName) return { ok: false, error: '请选择课程' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) return { ok: false, error: '请选择上课日期' };
-  if (!title) return { ok: false, error: '请填写作业标题' };
+
+  // v1.1.8+：批量条目。entries 缺省时按外层单条字段包成一个 entries
+  const rawEntries: PublishEntry[] = (Array.isArray(payload.entries) && payload.entries.length)
+    ? payload.entries
+    : [{
+        title: payload.title,
+        content: payload.content,
+        type: payload.type,
+        sessionDate: payload.sessionDate,
+        sessionTime: payload.sessionTime,
+        dueDate: payload.dueDate,
+      }];
+  // 归一化 + 校验
+  const normalizedEntries: PublishEntry[] = [];
+  for (const e of rawEntries) {
+    const t = (e.title || '').trim();
+    if (!t) continue; // 跳过空标题（用户可能加了一行没填就提交）
+    const d = (e.sessionDate || sessionDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      return { ok: false, error: `作业「${t}」的上课日期无效（需 YYYY-MM-DD）` };
+    }
+    normalizedEntries.push({
+      title: t,
+      content: (e.content || '').trim(),
+      type: e.type || payload.type || 'homework',
+      sessionDate: d,
+      sessionTime: e.sessionTime ?? null,
+      dueDate: e.dueDate ?? null,
+    });
+  }
+  if (!normalizedEntries.length) return { ok: false, error: '请至少填写一条作业（标题必填）' };
 
   const target = payload.target === 'cloud' ? 'cloud' : 'github';
   const publisher = getSetting(db, SETTING_PUBLISHER).trim() || '佚名';
@@ -528,13 +572,25 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
       }
     } catch {}
 
-    const merged = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid, courseKey });
+    // 批量合并（按 sessionDate+title 去重 + 追加）
+    let lastEntry: HomeworkEntry | undefined;
+    let hasNew = false;
+    for (const e of normalizedEntries) {
+      const r = mergeEntry(file, {
+        syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
+        payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
+        publisher, courseGuid, courseKey,
+      });
+      file = r.file;
+      lastEntry = r.entry;
+      if (!r.existing) hasNew = true;
+    }
     // 匿名无法覆盖同名 → 每次发布写一个新文件 <courseKey>-<时间戳>.json
     // 时间戳用真实单调的 Date.now()，并在末尾加毫秒+随机后缀保证唯一（同一毫秒内多次上传也能区分）
     const tsNow = Date.now();
     const cloudName = `${courseKey || syncCode}-${tsNow}.json`;
     try {
-      await uploadTextFileToDir(cfg, pubDir.docid, cloudName, JSON.stringify(merged.file, null, 2));
+      await uploadTextFileToDir(cfg, pubDir.docid, cloudName, JSON.stringify(file, null, 2));
     } catch (e: any) {
       const raw = (e as any)?.anyshareRaw;
       return {
@@ -545,11 +601,12 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     }
     return {
       ok: true,
-      entry: merged.entry,
+      entry: lastEntry,
       fileUrl: `${cfg.baseUrl}/link/${cfg.linkId}`,
       syncCode,
-      bundleCreated: !merged.existing,
-      entriesCount: merged.file.entries.length,
+      bundleCreated: hasNew,
+      entriesCount: file.entries.length,
+      entriesPublished: normalizedEntries.length,
     };
   }
 
@@ -580,12 +637,31 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     }
   }
 
-  const { file: mergedFile, entry, existing } = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
+  // 批量合并到内存 file，最后一次性 PUT（避免 N 次远端 IO）
+  let lastEntry: HomeworkEntry | undefined;
+  let lastExisting: HomeworkEntry | undefined;
+  let hasNew = false;
+  for (const e of normalizedEntries) {
+    const r = mergeEntry(file, {
+      syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
+      payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
+      publisher, courseGuid,
+    });
+    file = r.file;
+    lastEntry = r.entry;
+    lastExisting = r.existing;
+    if (!r.existing) hasNew = true;
+  }
+  const mergedFile = file;
 
   // 一次 409/422 冲突重试；重试时也用 no-store 重新拿最新 sha
   const put = async (currentSha?: string) => {
+    const firstEntry = normalizedEntries[0];
+    const msg = normalizedEntries.length === 1
+      ? `homework: ${lastExisting ? '更新' : '发布'} [${syncCode}] ${courseName} ${firstEntry.sessionDate} ${firstEntry.title}`
+      : `homework: 批量发布 ×${normalizedEntries.length} [${syncCode}] ${courseName}（${firstEntry.sessionDate} 起）`;
     const body = {
-      message: `homework: ${existing ? '更新' : '发布'} [${syncCode}] ${courseName} ${sessionDate} ${title}`,
+      message: msg,
       content: Buffer.from(JSON.stringify(mergedFile, null, 2), 'utf8').toString('base64'),
       branch: HOMEWORK_BRANCH,
       ...(currentSha ? { sha: currentSha } : {}),
@@ -594,7 +670,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   };
   let putRes = await put(sha);
   if (putRes.status === 409 || putRes.status === 422) {
-    // 真冲突：别人改了 → 重新 GET 拿最新内容 + sha，再合并本次新增条目（避免覆盖别人的提交）
+    // 真冲突：别人改了 → 重新 GET 拿最新内容 + sha，再合并本次所有新条目（避免覆盖别人的提交）
     const g = await fetchFile();
     if (g.ok) {
       try {
@@ -602,11 +678,19 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
         sha = meta.sha;
         const fresh = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
         if (Array.isArray(fresh.entries)) {
-          // 在最新的远端包基础上再合并一次本次新条目
-          const rebased = mergeEntry(fresh, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
+          // 在最新的远端包基础上把所有本次条目再合并一次
+          for (const e of normalizedEntries) {
+            const rebased = mergeEntry(fresh, {
+              syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
+              payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
+              publisher, courseGuid,
+            });
+            fresh.entries = rebased.file.entries;
+            fresh.updatedAt = rebased.file.updatedAt;
+          }
           // 替换 mergedFile 用最新的合并产物
-          mergedFile.entries = rebased.file.entries;
-          mergedFile.updatedAt = rebased.file.updatedAt;
+          mergedFile.entries = fresh.entries;
+          mergedFile.updatedAt = fresh.updatedAt;
         }
       } catch { /* fall through 保留原 mergedFile */ }
     }
@@ -616,11 +700,12 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   return {
     ok: true,
-    entry,
+    entry: lastEntry,
     fileUrl: `${REPO_URL}/${syncCode}.json`,
     syncCode,
-    bundleCreated: !existing,
+    bundleCreated: hasNew,
     entriesCount: mergedFile.entries.length,
+    entriesPublished: normalizedEntries.length,
   };
 }
 
@@ -755,11 +840,17 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
     return result;
   }
   result.coursesTouched = hitCourseIds.length;
+  // entries = 远端作业条目数（去重，不随课程数膨胀）；perCourse[].entries 同义
+  // created/updated = 实际 INSERT/UPDATE 数（多平行班时按课程×条目累加，UI 反映真实挂载动作）
+  const uniqueEntries = file.entries.filter((e) => e && e.id && e.title);
+  result.entries = uniqueEntries.length;
+  const perCourseMap = new Map<number, { courseId: number; courseName: string; entries: number; created: number; updated: number }>();
 
   for (const courseId of hitCourseIds) {
-    for (const e of file.entries) {
-      if (!e || !e.id || !e.title) continue;
-      if (courseId === hitCourseIds[0]) result.entries++;
+    const row = db.prepare('SELECT name FROM courses WHERE id = ?').get(courseId) as { name: string } | undefined;
+    const cName = row?.name || courseName;
+    const stat = perCourseMap.get(courseId) || { courseId, courseName: cName, entries: uniqueEntries.length, created: 0, updated: 0 };
+    for (const e of uniqueEntries) {
       const due = e.dueDate && Number.isFinite(e.dueDate)
         ? e.dueDate
         : new Date(`${e.sessionDate || '1970-01-01'}T23:59:00`).getTime();
@@ -773,7 +864,9 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
           e.title, (e.type || 'homework'), e.content || '', due, e.sessionDate || null,
           e.publisher || null, local.id
         );
-        if (courseId === hitCourseIds[0]) result.updated++;
+        stat.updated++;
+        result.updated++;
+        result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'updated' });
       } else {
         db.prepare(
           `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status,
@@ -784,13 +877,14 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
           `来源：${source === 'ustb-cloud' ? '北科云盘' : 'GitHub'} 接收 · 码 ${syncCode} · 发布人 ${e.publisher || '佚名'} · ${e.sessionDate || ''}${e.sessionTime ? ' ' + e.sessionTime : ''}`,
           Date.now(), rid, e.sessionDate || null, e.publisher || null
         );
-        if (courseId === hitCourseIds[0]) result.created++;
-      }
-      if (courseId === hitCourseIds[0]) {
-        result.items.push({ courseName, title: e.title, sessionDate: e.sessionDate || '', action: local ? 'updated' : 'created' });
+        stat.created++;
+        result.created++;
+        result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'created' });
       }
     }
+    perCourseMap.set(courseId, stat);
   }
+  result.perCourse = Array.from(perCourseMap.values());
 
   result.ok = true;
   setSetting(db, SETTING_LAST_SYNC, String(Date.now()));

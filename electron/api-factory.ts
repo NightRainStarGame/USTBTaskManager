@@ -283,14 +283,20 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         /** @deprecated v1.1.6 起改用 targets */
         target?: 'github' | 'cloud';
         courseName: string; sessionDate: string;
-        sessionTime?: string | null; title: string; content: string;
+        sessionTime?: string | null;
+        /** 单条发布时必填；批量（v1.1.8+）可省，由 entries 提供 */
+        title?: string; content?: string;
         type?: string; dueDate?: number | null;
+        /** v1.1.8+：批量发布条目；存在时 title/content/type/dueDate 被忽略，每条独立 */
+        entries?: Array<{ title: string; content: string; type?: string; sessionDate?: string; sessionTime?: string | null; dueDate?: number | null }>;
       }) => invoke('homework:publish', payload) as Promise<{
         ok: boolean; error?: string;
         entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
         syncCode?: string; bundleCreated?: boolean;
         fileUrl?: string;
         entriesCount?: number;
+        /** v1.1.8+：本次实际发布的条目数（批量场景下 >1） */
+        entriesPublished?: number;
         targets?: ('github' | 'cloud')[];
         perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }>;
       }>,
@@ -300,14 +306,16 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         entries: Array<{ id: string; title: string; sessionDate: string; sessionTime?: string | null; content: string; publisher: string; publishedAt: number; updatedAt: number }>;
       }>,
       /** 按同步作业码接收一个作业包到本地课程；本地缺课程时返回 courseNotFound=true 让前端弹窗询问；
-       *  v1.1.6：同名多门课程时返回 courseCandidates 让前端手选，重试时传 chooseCourseId */
+       *  v1.1.6：同名多门课程时返回 courseCandidates 让前端手选，重试时传 chooseCourseId
+       *  v1.1.8：perCourse 按课程分组给出精确挂载计数；items 每项加 courseId */
       receive: (syncCode: string, chooseCourseId?: number | null) => invoke('homework:receive', syncCode, chooseCourseId) as Promise<{
         ok: boolean; error?: string; source?: string; syncCode?: string; courseName?: string;
         courseNotFound?: boolean;
         courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
         entries: number; created: number; updated: number;
         coursesTouched: number; coursesCreated: string[];
-        items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+        perCourse?: Array<{ courseId: number; courseName: string; entries: number; created: number; updated: number }>;
+        items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
         syncedAt: number;
       }>,
     },
