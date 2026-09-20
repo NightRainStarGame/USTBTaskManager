@@ -1,15 +1,15 @@
 {
-  "version": "1.1.7",
-  "notes": "# TaskManager v1.1.7 更新说明\n\n> 建议所有 v1.1.6 用户通过「设置 → 软件更新」增量升级（补丁约十几 MB，无需重下整包）。\n\n## 作业同步\n\n- **课程通用固定 ID（courseKey）**：同名同授课老师的课程在所有设备上派生同一个 ID（CK- 前缀）。\n  作业发布/接收凭它精确挂载，彻底解决「作业挂错课程 / 只同步到最开始一条」的问题。\n- 同名同老师的课程（含平行班）**共用同一个同步作业码与作业包**；接收端命中的所有平行班一起挂载。\n- **北科云盘目录转接范式**：`homework/<作业发布码>/<课程ID>-<时间戳>.json`——发布码建文件夹、\n  课程 ID 命名文件，同步对应一目了然。旧扁平结构自动兼容迁移。\n\n## 版本更新 / 补丁\n\n- 统一文件命名范式：`TaskManager-Patch-<from>-to-<to>.zip`，清单 latest.json 指明哪个版本该更新到哪。\n- 北科云盘源现在也分发增量补丁（补丁下载支持云盘文件名解析，不再强依赖 GitHub 直链）。\n\n## 界面\n\n- **左上角 Logo 换新**：StarMain server-icon。\n- **樱花粉主题大改**：柔光玻璃（frosted glass）面板、背景更粉、文字对比度大幅提升、\n  粒子背景从几何体换成**漂浮爱心**。\n\n## 修复\n\n- 输入框偶发「点不上/没焦点」：新增点击补焦兜底修复（焦点丢失自动恢复），并记录修复日志供诊断。\n- 粒子背景限帧 30fps，降低 GPU 占用（低配机器输入卡顿的缓解项）。",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.7.exe",
+  "version": "1.1.8",
+  "notes": "# TaskManager v1.1.8 更新说明\n\n> 建议 v1.1.6 / v1.1.7 用户通过「设置 → 软件更新」增量升级（补丁仅十几 MB，无需重下整包）。首版安装请走 Setup 包。\n\n## 更新体验\n\n- **补丁更新全自动收尾**：NSIS 应用内静默模式（`/S` 完全静默化）——点一次「立即安装并重启」就完事，等一会自己重新打开新版本，不再弹「为我安装 / 选目录」向导。\n- 双击 Setup 仍走原完整向导流程（首次安装可手动选目录），体验不变。\n\n## 作业同步\n\n- **一个同步码可以发多条作业**：发布作业时点 `+ 添加作业条目` 可添加多条（每条独立标题 / 内容 / 截止 / 类型），一次性发布。同学拿到同一个同步码就能一次接收所有条目。\n- 后端批量发布单次远端 IO（一次 GitHub PUT / 一次云盘上传），不增加请求次数。\n- **多平行班接收挂载计数精确化**：之前只显示第一个课程的条数，现在每个课程独立显示真实 created / updated 条数（按 `remote_id` 加 `#c<courseId>` 已保证精度）。\n- `mergeEntry` 按 `(sessionDate, title)` 去重保留覆盖语义，批量条目不同标题不会互相覆盖。\n\n## 范式\n\n- `PublishPayload` 新增 `entries?: PublishEntry[]`；批量与单条走同一接口，后端兼容。\n- `SyncResult` 新增 `perCourse[]`，前端 UI 按课程分行展示。",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.8.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.6",
-  "sha256": "9a7c1131e8a51c5e7ea3ad5a10d4c33503cfb0d6dfea1a7c72bb23180da57d09",
-  "size": 97393759,
-  "fileName": "TaskManager-Setup-1.1.7.exe",
+  "sha256": "a24b24ac17dc2d4d2336c6b8b07a846226dd386232858e0d95e354b2351750f6",
+  "size": 97392801,
+  "fileName": "TaskManager-Setup-1.1.8.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-20T07:26:37.974Z",
-  "asarSha256": "56c459df472ed444098c084e2bad703ba39ce449af873269f136dafd9bbd786e",
-  "asarSize": 72278590,
+  "releaseDate": "2026-09-20T11:40:45.440Z",
+  "asarSha256": "ef25ad5109afe666fa8b34c001484aa61e3998078f44064b21bf8a3df2bcac63",
+  "asarSize": 72286894,
   "patches": [
     {
       "fromVersion": "1.1.5",
@@ -32,6 +32,17 @@
       "appAsarSha256": "56c459df472ed444098c084e2bad703ba39ce449af873269f136dafd9bbd786e",
       "appAsarSize": 72278590,
       "createdAt": "2026-09-20T07:26:36.053Z"
+    },
+    {
+      "fromVersion": "1.1.7",
+      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.1.7-to-1.1.8.zip",
+      "sha256": "a97a4d91e88cfe0e2fa96057bc3773d6f078cd9d7936a2de9e1a0bd41d9b2ccb",
+      "size": 22123064,
+      "baseAsarSha256": "56c459df472ed444098c084e2bad703ba39ce449af873269f136dafd9bbd786e",
+      "baseAsarSize": 72278590,
+      "appAsarSha256": "ef25ad5109afe666fa8b34c001484aa61e3998078f44064b21bf8a3df2bcac63",
+      "appAsarSize": 72286894,
+      "createdAt": "2026-09-20T11:40:43.554Z"
     }
   ]
 }
