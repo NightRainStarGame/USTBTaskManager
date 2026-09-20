@@ -1,8 +1,8 @@
 {
   "syncCode": "4VNTQ7J7",
-  "courseName": "中国科技发展史",
+  "courseName": "机械制图AI（科创班）",
   "createdAt": 1789910684019,
-  "updatedAt": 1789910684019,
+  "updatedAt": 1789910695892,
   "entries": [
     {
       "id": "8c3576d0-de6b-425e-a6e4-717dc277aaac",
@@ -29,7 +29,21 @@
       "publisher": "佚名",
       "publishedAt": 1789910684019,
       "updatedAt": 1789910684019
+    },
+    {
+      "id": "e52aa144-65a2-4399-a8ee-3e49d1e25047",
+      "courseName": "机械制图AI（科创班）",
+      "sessionDate": "2026-09-14",
+      "sessionTime": null,
+      "title": "23123",
+      "content": "12312313123",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789910695892,
+      "updatedAt": 1789910695892
     }
   ],
-  "courseGuid": "C-8XAD4554"
+  "courseGuid": "C-7ZXG2FE3",
+  "courseKey": "CK-V924U3V2XW"
 }
