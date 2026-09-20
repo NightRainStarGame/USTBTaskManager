@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import { getSemesterWeek } from '@/utils/lunar';
@@ -925,6 +925,9 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
   const due = dayjs(req.due_date);
   const overdue = due.isBefore(dayjs(), 'day') && req.status !== 'done';
   const typeIcon = { homework: '📝', exam: '📚', project: '🛠', reading: '📖', other: '📌' }[req.type] || '📌';
+  // v1.1.6：作业内容可展开查看（同步下来的作业内容存在 description 列，此前 UI 从不渲染）
+  const [expanded, setExpanded] = useState(false);
+  const hasContent = !!(req.description || '').trim();
 
   const cycle = async () => {
     const next = req.status === 'pending' ? 'in_progress' : req.status === 'in_progress' ? 'done' : 'pending';
@@ -947,7 +950,8 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
   };
 
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-md bg-ink-base/40 border hover:border-neon-green/30 transition-colors ${overdue ? 'border-neon-danger/40' : 'border-neon-green/10'}`}>
+    <div className={`rounded-md bg-ink-base/40 border hover:border-neon-green/30 transition-colors ${overdue ? 'border-neon-danger/40' : 'border-neon-green/10'}`}>
+      <div className="flex items-center gap-3 p-3">
       <button onClick={cycle} className="shrink-0">
         {req.status === 'done' ? (
           <div className="w-5 h-5 rounded border-2 border-neon-green bg-neon-green/30 flex items-center justify-center shadow-neon-green"><span className="text-neon-green text-xs">✓</span></div>
@@ -956,7 +960,16 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
         )}
       </button>
       <span className="text-lg">{typeIcon}</span>
-      <div className="flex-1 min-w-0">
+      {hasContent && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="shrink-0 btn-ghost p-0.5 text-text-dim hover:text-neon-green"
+          title={expanded ? '收起作业内容' : '展开作业内容'}
+        >
+          <ChevronDown size={12} className={`transition-transform ${expanded ? '' : '-rotate-90'}`} />
+        </button>
+      )}
+      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasContent && setExpanded(v => !v)}>
         <div className={`text-sm truncate ${req.status === 'done' ? 'line-through text-text-dim' : ''}`}>
           {req.source === 'github' && (
             <span className="inline-flex items-center gap-0.5 mr-1 px-1 py-px rounded text-[9px] font-mono border border-neon-green/40 text-neon-green align-middle" title={`来自 GitHub 同步${req.publisher ? ' · 发布人 ' + req.publisher : ''}${req.session_date ? ' · 上课 ' + req.session_date : ''}`}>
@@ -974,13 +987,25 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
       </span>
       <button onClick={onEdit} className="btn-ghost p-1"><Pencil size={12} /></button>
       <button onClick={del} className="btn-ghost p-1 text-neon-danger"><Trash2 size={12} /></button>
+      </div>
+      {expanded && hasContent && (
+        <div className="px-3 pb-3 pt-1 border-t border-neon-green/10">
+          <div className="font-mono text-[9px] text-text-dim mb-1">
+            作业内容{req.publisher ? ` · 发布人 ${req.publisher}` : ''}{req.session_date ? ` · 上课 ${req.session_date}` : ''}
+          </div>
+          <div className="text-xs text-text-secondary whitespace-pre-wrap break-words leading-relaxed">{req.description}</div>
+        </div>
+      )}
     </div>
   );
 }
 
 function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement; courseId: number; onClose: () => void; onSaved: () => Promise<void> }) {
   const isNew = req.id === 0;
+  // v1.1.6：作业内容（description）。同步条目（source='github'）只读——本地改动会在下次接收时被远端覆盖
+  const isSynced = req.source === 'github';
   const [title, setTitle] = useState(req.title || '');
+  const [description, setDescription] = useState(req.description || '');
   const [type, setType] = useState(req.type || 'homework');
   const [dueDate, setDueDate] = useState(dayjs(req.due_date || Date.now()).format('YYYY-MM-DDTHH:mm'));
   const [priority, setPriority] = useState(req.priority || 2);
@@ -999,6 +1024,7 @@ function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement
     try {
       const payload: Partial<Requirement> = {
         course_id: courseId, title: title.trim(), type,
+        description: description.trim() || null,
         due_date: dueMs,
         priority, status,
         estimated_hours: estimatedHours ? Number(estimatedHours) : null,
@@ -1023,6 +1049,16 @@ function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement
     <Modal title={isNew ? '添加作业' : '编辑作业'} onClose={onClose} footer={<><button onClick={onClose} className="btn-ghost">取消</button><button onClick={submit} disabled={busy} className="btn-neon btn-neon-yellow">{busy ? '保存中…' : '保存'}</button></>}>
       <div className="space-y-3">
         <Field label="作业标题 *"><input value={title} onChange={(e) => setTitle(e.target.value)} className="input-neon" placeholder="如：第三章习题 1-10" /></Field>
+        <Field label={isSynced ? '作业内容（来自同步 · 只读）' : '作业内容'}>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            readOnly={isSynced}
+            rows={4}
+            className="input-neon text-xs leading-relaxed"
+            placeholder={isSynced ? '这条作业来自同步，内容由发布方维护（展开作业条目也能直接查看）' : '作业的具体内容、要求、页码等（选填；接收方能完整看到）'}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="类型">
             <select value={type} onChange={(e) => setType(e.target.value as any)} className="input-neon">
@@ -1608,6 +1644,7 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
   const [result, setResult] = useState<{
     ok: boolean; error?: string; source?: string; courseName?: string; courseNotFound?: boolean;
     syncCode?: string;
+    courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
     entries: number; created: number; updated: number;
     coursesTouched: number; coursesCreated: string[];
     items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
@@ -1619,12 +1656,13 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
     window.taskAPI.homework.config().then(cfg => setLastSync(cfg.lastSync));
   }, []);
 
-  const run = async (overrideCode?: string) => {
+  const run = async (overrideCode?: string, chooseCourseId?: number) => {
     const code = (overrideCode ?? syncCode).trim();
     if (busy || !code) return;
     setBusy(true); setResult(null);
     try {
-      const r = await window.taskAPI.homework.receive(code);
+      // v1.1.6：chooseCourseId = 同名多课时用户手选的课程；首次接收不传，由后端按 guid/课程名匹配
+      const r = await window.taskAPI.homework.receive(code, chooseCourseId);
       setResult(r);
       if (r.ok) {
         setLastSync(r.syncedAt);
@@ -1694,6 +1732,36 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
           />
         </Field>
 
+        {/* 同名多门课程：弹窗手选挂载目标（v1.1.6） */}
+        {result && !result.ok && (result.courseCandidates?.length ?? 0) > 0 && (
+          <div className="p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
+            <div className="flex items-center gap-2 text-neon-yellow font-bold text-sm">
+              <AlertCircle size={15} /> 同名课程 · 请选择挂载目标
+            </div>
+            <div className="font-mono text-xs text-text-secondary">
+              本地有 {result.courseCandidates!.length} 门「<span className="text-neon-yellow font-bold">{result.courseName}</span>」，这个作业包没有可辨别的课程标识（老格式包），不会自动乱挂。
+            </div>
+            <div className="space-y-1">
+              {result.courseCandidates!.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => run(result.syncCode || syncCode, c.id)}
+                  disabled={busy}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded border border-neon-green/20 hover:border-neon-green/60 bg-ink-base/40 text-left transition-colors"
+                >
+                  <span className="text-sm text-text-secondary truncate">{c.name}</span>
+                  {c.code && <span className="font-mono text-[10px] text-text-dim shrink-0">{c.code}</span>}
+                  {c.instructor && <span className="font-mono text-[10px] text-text-dim shrink-0">· {c.instructor}</span>}
+                  <span className="ml-auto font-mono text-[9px] text-neon-green shrink-0">选它 →</span>
+                </button>
+              ))}
+            </div>
+            <div className="font-mono text-[10px] text-text-dim">
+              提示：让发布方用 v1.1.6+ 重新发布一次，包里会带课程标识，以后就能自动精确挂载。
+            </div>
+          </div>
+        )}
+
         {/* 课程缺失：弹窗告知 */}
         {result && !result.ok && result.courseNotFound && (
           <div className="p-3 rounded-md border border-neon-yellow/40 bg-neon-yellow/5 space-y-2">
@@ -1755,7 +1823,7 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
         )}
 
         {/* 其它失败 */}
-        {result && !result.ok && !result.courseNotFound && (
+        {result && !result.ok && !result.courseNotFound && (result.courseCandidates?.length ?? 0) === 0 && (
           <div className="p-2 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap">✗ {result.error || '接收失败'}</div>
         )}
       </div>

@@ -178,6 +178,8 @@ export interface HomeworkEntry {
 interface HomeworkFile {
   syncCode: string;
   courseName: string;
+  /** v1.1.6：发布方课程的 guid（接收端优先按它精确挂载，避开同名歧义；老包没有） */
+  courseGuid?: string;
   createdAt: number;
   updatedAt: number;
   entries: HomeworkEntry[];
@@ -195,6 +197,8 @@ export interface PublishPayload {
   publishCode?: string;
   /** v1.1.4：发布目标。github（默认，需令牌）| cloud（北科云盘，需校园网） */
   target?: 'github' | 'cloud';
+  /** v1.1.6：发布课程本地 ID（主进程据此查/生成 guid 写进包里，接收端精确挂载） */
+  courseId?: number;
   courseName: string;
   sessionDate: string;
   sessionTime?: string | null;
@@ -220,6 +224,8 @@ export interface SyncResult {
   syncedAt: number;
   /** v1.1.3 起：远端 bundle 引用了一个本地没有的课程，让前端弹窗询问是否新建 */
   courseNotFound?: boolean;
+  /** v1.1.6：本地存在多门同名课程且包里无 guid 可辨 → 返回候选让前端弹窗手选 */
+  courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
 }
 
 // ==================== settings 读写 ====================
@@ -399,6 +405,18 @@ function getCourseSyncCode(db: DB, courseId: number | null | undefined): string 
   return normalizeSyncCode(getSetting(db, SETTING_COURSE_SYNC_PREFIX + courseId)) || '';
 }
 
+/** v1.1.6：取课程 guid（db 迁移会给所有课程回填；这里兜底自生成一次） */
+function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): string {
+  if (!courseId) return '';
+  const row = db.prepare('SELECT guid FROM courses WHERE id = ?').get(courseId) as { guid?: string | null } | undefined;
+  const g = (row?.guid || '').trim();
+  if (g) return g;
+  let fresh = 'C-';
+  for (let i = 0; i < 8; i++) fresh += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  db.prepare('UPDATE courses SET guid = ? WHERE id = ?').run(fresh, courseId);
+  return fresh;
+}
+
 /**
  * 发布/更新一条作业到 homework/<syncCode>.json。
  * 幂等：同一课程同一上课日期 + 同标题 → 覆盖更新远端已有条目（保留其 id，接收端无感）。
@@ -435,6 +453,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   const target = payload.target === 'cloud' ? 'cloud' : 'github';
   const publisher = getSetting(db, SETTING_PUBLISHER).trim() || '佚名';
+  const courseGuid = getOrCreateCourseGuid(db, payload.courseId ?? (payload as any).courseId);
 
   const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
 
@@ -455,7 +474,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
         }
       }
     } catch { /* 云盘读失败按首次发布处理 */ }
-    const merged = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher });
+    const merged = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
     // 匿名无法覆盖同名 → 每次发布写一个新文件 <syncCode>-<时间戳>.json
     const cloudName = `${syncCode}-${Date.now()}.json`;
     try {
@@ -505,7 +524,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     }
   }
 
-  const { file: mergedFile, entry, existing } = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher });
+  const { file: mergedFile, entry, existing } = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
 
   // 4) 写回（一次 409 冲突重试）
   const put = async (currentSha?: string) => {
@@ -543,10 +562,10 @@ function mergeEntry(
   base: HomeworkFile,
   ctx: {
     syncCode: string; courseName: string; sessionDate: string; title: string;
-    payload: PublishPayload; publisher: string;
+    payload: PublishPayload; publisher: string; courseGuid: string;
   }
 ): { file: HomeworkFile; entry: HomeworkEntry; existing: HomeworkEntry | undefined } {
-  const { syncCode, courseName, sessionDate, title, payload, publisher } = ctx;
+  const { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid } = ctx;
   const now = Date.now();
   const existing = base.entries.find(
     (e) => e.sessionDate === sessionDate && e.title === title
@@ -569,6 +588,8 @@ function mergeEntry(
     ? base.entries.map((e) => (e.id === entry.id ? entry : e))
     : [...base.entries, entry];
   file.syncCode = syncCode;
+  // v1.1.6：以最新发布为准更新包级 guid（老包第一次被新版发布后就有 guid 了）
+  if (courseGuid) file.courseGuid = courseGuid;
   file.courseName = courseName;
   file.updatedAt = now;
   file.entries.sort((a, b) => (a.sessionDate < b.sessionDate ? -1 : a.sessionDate > b.sessionDate ? 1 : 0));
@@ -590,8 +611,11 @@ export async function fetchRemoteEntries(db: DB, syncCode: string): Promise<{ ok
 }
 
 // ==================== 接收 ====================
-/** 按同步作业码拉取一个作业包并写入本地课程（按课程名匹配，缺失自动建课） */
-export async function receiveHomework(db: DB, rawSyncCode: string): Promise<SyncResult> {
+/**
+ * 按同步作业码拉取一个作业包并写入本地课程。
+ * v1.1.6 课程匹配链：用户手选 courseId > 包内 courseGuid 精确命中 > 同名唯一 > 同名多个（返回候选让前端弹窗）> 无同名（courseNotFound）。
+ */
+export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseId?: number | null): Promise<SyncResult> {
   const result: SyncResult = {
     ok: false, entries: 0, created: 0, updated: 0,
     coursesTouched: 0, coursesCreated: [], items: [], syncedAt: Date.now(),
@@ -626,8 +650,35 @@ export async function receiveHomework(db: DB, rawSyncCode: string): Promise<Sync
     return result;
   }
 
-  // 课程匹配：先找同名本地课程；没有则 **不再自动建课**，让前端弹窗询问用户（避免误建空课）
-  const hitCourse = db.prepare('SELECT id FROM courses WHERE TRIM(name) = ? LIMIT 1').get(courseName) as { id: number } | undefined;
+  // ===== v1.1.6 课程匹配链 =====
+  // 1) 用户在前端弹窗里手选了课程（同名多课时前端传回 chooseCourseId）→ 直接用
+  let hitCourse: { id: number } | undefined;
+  if (chooseCourseId) {
+    hitCourse = db.prepare('SELECT id FROM courses WHERE id = ?').get(chooseCourseId) as { id: number } | undefined;
+    if (!hitCourse) {
+      result.error = '所选课程不存在（可能刚被删除），请重试';
+      return result;
+    }
+  } else {
+    // 2) 包内 guid 精确命中（v1.1.6 起发布包都带；同名课程靠它区分）
+    const courseGuid = (file.courseGuid || '').trim();
+    if (courseGuid) {
+      hitCourse = db.prepare('SELECT id FROM courses WHERE guid = ?').get(courseGuid) as { id: number } | undefined;
+    }
+    // 3) guid 没命中（老包 / 接收方没同步过这门课）→ 按课程名兜底
+    if (!hitCourse) {
+      const sameName = db.prepare('SELECT id, name, code, instructor FROM courses WHERE TRIM(name) = ?').all(courseName) as Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
+      if (sameName.length === 1) {
+        hitCourse = sameName[0];
+      } else if (sameName.length > 1) {
+        // 同名多门且无法辨别 → 让前端弹窗手选，绝不静默挂到第一门
+        result.courseCandidates = sameName;
+        result.error = `本地有 ${sameName.length} 门同名课程「${courseName}」，且作业包无法辨别是哪一门，请选择挂载目标`;
+        return result;
+      }
+    }
+  }
+  // 4) 没有任何匹配 → 前端弹窗询问是否新建（避免误建空课）
   if (!hitCourse) {
     result.courseName = courseName;
     result.courseNotFound = true;
@@ -754,9 +805,9 @@ export function registerHomework(db: DB) {
     }
   });
 
-  ipcMain.handle('homework:receive', async (_e, syncCode: string) => {
+  ipcMain.handle('homework:receive', async (_e, syncCode: string, chooseCourseId?: number | null) => {
     try {
-      return await receiveHomework(db, syncCode);
+      return await receiveHomework(db, syncCode, chooseCourseId);
     } catch (e: any) {
       return { ok: false, error: describeError(e), entries: 0, created: 0, updated: 0, coursesTouched: 0, coursesCreated: [], items: [], syncedAt: Date.now() } as SyncResult;
     }

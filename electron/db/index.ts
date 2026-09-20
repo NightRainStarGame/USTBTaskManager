@@ -209,6 +209,23 @@ function runMigrations(db: Database.Database) {
   // courses 表新增标签字段
   addColumnIfMissing(db, 'courses', 'tags', "TEXT DEFAULT '[]'");
 
+  // v1.1.6：课程 guid（作业同步精确挂载——同名课程靠它区分，发布包带上 courseGuid）
+  addColumnIfMissing(db, 'courses', 'guid', 'TEXT');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_courses_guid ON courses(guid) WHERE guid IS NOT NULL`);
+  {
+    // 存量课程回填 8 位 guid（C- 前缀 + 作业码同款字符表，避开 0/O/1/I/L）
+    const ALPHA = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+    const rows = db.prepare(`SELECT id FROM courses WHERE guid IS NULL OR TRIM(guid) = ''`).all() as Array<{ id: number }>;
+    if (rows.length) {
+      const upd = db.prepare('UPDATE courses SET guid = ? WHERE id = ?');
+      for (const r of rows) {
+        let g = 'C-';
+        for (let i = 0; i < 8; i++) g += ALPHA[Math.floor(Math.random() * ALPHA.length)];
+        upd.run(g, r.id);
+      }
+    }
+  }
+
   // 增量迁移：events 表新增字段（向后兼容老数据库）
   // 注意：SQLite ALTER TABLE ADD COLUMN 不支持外键约束，这里只做纯 INTEGER 字段
   addColumnIfMissing(db, 'events', 'all_day', 'INTEGER DEFAULT 0');
