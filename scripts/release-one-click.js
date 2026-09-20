@@ -116,21 +116,20 @@ ok('已写入');
 // ---------- 3. build ----------
 let exePath = null;
 /**
- * 幂等：--resume 自动启用 --skip-build，并校验 leastversion/ 已有 exe 的 sha256
- * 与 latest.json 对齐；如未发版过（latest.json sha256 不同）则提示重 build。
+ * v1.1.7 修正：--resume 一律跳过 build（step 4 会对产物做 MZ/Nullsoft/体积校验，
+ * 后续步骤全部幂等）。
+ * 旧逻辑的坑：resume 检查的是 leastversion/ 里的 exe——但 build 完成后、滚动目录
+ * 之前中断的场景（最常见！build 尾部 .nsis.7z safe-delete 报错就死在这一步），
+ * exe 还在 release-v<v>/ 里没滚到 leastversion/，旧逻辑会误判"重 build"，
+ * 而重跑 build 到已有产物的目录会卡死 app-builder。
  */
 if (RESUME && !SKIP_BUILD) {
+  SKIP_BUILD = true;
   const leastExe = path.join(leastDir, DIST_NAME(version));
   if (fs.existsSync(leastExe)) {
-    const leastSha = crypto.createHash('sha256').update(fs.readFileSync(leastExe)).digest('hex');
-    if (latest.sha256 === leastSha) {
-      SKIP_BUILD = true;
-      console.log(`    [resume] leastversion/${DIST_NAME(version)} sha256 与 latest.json 一致，自动复用`);
-    } else {
-      console.log(`    [resume] leastversion/ 已有 ${DIST_NAME(version)} 但 sha256 与 latest.json 不一致 → 重 build`);
-    }
+    console.log(`    [resume] leastversion/ 已有 ${DIST_NAME(version)}，复用（step 4 会校验）`);
   } else {
-    console.log(`    [resume] leastversion/${DIST_NAME(version)} 不存在 → 重 build`);
+    console.log(`    [resume] 复用 release-v${version}/ 里的现成产物（跳过 build）`);
   }
 }
 if (SKIP_BUILD) {
