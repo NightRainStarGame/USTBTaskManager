@@ -199,6 +199,8 @@ export interface SyncResult {
   courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
   /** v1.1.9+：跨课程混包中没找到目标课程而跳过的条目（课程级挂载精度提示） */
   skipped?: Array<{ title: string; courseName: string; reason: string }>;
+  /** v1.2.0+：接收时自动合并掉的本地重复条目数（同课程+同上课日+同标题的同步作业） */
+  deduped?: number;
 }
 
 function getSetting(db: DB, key: string): string {
@@ -362,15 +364,19 @@ const anyshareSource: HomeworkSource = {
 /** 多份历史快照合并成一份（条目级去重：id 命中或 课程名+日期+标题 命中 → 后写的覆盖） */
 export function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
   const byId = new Map<string, HomeworkEntry>();
-  const keyToId = new Map<string, string>();
+  const idOfKey = new Map<string, string>();
   for (const f of bundles) {
     for (const e of f.entries || []) {
       if (!e || !e.title) continue;
       const courseName = e.courseName || f.courseName || '';
       const key = `${courseName}|${e.sessionDate || ''}|${e.title}`;
       const id = e.id || key;
+      // v1.2.0：同键不同 id（两份快照各生成过一条，如单侧发布失败后重发）
+      // → 旧的让位、只留最新一份，否则接收端会出现两条重复
+      const priorId = idOfKey.get(key);
+      if (priorId && priorId !== id) byId.delete(priorId);
       byId.set(id, { ...e, id, courseName });
-      keyToId.set(key, id);
+      idOfKey.set(key, id);
     }
   }
   const meta = preferFileMetaOfLast ? bundles[bundles.length - 1] : bundles[0];
@@ -706,6 +712,8 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
       sha = meta.sha;
       file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
       if (!Array.isArray(file.entries)) file.entries = [];
+      // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
+      file = mergeBundleFiles([file], syncCode);
       file.courseName = courseName;
       if (courseKey && !file.courseKey) file.courseKey = courseKey;
       if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
@@ -755,6 +763,8 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
         sha = meta.sha;
         const fresh = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
         if (Array.isArray(fresh.entries)) {
+          // v1.2.0：先自愈历史重复条目，再合并本次条目
+          fresh.entries = mergeBundleFiles([fresh], syncCode).entries;
           // 在最新的远端包基础上把所有本次条目再合并一次
           for (const e of normalizedEntries) {
             const rebased = mergeEntry(fresh, {
@@ -870,7 +880,9 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
     return result;
   }
 
-  const { source, file } = hit;
+  const { source, file: rawFile } = hit;
+  // v1.2.0：包内自愈——单侧快照里历史遗留的「同课程+同日期+同标题但 id 不同」重复条目收敛为一条
+  const file = mergeBundleFiles([rawFile], syncCode);
   result.source = source;
   result.courseName = file.courseName;
 
@@ -974,8 +986,32 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
       ? e.dueDate
       : new Date(`${e.sessionDate || '1970-01-01'}T23:59:00`).getTime();
     const rid = multiCourse ? `${e.id}#c${courseId}` : e.id;
-    const local = db.prepare('SELECT id FROM course_requirements WHERE remote_id = ?').get(rid) as { id: number } | undefined;
+    const ridAlt = multiCourse ? e.id : `${e.id}#c${courseId}`;
+    // v1.2.0：remote_id 新旧格式（带/不带 #c 后缀）都认，且限定本课程，防止格式漂移导致重复插入
+    let local = db.prepare(
+      'SELECT id, remote_id FROM course_requirements WHERE course_id = ? AND remote_id IN (?, ?)'
+    ).get(courseId, rid, ridAlt) as { id: number; remote_id: string } | undefined;
+    if (!local) {
+      // 兜底：同课程+同上课日+同标题的同步条目（远端条目 id 重建、历史重复都能收敛到一条）
+      local = db.prepare(
+        `SELECT id, remote_id FROM course_requirements
+         WHERE course_id = ? AND session_date IS ? AND TRIM(title) = TRIM(?) AND source != 'local'
+         ORDER BY id LIMIT 1`
+      ).get(courseId, e.sessionDate || null, e.title) as { id: number; remote_id: string } | undefined;
+    }
     if (local) {
+      // 愈合历史重复：同键多余的同步行直接删掉（用户已见「出现两次」的场景）
+      const dupes = (db.prepare(
+        `SELECT id FROM course_requirements
+         WHERE course_id = ? AND session_date IS ? AND TRIM(title) = TRIM(?) AND source != 'local' AND id != ?`
+      ).all(courseId, e.sessionDate || null, e.title, local.id) as Array<{ id: number }>);
+      if (dupes.length) {
+        db.prepare(`DELETE FROM course_requirements WHERE id IN (${dupes.map((d) => d.id).join(',')})`).run();
+        result.deduped = (result.deduped || 0) + dupes.length;
+      }
+      if (local.remote_id !== rid) {
+        db.prepare('UPDATE course_requirements SET remote_id = ? WHERE id = ?').run(rid, local.id);
+      }
       db.prepare(
         `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, session_date=?, publisher=?
          WHERE id=?`

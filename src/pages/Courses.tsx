@@ -1763,6 +1763,8 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
     items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
     /** v1.1.9+：跨课程混包中缺课程而跳过的条目 */
     skipped?: Array<{ title: string; courseName: string; reason: string }>;
+    /** v1.2.0+：接收时自动合并掉的本地重复条目数 */
+    deduped?: number;
   } | null>(null);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -1933,6 +1935,9 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
               )}
               {result.coursesCreated.length > 0 && (
                 <div className="font-mono text-[10px] text-neon-yellow mt-1">本次新建课程：{result.coursesCreated.join('、')}</div>
+              )}
+              {(result.deduped ?? 0) > 0 && (
+                <div className="font-mono text-[10px] text-neon-yellow mt-1">已自动合并 {result.deduped} 条重复作业（历史同步产生的重复已清理）</div>
               )}
             </div>
             {result.items.length > 0 && (
