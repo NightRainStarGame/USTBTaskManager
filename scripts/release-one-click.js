@@ -3,7 +3,7 @@
  * 一键发版脚本（v1.1.6 起）
  *
  * 用法：
- *   node scripts/release-one-click.js <版本号> --notes-file <path> [--execute] [--skip-build] [--no-release-page]
+ *   node scripts/release-one-click.js <版本号> --notes-file <path> [--execute] [--skip-build] [--no-release-page] [--no-cloud] [--resume]
  *   npm run release:one -- 1.1.6 --notes-file release-notes.md --execute
  *
  * 默认 dry-run（只预览计划，不改任何东西）；加 --execute 才真正执行。
@@ -14,9 +14,15 @@
  *   3. npm run build:exe（输出自动进 release-v<版本号>/，见 package.json directories.output）
  *   4. 校验 Setup exe（MZ 头 + Nullsoft 签名 + 体积 60~200MB）
  *   5. 分发目录滚动：leastversion 旧包 → oldversion（oldversion 只留这一个），新包 → leastversion/
- *   6. 更新 latest.json（version / sha256 / size / url / fileName / notes / releaseDate）
- *   7. git add -A + commit + push origin main
- *   8. （可选）创建 GitHub Release 并上传附件（--no-release-page 跳过）
+ *      —— 容错：safe-delete 拦 fs.rmSync 时不抛错，只 warn（v1.1.6 实测）
+ *   5b. 增量更新：asar 哈希 + 补丁 zip（v1.1.6 块 4a；首版/缺缓存时跳过）
+ *   6. 更新 latest.json（version / sha256 / size / url / fileName / notes / releaseDate / patches / asarSha256）
+ *   7. git add -A + commit + push origin main（已 commit + up to date 自动跳过）
+ *   8. 创建 GitHub Release + 上传附件（Setup exe + patch zip，幂等：已存在只补附件）
+ *   9. 上传到北科云盘（AnyShare 校园网内最快；失败不影响主流程）
+ *
+ * 续跑：--resume 自动启用 --skip-build 并校验 leastversion/ sha256 与 latest.json 对齐；
+ *       中途失败再跑一次即可（已成功的 commit / Release / 附件 全部幂等）。
  *
  * 环境要求：git 凭据里存有 GitHub token（git credential fill 可取到，repo scope）。
  */
@@ -37,9 +43,10 @@ const ASAR_PATH = (v) => path.join(ROOT, `release-v${v}`, 'win-unpacked', 'resou
 const argv = process.argv.slice(2);
 const version = argv.find((a) => /^\d+\.\d+\.\d+$/.test(a));
 const EXECUTE = argv.includes('--execute');
-const SKIP_BUILD = argv.includes('--skip-build');
+let SKIP_BUILD = argv.includes('--skip-build');
 const NO_RELEASE_PAGE = argv.includes('--no-release-page');
 const NO_CLOUD = argv.includes('--no-cloud');
+const RESUME = argv.includes('--resume'); // 续跑：自动跳过 build，已就位的产物复用
 const notesFileIdx = argv.indexOf('--notes-file');
 const notesFile = notesFileIdx >= 0 ? argv[notesFileIdx + 1] : null;
 const notesInlineIdx = argv.indexOf('--notes');
@@ -50,8 +57,9 @@ function step(msg) { console.log(`\n==> ${msg}`); }
 function ok(msg) { console.log(`    ✓ ${msg}`); }
 
 if (!version) {
-  console.log('用法: node scripts/release-one-click.js <X.Y.Z> --notes-file <path> [--execute] [--skip-build] [--no-release-page]');
+  console.log('用法: node scripts/release-one-click.js <X.Y.Z> --notes-file <path> [--execute] [--skip-build] [--no-release-page] [--no-cloud] [--resume]');
   console.log('      npm run release:one -- 1.1.6 --notes-file notes.md --execute');
+  console.log('      npm run release:one -- 1.1.6 --notes-file notes.md --resume    # 续跑，自动跳过 build + 校验产物 sha256');
   die('缺少版本号参数（形如 1.1.6）');
 }
 
@@ -107,6 +115,24 @@ ok('已写入');
 
 // ---------- 3. build ----------
 let exePath = null;
+/**
+ * 幂等：--resume 自动启用 --skip-build，并校验 leastversion/ 已有 exe 的 sha256
+ * 与 latest.json 对齐；如未发版过（latest.json sha256 不同）则提示重 build。
+ */
+if (RESUME && !SKIP_BUILD) {
+  const leastExe = path.join(leastDir, DIST_NAME(version));
+  if (fs.existsSync(leastExe)) {
+    const leastSha = crypto.createHash('sha256').update(fs.readFileSync(leastExe)).digest('hex');
+    if (latest.sha256 === leastSha) {
+      SKIP_BUILD = true;
+      console.log(`    [resume] leastversion/${DIST_NAME(version)} sha256 与 latest.json 一致，自动复用`);
+    } else {
+      console.log(`    [resume] leastversion/ 已有 ${DIST_NAME(version)} 但 sha256 与 latest.json 不一致 → 重 build`);
+    }
+  } else {
+    console.log(`    [resume] leastversion/${DIST_NAME(version)} 不存在 → 重 build`);
+  }
+}
 if (SKIP_BUILD) {
   step('--skip-build：跳过构建，直接找现成产物');
   const cand = [artifact, path.join(buildDir, DIST_NAME(version))];
@@ -138,12 +164,21 @@ fs.mkdirSync(leastDir, { recursive: true });
 fs.mkdirSync(oldDir, { recursive: true });
 const prevInLeast = fs.readdirSync(leastDir).filter((f) => f.endsWith('.exe'));
 let prevDistVersion = null; // 用于块 4a 补丁生成
+/**
+ * safe-delete 容错：host safe-delete shim 拦 rm/fs.rmSync 可能抛 EBUSY/TRASH 错误，
+ * 但新包已经写到 leastversion/，旧包留 oldversion/ 不影响主流程（leastversion 直链已可
+ * 用，App 可更新）。所以把"移除旧包"包成 best-effort：失败只 warn，不让脚本中途死。
+ */
+function safeRemove(p, label) {
+  try { fs.rmSync(p, { force: true }); }
+  catch (e) { console.log(`    [!] ${label || path.basename(p)} 清理失败：${e.message.split('\n')[0]}（不影响发版主流程）`); }
+}
 if (prevInLeast.length) {
   // leastversion 现有包 → oldversion（oldversion 旧内容先移除，只留一个回退位）
   for (const f of fs.readdirSync(oldDir)) {
     const old = path.join(oldDir, f);
     console.log(`    移除旧回退包 ${f}`);
-    fs.rmSync(old, { force: true });
+    safeRemove(old, `oldversion/${f}`);
   }
   for (const f of prevInLeast) {
     // 推断旧版本号（"TaskManager-Setup-1.1.5.exe" → "1.1.5"）
@@ -151,7 +186,7 @@ if (prevInLeast.length) {
     if (m) prevDistVersion = m[1];
     console.log(`    ${f}: leastversion/ -> oldversion/`);
     fs.copyFileSync(path.join(leastDir, f), path.join(oldDir, f));
-    fs.rmSync(path.join(leastDir, f), { force: true });
+    safeRemove(path.join(leastDir, f), `leastversion/${f}`);
   }
 } else {
   console.log('    leastversion/ 为空（首版发布）');
@@ -258,15 +293,17 @@ run('git', ['commit', '-m', `release: v${version}\n\n${notes.split('\n')[0]}`]);
 const pushOut = run('git', ['push', 'origin', 'main']);
 ok(`push 完成${pushOut.includes('up to date') ? '（无变更）' : ''}`);
 
-// ---------- 8. GitHub Release 页（可选） ----------
+// ---------- 8. GitHub Release 页 + 附件上传（可选） ----------
 if (!NO_RELEASE_PAGE) {
-  step('创建 GitHub Release（失败不影响发版，可手动补）');
+  step('创建 GitHub Release + 上传附件（exe + patch zip）');
   try {
     const token = getToken();
     const tag = `v${version}`;
+    let releaseId = null;
     const exists = JSON.parse(curlJson(token, `${REPO_API}/releases/tags/${tag}`, 'GET'));
     if (exists && exists.id) {
-      console.log(`    Release ${tag} 已存在（id=${exists.id}），只补附件`);
+      releaseId = exists.id;
+      console.log(`    Release ${tag} 已存在（id=${releaseId}），补附件`);
     } else {
       const createBody = JSON.stringify({
         tag_name: tag, name: `TaskManager v${version}`, body: notes,
@@ -275,11 +312,46 @@ if (!NO_RELEASE_PAGE) {
       fs.writeFileSync(path.join(ROOT, '_rel-body.tmp.json'), createBody);
       const created = JSON.parse(curlJson(token, REPO_API + '/releases', 'POST', path.join(ROOT, '_rel-body.tmp.json')));
       if (!created.id) throw new Error(created.message || 'create failed');
-      console.log(`    Release id=${created.id}`);
+      releaseId = created.id;
+      console.log(`    Release id=${releaseId}`);
     }
-    ok('Release 页就绪（附件上传如需，用 gh 或手动；本脚本不阻塞在此）');
+
+    // 上传附件：Setup exe + 增量补丁 zip（v1.1.6 块 4）
+    const assetsToUpload = [
+      { path: path.join(leastDir, DIST_NAME(version)), name: DIST_NAME(version), type: 'application/octet-stream' },
+    ];
+    if (patchInfo) {
+      assetsToUpload.push({
+        path: path.join(ROOT, patchInfo.path),
+        name: path.basename(patchInfo.path),
+        type: 'application/zip',
+      });
+    }
+    for (const a of assetsToUpload) {
+      if (!fs.existsSync(a.path)) {
+        console.log(`    [!] 附件不存在，跳过 ${a.name}`);
+        continue;
+      }
+      const sizeMB = fs.statSync(a.path).size / 1024 / 1024;
+      console.log(`    上传 ${a.name}（${sizeMB.toFixed(1)} MB）…`);
+      const uploadUrl = `https://uploads.github.com/repos/NightRainStarGame/USTBTaskManager/releases/${releaseId}/assets?name=${encodeURIComponent(a.name)}`;
+      const args = ['-sS', '-X', 'POST',
+        '-H', `Authorization: Bearer ${token}`,
+        '-H', 'Content-Type: ' + a.type,
+        '--data-binary', `@${a.path}`,
+        uploadUrl];
+      const out = run('curl', args);
+      try {
+        const j = JSON.parse(out);
+        if (j.id) console.log(`      ✓ asset id=${j.id} → ${j.browser_download_url}`);
+        else throw new Error(j.message || 'no id in response');
+      } catch (e) {
+        throw new Error(`上传 ${a.name} 失败：${e.message}`);
+      }
+    }
+    ok('Release 页 + 附件就绪');
   } catch (e) {
-    console.log(`    [!] Release 页创建失败：${e.message}（leastversion 直链 + latest.json 已可用，不影响 App 更新）`);
+    console.log(`    [!] Release 页/附件失败：${e.message}（leastversion 直链 + latest.json 已可用，不影响 App 更新）`);
   } finally {
     try { fs.rmSync(path.join(ROOT, '_rel-body.tmp.json'), { force: true }); } catch {}
   }
