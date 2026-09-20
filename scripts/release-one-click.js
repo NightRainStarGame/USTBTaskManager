@@ -33,7 +33,9 @@ const ROOT = path.resolve(__dirname, '..');
 const REPO_RAW = 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main';
 const REPO_API = 'https://api.github.com/repos/NightRainStarGame/USTBTaskManager';
 const DIST_NAME = (v) => `TaskManager-Setup-${v}.exe`;
-const ASAR_PATH = (v) => path.join(ROOT, `release-v${v}`, 'win-unpacked', 'resources', 'app.asar');
+// RELEASE_SUFFIX 让 buildDir 和 ASAR_PATH 同时偏移（绕开 safe-delete 卡死的旧产物）
+const REL_SUFFIX = process.env.RELEASE_SUFFIX || '';
+const ASAR_PATH = (v) => path.join(ROOT, `release-v${v}${REL_SUFFIX}`, 'win-unpacked', 'resources', 'app.asar');
 
 const argv = process.argv.slice(2);
 const version = argv.find((a) => /^\d+\.\d+\.\d+$/.test(a));
@@ -67,7 +69,7 @@ const latestPath = path.join(ROOT, 'latest.json');
 const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
 const leastDir = path.join(ROOT, 'leastversion');
 const oldDir = path.join(ROOT, 'oldversion');
-const buildDir = path.join(ROOT, `release-v${version}` + (process.env.RELEASE_SUFFIX || ''));
+const buildDir = path.join(ROOT, `release-v${version}${REL_SUFFIX}`);
 const artifact = path.join(buildDir, `TaskManager Setup ${version}.exe`);
 
 step(`计划：发布 v${version}${EXECUTE ? '（--execute）' : '（dry-run）'}`);
