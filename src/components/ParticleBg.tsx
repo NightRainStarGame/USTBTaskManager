@@ -79,7 +79,8 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
       hearts = [];
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      const n = Math.max(18, Math.round(density * 0.5)); // 爱心更大更醒目，数量减半
+      // v1.1.9：更粉更密——数量 0.5x → 0.8x，透明度抬高，尺寸稍大
+      const n = Math.max(26, Math.round(density * 0.8));
       for (let i = 0; i < n; i++) {
         hearts.push({
           x: Math.random() * w,
@@ -88,8 +89,8 @@ export default function ParticleBg({ density = 60, className = '' }: ParticleBgP
           swayAmp: 8 + Math.random() * 22,
           swayPhase: Math.random() * Math.PI * 2,
           swaySpeed: 0.004 + Math.random() * 0.01,
-          size: 5 + Math.random() * 9,
-          alpha: 0.25 + Math.random() * 0.45,
+          size: 6 + Math.random() * 10,
+          alpha: 0.32 + Math.random() * 0.45,
           tone: Math.random(),
         });
       }

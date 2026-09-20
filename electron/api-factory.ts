@@ -317,6 +317,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         perCourse?: Array<{ courseId: number; courseName: string; entries: number; created: number; updated: number }>;
         items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
         syncedAt: number;
+        skipped?: Array<{ title: string; courseName: string; reason: string }>;
       }>,
     },
     // v1.1.6 输入诊断（块 3）：探测器上报 + Settings 导出

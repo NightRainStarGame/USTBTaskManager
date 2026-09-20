@@ -64,27 +64,27 @@
     --c-warn-dim-rgb: 204 186 0;
   }
 
-  /* 樱花粉主题：粉白萌系（v1.1.6 引入，v1.1.7 重调：更粉底 + 高对比 + 柔光玻璃）
-     底色更饱和的粉；文字改深酒红/深梅，对比度大幅提升；
-     ink 层级翻转为粉白系，黄改琥珀保证可读 */
+  /* 樱花粉主题 v3：浓樱粉 + 液态玻璃（v1.1.6 引入，v1.1.7 柔光玻璃，v1.1.9 全面加粉）
+     底色饱和樱粉；ink 层级全部粉化；主色提浓；文字深酒红高对比；
+     面板/按钮/输入全面液态玻璃（半透明 + 高斯模糊 + 饱和度增益 + 顶部镜面高光） */
   [data-theme="sakura"] {
-    --c-primary-rgb: 224 72 138;
-    --c-primary-bright-rgb: 247 143 188;
-    --c-primary-dim-rgb: 192 52 116;
-    --c-primary-deep-rgb: 148 38 88;
-    --c-primary: #E0488A;
-    --c-primary-bright: #F78FBC;
-    --c-bg-deep: #FFEDF3;
-    --c-bg-glow: rgba(224, 72, 138, 0.10);
+    --c-primary-rgb: 233 64 133;
+    --c-primary-bright-rgb: 249 143 194;
+    --c-primary-dim-rgb: 205 45 120;
+    --c-primary-deep-rgb: 156 34 90;
+    --c-primary: #E94085;
+    --c-primary-bright: #F98FC2;
+    --c-bg-deep: #FFD9E7;
+    --c-bg-glow: rgba(233, 64, 133, 0.14);
     --c-text: #45202F;
     --c-text-secondary: #8A4562;
     --c-text-dim: #B57E98;
-    --c-ink-base-rgb: 255 237 243;
-    --c-ink-900-rgb: 255 249 252;
-    --c-ink-800-rgb: 255 234 242;
-    --c-ink-700-rgb: 251 209 226;
-    --c-ink-600-rgb: 246 179 205;
-    --c-ink-500-rgb: 238 152 185;
+    --c-ink-base-rgb: 255 244 249;
+    --c-ink-900-rgb: 255 241 247;
+    --c-ink-800-rgb: 255 231 241;
+    --c-ink-700-rgb: 252 212 230;
+    --c-ink-600-rgb: 248 185 211;
+    --c-ink-500-rgb: 241 155 192;
     --c-warn-rgb: 178 104 0;
     --c-warn-bright-rgb: 210 138 24;
     --c-warn-dim-rgb: 140 82 0;
@@ -110,45 +110,126 @@
       var(--c-bg-deep);
   }
 
-  /* 樱花粉主题：更浓的粉调渐变（v1.1.7：背景整体更粉、层次更多） */
+  /* 樱花粉主题 v3：整屏樱粉渐变 + 左上柔粉光斑（粉色元素更多、更浓） */
   [data-theme="sakura"] body {
     background:
-      radial-gradient(ellipse at 18% 0%, rgba(247, 143, 188, 0.42) 0%, transparent 55%),
-      radial-gradient(ellipse at 85% 18%, rgba(255, 190, 218, 0.38) 0%, transparent 50%),
-      radial-gradient(ellipse at 50% 115%, rgba(224, 72, 138, 0.20) 0%, transparent 55%),
+      radial-gradient(ellipse at 15% 0%, rgba(249, 143, 194, 0.55) 0%, transparent 52%),
+      radial-gradient(ellipse at 88% 14%, rgba(255, 178, 214, 0.50) 0%, transparent 48%),
+      radial-gradient(ellipse at 50% 118%, rgba(233, 64, 133, 0.30) 0%, transparent 58%),
+      radial-gradient(ellipse at 0% 85%, rgba(241, 155, 192, 0.28) 0%, transparent 45%),
       var(--c-bg-deep);
   }
 
-  /* 樱花粉专属质感：加大圆角（胶囊按钮）、柔光阴影、去掉荧光锐边 */
+  /* ================= 樱花粉 v3：液态玻璃（liquid glass）=================
+     通用配方：半透明粉白渐变底 + 大半径模糊 + 饱和度增益 +
+     白色顶部镜面高光内描边 + 底部粉投影 + 淡粉外描边 */
   [data-theme="sakura"] .btn-neon { border-radius: 999px; }
   [data-theme="sakura"] .btn-ghost { border-radius: 999px; }
-  [data-theme="sakura"] .input-neon { border-radius: 12px; }
-  /* v1.1.7 柔光玻璃（frosted glass）：半透白 + 大半径模糊 + 饱和度提升，
-     内容对比靠深色文字 + 玻璃后更亮的粉底保证 */
+  [data-theme="sakura"] .input-neon { border-radius: 14px; }
   [data-theme="sakura"] .glass-panel {
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(22px) saturate(1.5);
-    -webkit-backdrop-filter: blur(22px) saturate(1.5);
-    border-color: rgba(224, 72, 138, 0.22);
-    box-shadow: 0 8px 32px rgba(192, 52, 116, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    border-radius: 20px;
+    background:
+      linear-gradient(135deg,
+        rgba(255, 255, 255, 0.74) 0%,
+        rgba(255, 238, 246, 0.55) 46%,
+        rgba(255, 224, 239, 0.64) 100%);
+    backdrop-filter: blur(26px) saturate(1.8) brightness(1.04);
+    -webkit-backdrop-filter: blur(26px) saturate(1.8) brightness(1.04);
+    border: 1px solid rgba(255, 255, 255, 0.60);
+    border-top-color: rgba(255, 255, 255, 0.92);
+    box-shadow:
+      0 12px 40px rgba(205, 45, 120, 0.16),
+      0 2px 10px rgba(233, 64, 133, 0.10),
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
+      inset 0 -1px 0 rgba(233, 64, 133, 0.08);
   }
-  /* 侧栏 / 顶栏也换柔光玻璃质感 */
+  /* 侧栏 / 顶栏：整块液态玻璃 */
   [data-theme="sakura"] aside,
   [data-theme="sakura"] header {
-    background: rgba(255, 255, 255, 0.42) !important;
-    backdrop-filter: blur(20px) saturate(1.45);
-    -webkit-backdrop-filter: blur(20px) saturate(1.45);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 236, 244, 0.48)) !important;
+    backdrop-filter: blur(24px) saturate(1.7);
+    -webkit-backdrop-filter: blur(24px) saturate(1.7);
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   }
-  /* 输入框：更实的白底，保证浅粉背景上的可读性 */
+  /* 按钮：粉玻璃 + 悬浮上浮 + 光泽扫过 */
+  [data-theme="sakura"] .btn-neon {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 231, 242, 0.58));
+    border: 1px solid rgba(233, 64, 133, 0.35);
+    color: #C22B78;
+    font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 3px 12px rgba(233, 64, 133, 0.14);
+    overflow: hidden;
+    transition: all 0.22s cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  [data-theme="sakura"] .btn-neon:hover {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 214, 231, 0.80));
+    border-color: rgba(233, 64, 133, 0.65);
+    color: #A81F62;
+    transform: translateY(-1.5px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 8px 22px rgba(233, 64, 133, 0.26);
+  }
+  /* 液态光泽带：hover 时斜扫而过 */
+  [data-theme="sakura"] .btn-neon::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, 0.85) 50%, transparent 58%);
+    transform: translateX(-130%);
+    transition: transform 0.65s ease;
+    pointer-events: none;
+  }
+  [data-theme="sakura"] .btn-neon:hover::after { transform: translateX(130%); }
+  [data-theme="sakura"] .btn-neon:active { transform: translateY(0) scale(0.97); }
+  /* ghost 按钮 hover 粉化 */
+  [data-theme="sakura"] .btn-ghost:hover {
+    background-color: rgba(233, 64, 133, 0.10);
+  }
+  /* 输入框：白玻璃 + 内阴影 + 粉色 focus 光环 */
   [data-theme="sakura"] .input-neon {
-    background: rgba(255, 255, 255, 0.78);
-    border-color: rgba(224, 72, 138, 0.32);
+    background: rgba(255, 255, 255, 0.74);
+    border: 1.5px solid rgba(233, 64, 133, 0.26);
     color: #45202F;
+    box-shadow: inset 0 2px 6px rgba(233, 64, 133, 0.06);
+  }
+  [data-theme="sakura"] .input-neon:focus {
+    border-color: rgba(233, 64, 133, 0.78);
+    box-shadow: 0 0 0 3.5px rgba(233, 64, 133, 0.16), inset 0 2px 6px rgba(233, 64, 133, 0.05);
   }
   [data-theme="sakura"] .input-neon::placeholder {
     color: #B57E98;
   }
+  /* 数据胶囊：小粉玻璃 */
+  [data-theme="sakura"] .data-pill {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.66);
+    border-color: rgba(233, 64, 133, 0.34);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 8px rgba(233, 64, 133, 0.10);
+  }
+  /* 侧栏导航选中项：粉玻璃块 + 粉光条 */
+  [data-theme="sakura"] aside nav a {
+    border-radius: 12px;
+  }
+  [data-theme="sakura"] aside nav a.bg-ink-900\/80,
+  [data-theme="sakura"] aside nav a[class*="bg-neon-green"] {
+    background: rgba(255, 255, 255, 0.68) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(233, 64, 133, 0.18);
+    border: 1px solid rgba(233, 64, 133, 0.30);
+  }
+  /* 全局 focus 光环换粉 */
+  [data-theme="sakura"] *:focus-visible {
+    outline: 2px solid rgba(233, 64, 133, 0.65);
+    outline-offset: 2px;
+  }
+  /* 滚动条加粉 */
+  [data-theme="sakura"] *::-webkit-scrollbar-track { background: rgba(233, 64, 133, 0.06); }
+  [data-theme="sakura"] *::-webkit-scrollbar-thumb {
+    background: rgba(233, 64, 133, 0.42);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  [data-theme="sakura"] *::-webkit-scrollbar-thumb:hover { background: rgba(233, 64, 133, 0.68); }
   [data-theme="sakura"] .data-pill { border-radius: 999px; }
   /* 荧光文字光晕在浅底上会发灰，收敛为淡淡的粉晕 */
   [data-theme="sakura"] .text-glow {

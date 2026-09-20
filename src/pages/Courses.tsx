@@ -1761,6 +1761,8 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
     /** v1.1.8+：按课程分组的精确挂载计数（多平行班时分别列出） */
     perCourse?: Array<{ courseId: number; courseName: string; entries: number; created: number; updated: number }>;
     items: Array<{ courseId: number; courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
+    /** v1.1.9+：跨课程混包中缺课程而跳过的条目 */
+    skipped?: Array<{ title: string; courseName: string; reason: string }>;
   } | null>(null);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -1949,6 +1951,19 @@ function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSy
             )}
             {result.entries === 0 && (
               <div className="py-2 text-center font-mono text-xs text-text-dim">这个码包里还没有作业条目</div>
+            )}
+            {(result.skipped?.length ?? 0) > 0 && (
+              <div className="p-2 rounded-md border border-neon-yellow/30 bg-neon-yellow/5 space-y-1">
+                <div className="flex items-center gap-1.5 text-neon-yellow text-[11px] font-bold">
+                  <AlertCircle size={12} /> 有 {result.skipped!.length} 条作业没挂上（本地缺对应课程）
+                </div>
+                {result.skipped!.map((s, i) => (
+                  <div key={i} className="font-mono text-[10px] text-text-secondary">
+                    「{s.courseName}」{s.title} · {s.reason}
+                  </div>
+                ))}
+                <div className="font-mono text-[10px] text-text-dim">在「课程」页新建对应课程后再接收一次即可挂上。</div>
+              </div>
             )}
           </div>
         )}

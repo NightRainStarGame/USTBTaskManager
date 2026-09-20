@@ -16,8 +16,8 @@ import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import type { DB } from '../db/index';
 import { computeCourseKey } from '../db/index';
 import {
-  parseAnyShareUrl, findLatestByPrefix, getFileDownloadUrl,
-  getShareRoot, ensureShareDir, listDir, findLatestByPrefixIn, uploadTextFileToDir,
+  parseAnyShareUrl, getFileDownloadUrl,
+  getShareRoot, ensureShareDir, listDir, listShareFiles, uploadTextFileToDir,
   type AnyShareConfig, type AnyShareFile,
 } from '../anyshare';
 
@@ -197,6 +197,8 @@ export interface SyncResult {
   syncedAt: number;
   courseNotFound?: boolean;
   courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
+  /** v1.1.9+：跨课程混包中没找到目标课程而跳过的条目（课程级挂载精度提示） */
+  skipped?: Array<{ title: string; courseName: string; reason: string }>;
 }
 
 function getSetting(db: DB, key: string): string {
@@ -273,11 +275,32 @@ const RAW_BASE = `https://raw.githubusercontent.com/${HOMEWORK_REPO_OWNER}/${HOM
 
 const githubSource: HomeworkSource = {
   name: 'github',
-  async fetchBundle(syncCode) {
+  async fetchBundle(syncCode, token) {
     const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
-    // raw CDN 无限速但有 1-5 分钟缓存；CDN 给空或 syncCode 不一致就回退 Contents API
+    // Contents API（no-store）优先：raw CDN 的缓存键忽略 query string，?t= 绕不过
+    // 它最长 5 分钟的缓存——发布第二条后立刻接收会拿到只剩第一条的旧包（v1.1.8 实测根因）。
+    // raw 降级为 Contents API 网络失败时的兜底（有缓存总比拿不到强）。
+    let lastErr: any = null;
     try {
-      const r = await ghFetch(`${RAW_BASE}/${filePath}?t=${Date.now()}`, { raw: true });
+      const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
+      if (r.status === 404) return null;
+      if (r.ok) {
+        try {
+          const meta = JSON.parse(r.text);
+          const file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
+          if (file && Array.isArray(file.entries)) return { file };
+          lastErr = new Error('远端作业包损坏（entries 缺失）');
+        } catch {
+          lastErr = new Error('远端作业包损坏（JSON 解析失败）');
+        }
+      } else {
+        lastErr = new Error(describeStatus(r.status, r.text));
+      }
+    } catch (e: any) {
+      lastErr = e;
+    }
+    try {
+      const r = await ghFetch(`${RAW_BASE}/${filePath}`, { raw: true });
       if (r.ok) {
         try {
           const file = JSON.parse(r.text) as HomeworkFile;
@@ -285,26 +308,24 @@ const githubSource: HomeworkSource = {
         } catch {}
       }
     } catch {}
-    const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}`);
-    if (r.status === 404) return null;
-    if (!r.ok) throw new Error(describeStatus(r.status, r.text));
-    const meta = JSON.parse(r.text);
-    const file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-    if (!file || !Array.isArray(file.entries)) throw new Error('远端作业包损坏（entries 缺失）');
-    return { file };
+    throw lastErr || new Error('GitHub 作业包拉取失败');
   },
 };
 
 /**
- * 北科云盘源（v1.1.4 起；v1.1.7 升级为目录转接范式）：
+ * 北科云盘源（v1.1.4 起；v1.1.7 目录转接范式；v1.1.9 全量合并）：
  *   新结构 homework/<publishCode>/<courseKey>-<时间戳>.json
- *   旧结构 <syncCode>-<时间戳>.json（扁平，按前缀取最新）
+ *   旧结构 <syncCode>-<时间戳>.json（扁平）
+ * 同一个码包目录下可能有多个文件（每次发布写一个、跨课程各写各的 courseKey 前缀），
+ * 只取「最新一个」会丢其余文件的条目——v1.1.9 起全部下载后条目级合并。
  */
 const anyshareSource: HomeworkSource = {
   name: 'ustb-cloud',
   async fetchBundle(syncCode) {
     const cfg = anyshareCtx();
     if (!cfg || !cfg.enabled) return null;
+    const candidates: AnyShareFile[] = [];
+    let usedLegacy = false;
     try {
       const publishCode = derivePublishCode(syncCode);
       const root = await getShareRoot(cfg);
@@ -315,18 +336,52 @@ const anyshareSource: HomeworkSource = {
         const pubDir = subs.find((d) => d.name === publishCode);
         if (pubDir?.docid) {
           const { files } = await listDir(cfg, pubDir.docid);
-          const jsons = files
-            .filter((f) => f.name.endsWith('.json'))
-            .sort((a, b) => (b.modified || 0) - (a.modified || 0));
-          if (jsons[0]) return { file: await downloadBundleFile(cfg, jsons[0]) };
+          candidates.push(...files.filter((f) => f.name.endsWith('.json')));
         }
       }
     } catch {}
-    const latest = await findLatestByPrefix(cfg, `${syncCode}-`);
-    if (!latest) return null;
-    return { file: await downloadBundleFile(cfg, latest) };
+    if (!candidates.length) {
+      // 旧扁平结构：同码所有历史文件全并（不只是 prefix 命中的第一个）
+      try {
+        const files = await listShareFiles(cfg);
+        candidates.push(...files.filter((f) => f.name.startsWith(`${syncCode}-`) && f.name.endsWith('.json')));
+        usedLegacy = candidates.length > 0;
+      } catch {}
+    }
+    if (!candidates.length) return null;
+    const bundles: HomeworkFile[] = [];
+    for (const f of candidates) {
+      try {
+        bundles.push(await downloadBundleFile(cfg, f));
+      } catch { /* 单个文件损坏不拖累整个码包 */ }
+    }
+    if (!bundles.length) return null;
+    return { file: mergeBundleFiles(bundles, syncCode, usedLegacy) };
   },
 };
+
+/** 多份历史快照合并成一份（条目级去重：id 命中或 课程名+日期+标题 命中 → 后写的覆盖） */
+function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
+  const byId = new Map<string, HomeworkEntry>();
+  const keyToId = new Map<string, string>();
+  for (const f of bundles) {
+    for (const e of f.entries || []) {
+      if (!e || !e.title) continue;
+      const courseName = e.courseName || f.courseName || '';
+      const key = `${courseName}|${e.sessionDate || ''}|${e.title}`;
+      const id = e.id || key;
+      byId.set(id, { ...e, id, courseName });
+      keyToId.set(key, id);
+    }
+  }
+  const meta = preferFileMetaOfLast ? bundles[bundles.length - 1] : bundles[0];
+  const merged: HomeworkFile = {
+    ...(meta || { entries: [] }),
+    syncCode,
+    entries: Array.from(byId.values()).sort((a, b) => (a.sessionDate < b.sessionDate ? -1 : a.sessionDate > b.sessionDate ? 1 : 0)),
+  };
+  return merged;
+}
 
 async function downloadBundleFile(cfg: AnyShareConfig, file: AnyShareFile): Promise<HomeworkFile> {
   const url = await getFileDownloadUrl(cfg, file);
@@ -343,19 +398,29 @@ function anyshareCtx(): (AnyShareConfig & { enabled: boolean }) | null {
   try { return getAnyShareConfig(_db); } catch { return null; }
 }
 
-/** 任一源返回包即用；GitHub 404/云盘目录里没前缀文件 = 确认「码不存在」，不被其他源的网络错误遮蔽 */
+/** 多源全试、命中全并：GitHub / 云盘各自可能有对方没有的条目（比如某次发布单侧失败），
+ *  合并后返回；所有源都确认「码不存在」才返回 null，网络错误不被遮蔽 */
 async function fetchBundleFromAnySource(syncCode: string, token?: string): Promise<{ source: string; file: HomeworkFile } | null> {
   const errors: string[] = [];
   let confirmedMissing = false;
+  const hits: Array<{ source: string; file: HomeworkFile }> = [];
   const sources: HomeworkSource[] = [githubSource, anyshareSource];
   for (const src of sources) {
     try {
       const hit = await src.fetchBundle(syncCode, token);
-      if (hit) return { source: src.name, file: hit.file };
-      confirmedMissing = true;
+      if (hit) hits.push({ source: src.name, file: hit.file });
+      else confirmedMissing = true;
     } catch (e: any) {
       errors.push(`${src.name}: ${e?.message || e}`);
     }
+  }
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) {
+    // 多源合并：条目级去重（id / 课程名+日期+标题），任一侧多出的条目都保留
+    return {
+      source: hits.map((h) => h.source).join('+'),
+      file: mergeBundleFiles(hits.map((h) => h.file), syncCode),
+    };
   }
   if (confirmedMissing) return null;
   if (errors.length) throw new Error(errors.join('；'));
@@ -545,29 +610,23 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
     let file: HomeworkFile = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
     try {
-      let latest = courseKey
-        ? await findLatestByPrefixIn(cfg, pubDir.docid, `${courseKey}-`)
-        : null;
-      if (!latest) {
-        const { files } = await listDir(cfg, pubDir.docid);
-        // 按文件名里的时间戳降序——AnyShare 的 `modified` 字段可能不准确（秒级丢失、时区漂移），
-        // 但我们写入的文件名本身就是 `<courseKey>-<Date.now()>.json`，按时间戳倒排是确定性的
-        const tsOf = (n: string) => {
-          const m = n.match(/-(\d+)\.json$/);
-          return m ? parseInt(m[1], 10) : 0;
-        };
-        const jsons = files
-          .filter((f) => f.name.endsWith('.json'))
-          .sort((a, b) => tsOf(b.name) - tsOf(a.name));
-        latest = jsons[0] || null;
+      // v1.1.9：目录里所有 json 全下载合并（每个都是历史快照；跨课程同码发布时
+      // 各条目会写到不同 courseKey 前缀的文件里，只按本次前缀找 base 会丢其他课程的条目）
+      const { files } = await listDir(cfg, pubDir.docid);
+      const bundles: HomeworkFile[] = [];
+      for (const f of files.filter((x) => x.name.endsWith('.json'))) {
+        try {
+          bundles.push(await downloadBundleFile(cfg, f));
+        } catch { /* 单个损坏文件跳过 */ }
       }
-      if (!latest) latest = await findLatestByPrefix(cfg, `${syncCode}-`);
-      if (latest) {
-        const url = await getFileDownloadUrl(cfg, latest);
-        const r = await ghFetch(url, { raw: true });
-        if (r.ok) {
-          const remote = JSON.parse(r.text) as HomeworkFile;
-          if (remote && Array.isArray(remote.entries)) file = remote;
+      if (bundles.length) {
+        file = mergeBundleFiles(bundles, syncCode);
+        // 元信息以「包含本次 courseKey 的那份」优先（保留包级 courseKey 匹配能力）
+        const withKey = bundles.find((b) => b.courseKey === courseKey);
+        if (withKey) {
+          file.courseKey = withKey.courseKey;
+          file.courseGuid = withKey.courseGuid || file.courseGuid;
+          if (withKey.courseName) file.courseName = withKey.courseName;
         }
       }
     } catch {}
@@ -713,7 +772,7 @@ function randomUUIDSafe(): string {
   try { return randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
 }
 
-/** 组装/合并一条作业到包里（同日期+同标题 → 覆盖；幂等） */
+/** 组装/合并一条作业到包里（同课程+同日期+同标题 → 覆盖；跨课程同名不互相覆盖；幂等） */
 function mergeEntry(
   base: HomeworkFile,
   ctx: {
@@ -723,8 +782,9 @@ function mergeEntry(
 ): { file: HomeworkFile; entry: HomeworkEntry; existing: HomeworkEntry | undefined } {
   const { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid, courseKey } = ctx;
   const now = Date.now();
+  // 去重键 = 课程名+日期+标题（v1.1.9：跨课程同日同名不再互相覆盖）
   const existing = base.entries.find(
-    (e) => e.sessionDate === sessionDate && e.title === title
+    (e) => (e.courseName || base.courseName) === courseName && e.sessionDate === sessionDate && e.title === title
   );
   const entry: HomeworkEntry = {
     id: existing?.id || randomUUIDSafe(),
@@ -833,54 +893,94 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
       }
     }
   }
-  if (!hitCourseIds.length) {
+
+  // entries = 远端作业条目数（去重，不随课程数膨胀）；perCourse[].entries 同义
+  // created/updated = 实际 INSERT/UPDATE 数（多平行班时按课程×条目累加，UI 反映真实挂载动作）
+  const uniqueEntries = file.entries.filter((e) => e && e.id && e.title);
+  result.entries = uniqueEntries.length;
+
+  // v1.1.9 挂载精度核心：条目按「自己的课程名」找家。
+  // 一个码包可能混装多门课的作业（跨课程同码发布）；包级匹配链（courseKey/guid/同名）
+  // 只适用于「与包级课程同名」或「没带课程名」的条目，其余条目独立解析目标课程。
+  type CourseIds = number[] | 'candidates' | 'none';
+  const resolveByName = (name: string): CourseIds => {
+    const rows = db.prepare('SELECT id FROM courses WHERE TRIM(name) = ?').all(name) as Array<{ id: number }>;
+    if (rows.length === 1) return [rows[0].id];
+    if (rows.length > 1) return 'candidates';
+    return 'none';
+  };
+  interface MountPlan { courseId: number; courseName: string; entry: HomeworkEntry; }
+  const plans: MountPlan[] = [];
+  const skipped: Array<{ title: string; courseName: string; reason: string }> = [];
+  const bundleResolved = hitCourseIds.length > 0;
+  for (const e of uniqueEntries) {
+    const eCourseName = ((e.courseName || '').trim() || courseName);
+    let targets: number[];
+    if (chooseCourseId || !eCourseName || eCourseName === courseName) {
+      targets = hitCourseIds;
+    } else {
+      const r = resolveByName(eCourseName);
+      if (r === 'none') {
+        skipped.push({ title: e.title, courseName: eCourseName, reason: '本地没有该课程（可在「课程」页新建后再接收）' });
+        continue;
+      }
+      if (r === 'candidates') {
+        skipped.push({ title: e.title, courseName: eCourseName, reason: '本地有多门同名课程，无法辨别（暂跳过）' });
+        continue;
+      }
+      targets = r;
+    }
+    if (!targets.length) continue;
+    for (const cid of targets) plans.push({ courseId: cid, courseName: eCourseName, entry: e });
+  }
+  if (skipped.length) result.skipped = skipped;
+
+  if (!bundleResolved && !plans.length && !chooseCourseId) {
     result.courseName = courseName;
     result.courseNotFound = true;
     result.error = `本地没有课程「${courseName}」，请先在「课程」页新建/同步该课程，再点接收`;
     return result;
   }
-  result.coursesTouched = hitCourseIds.length;
-  // entries = 远端作业条目数（去重，不随课程数膨胀）；perCourse[].entries 同义
-  // created/updated = 实际 INSERT/UPDATE 数（多平行班时按课程×条目累加，UI 反映真实挂载动作）
-  const uniqueEntries = file.entries.filter((e) => e && e.id && e.title);
-  result.entries = uniqueEntries.length;
+
+  const touchedCourseIds = Array.from(new Set(plans.map((p) => p.courseId)));
+  result.coursesTouched = touchedCourseIds.length;
   const perCourseMap = new Map<number, { courseId: number; courseName: string; entries: number; created: number; updated: number }>();
 
-  for (const courseId of hitCourseIds) {
+  for (const { courseId, courseName: eCourseName, entry: e } of plans) {
     const row = db.prepare('SELECT name FROM courses WHERE id = ?').get(courseId) as { name: string } | undefined;
-    const cName = row?.name || courseName;
-    const stat = perCourseMap.get(courseId) || { courseId, courseName: cName, entries: uniqueEntries.length, created: 0, updated: 0 };
-    for (const e of uniqueEntries) {
-      const due = e.dueDate && Number.isFinite(e.dueDate)
-        ? e.dueDate
-        : new Date(`${e.sessionDate || '1970-01-01'}T23:59:00`).getTime();
-      const rid = hitCourseIds.length > 1 ? `${e.id}#c${courseId}` : e.id;
-      const local = db.prepare('SELECT id FROM course_requirements WHERE remote_id = ?').get(rid) as { id: number } | undefined;
-      if (local) {
-        db.prepare(
-          `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, session_date=?, publisher=?
-           WHERE id=?`
-        ).run(
-          e.title, (e.type || 'homework'), e.content || '', due, e.sessionDate || null,
-          e.publisher || null, local.id
-        );
-        stat.updated++;
-        result.updated++;
-        result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'updated' });
-      } else {
-        db.prepare(
-          `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status,
-             estimated_hours, actual_hours, notes, created_at, source, remote_id, session_date, publisher)
-           VALUES (?, ?, ?, ?, ?, 2, 'pending', NULL, NULL, ?, ?, 'github', ?, ?, ?)`
-        ).run(
-          courseId, e.title, (e.type || 'homework'), e.content || '', due,
-          `来源：${source === 'ustb-cloud' ? '北科云盘' : 'GitHub'} 接收 · 码 ${syncCode} · 发布人 ${e.publisher || '佚名'} · ${e.sessionDate || ''}${e.sessionTime ? ' ' + e.sessionTime : ''}`,
-          Date.now(), rid, e.sessionDate || null, e.publisher || null
-        );
-        stat.created++;
-        result.created++;
-        result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'created' });
-      }
+    const cName = row?.name || eCourseName;
+    const multiCourse = touchedCourseIds.length > 1;
+    const stat = perCourseMap.get(courseId) || { courseId, courseName: cName, entries: 0, created: 0, updated: 0 };
+    stat.entries++;
+    const due = e.dueDate && Number.isFinite(e.dueDate)
+      ? e.dueDate
+      : new Date(`${e.sessionDate || '1970-01-01'}T23:59:00`).getTime();
+    const rid = multiCourse ? `${e.id}#c${courseId}` : e.id;
+    const local = db.prepare('SELECT id FROM course_requirements WHERE remote_id = ?').get(rid) as { id: number } | undefined;
+    if (local) {
+      db.prepare(
+        `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, session_date=?, publisher=?
+         WHERE id=?`
+      ).run(
+        e.title, (e.type || 'homework'), e.content || '', due, e.sessionDate || null,
+        e.publisher || null, local.id
+      );
+      stat.updated++;
+      result.updated++;
+      result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'updated' });
+    } else {
+      db.prepare(
+        `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status,
+           estimated_hours, actual_hours, notes, created_at, source, remote_id, session_date, publisher)
+         VALUES (?, ?, ?, ?, ?, 2, 'pending', NULL, NULL, ?, ?, 'github', ?, ?, ?)`
+      ).run(
+        courseId, e.title, (e.type || 'homework'), e.content || '', due,
+        `来源：${source === 'ustb-cloud' ? '北科云盘' : 'GitHub'} 接收 · 码 ${syncCode} · 发布人 ${e.publisher || '佚名'} · ${e.sessionDate || ''}${e.sessionTime ? ' ' + e.sessionTime : ''}`,
+        Date.now(), rid, e.sessionDate || null, e.publisher || null
+      );
+      stat.created++;
+      result.created++;
+      result.items.push({ courseId, courseName: cName, title: e.title, sessionDate: e.sessionDate || '', action: 'created' });
     }
     perCourseMap.set(courseId, stat);
   }
