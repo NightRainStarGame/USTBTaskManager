@@ -29,7 +29,6 @@ const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
-// ==================== 参数解析 ====================
 function parseArgs(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -52,7 +51,7 @@ const productName = (pkg.build && pkg.build.productName) || pkg.name;
 const version = String(args.version || pkg.version).replace(/^v/i, '');
 const tag = `v${version}`;
 
-// ==================== 小工具 ====================
+// 小工具
 function log(msg) { console.log(msg); }
 function step(msg) { console.log(`\n▶ ${msg}`); }
 function fail(msg) { console.error(`\n✗ ${msg}`); process.exit(1); }
@@ -117,7 +116,7 @@ function fmtSize(n) {
   return n + ' B';
 }
 
-// ==================== 定位安装包 ====================
+// 定位安装包
 function resolveInstaller() {
   if (args.file && args.file !== true) {
     const p = path.resolve(ROOT, String(args.file));
@@ -144,7 +143,7 @@ function resolveInstaller() {
   return hits[0] || null;
 }
 
-// ==================== GitHub API ====================
+// GitHub API
 /** 需要区分 404 / 200 —— 用带状态码的方式请求 */
 function apiWithStatus(token, method, apiPath, body) {
   const url = `https://api.github.com${apiPath}`;
@@ -180,7 +179,7 @@ function apiWithStatus(token, method, apiPath, body) {
   return { status, json, text };
 }
 
-// ==================== 主流程 ====================
+// 主流程
 async function main() {
   log('══════════════════════════════════════════════');
   log(`  发布 TaskManager ${version} 到 GitHub`);

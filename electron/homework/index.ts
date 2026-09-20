@@ -1,58 +1,32 @@
 /**
- * 作业发布 / 接收模块（主进程，码制协议 v2）
+ * 作业发布 / 接收模块（码制协议 v2）
  *
- * 「作业包」= 一个课程的整套作业（含多节课条目），由一对随机码标识：
+ * 作业包 = 一个课程的整套作业（多节课条目）。由 syncCode（8位分享码）+ publishCode（12位密钥）标识：
+ *   - publishCode 自包含：前 8 位即 syncCode，后 4 位 HMAC 校验位，发布作业只输一个码
+ *   - 接收方凭 syncCode 拉包 → 按 courseKey（CK- + 哈希(课程名|老师)）匹配课程 → remote_id 去重导入
  *
- *   同步作业码（syncCode）—— 分享码，8 位，公开。
- *     接收方输入此码 → 从 GitHub（或云盘镜像）拉取 homework/<syncCode>.json
- *     → 按课程名匹配本地课程（缺失自动建课）→ 按 remote_id 去重导入。
- *
- *   作业发布码（publishCode）—— 密钥，12 位 = 同步码(8位) + 校验位(4位)，
- *     由 syncCode 经 HMAC-SHA256 派生校验位。发布方只需输入这一个码：
- *     App 本地解析出 syncCode 并校验（无需联网、无需服务端）
- *     → 凭 GitHub 令牌把包写入 homework/<syncCode>.json。
- *
- * 码可由 App 内生成（homework:generateCodes），也可由配套网站生成——
- * 网站端只要用同样的 SECRET + 派生算法即可产出一致的码对（见 docs/HOMEWORK-CODES.md）。
- *
- * 存储布局（v1.1.7 目录转接范式）：
+ * 存储布局：
  *   GitHub:   homework/<syncCode>.json
- *             （读走 raw CDN 无限速；写走 Contents API 需令牌）
- *   北科云盘: homework/<发布码>/<课程ID>-<时间戳>.json
- *             （发布码 = publishCode = syncCode+4 位校验，本地可派生；
- *              发布码文件夹 = 一个课程的整套作业包，文件名带课程通用 ID，
- *              同名不能覆盖 → 每次发布写新时间戳文件，读取按修改时间取最新。
- *              旧版扁平 <syncCode>-<时间戳>.json 仍可读，发布后自动迁移进新结构）
+ *   北科云盘: homework/<publishCode>/<courseKey>-<时间戳>.json（旧扁平 <syncCode>-<ts> 自动兼容）
  *
- * 课程通用固定 ID（v1.1.7）：courseKey = CK-哈希(课程名|授课老师)，同名同老师
- * 在所有设备上派生一致。作业包带 courseKey，接收端凭它把作业挂到正确的课程
- * （命中的所有平行班一起挂）；同步作业码也按 courseKey 共享。
- *
- * 安全说明：
- *   - publishCode 只是 UI / 协议层门槛；真正的写权限由 GitHub 令牌控制
- *     （只存在发布者本机 settings 表，建议 fine-grained PAT 仅本仓库 Contents 读写）。
- *   - 派生算法内置在客户端，防君子不防逆向；对班级作业场景足够。
+ * 详见 docs/HOMEWORK-CODES.md。
  */
 import { net, ipcMain } from 'electron';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import type { DB } from '../db/index';
 import { computeCourseKey } from '../db/index';
 import {
-  parseAnyShareUrl, findLatestByPrefix, getFileDownloadUrl, uploadTextFile,
+  parseAnyShareUrl, findLatestByPrefix, getFileDownloadUrl,
   getShareRoot, ensureShareDir, listDir, findLatestByPrefixIn, uploadTextFileToDir,
   type AnyShareConfig, type AnyShareFile,
 } from '../anyshare';
 
-// ==================== 配置 ====================
 export const HOMEWORK_REPO_OWNER = 'NightRainStarGame';
 export const HOMEWORK_REPO_NAME = 'USTBTaskManager';
 export const HOMEWORK_BRANCH = 'main';
 export const HOMEWORK_DIR = 'homework';
 
-/**
- * 码对派生密钥（网站端生成码时必须使用同一字符串，见 docs/HOMEWORK-CODES.md）。
- * 改动此值会使所有已分发的发布码失效。
- */
+/** 码对派生密钥（网站端生成码时必须使用同一字符串，改动会使已分发的发布码失效） */
 export const CODE_SECRET = 'StarOS-Homework-Code-v1';
 
 /** 码字符表：31 个字符，去掉 0/O/1/I/L 等易混淆字符 */
@@ -67,15 +41,10 @@ const REPO_URL = `https://github.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME
 const SETTING_TOKEN = 'homework_github_token';
 const SETTING_PUBLISHER = 'homework_publisher';
 const SETTING_LAST_SYNC = 'homework_last_sync';
-/** 每门课程对应的同步作业码：key 形如 homework_sync_<courseId>，value 是 8 位 syncCode */
 const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
-/** 北科云盘（AnyShare）作业同步源配置（JSON：baseUrl/linkId/password/enabled） */
 const SETTING_CLOUD = 'homework_anyshare';
 
-/**
- * 北科云盘默认外链（v1.1.4）。该网盘通常仅在北京科技大学校园网内可达。
- * 用户可在设置里改外链 / 提取码 / 关闭。
- */
+/** 北科云盘默认外链。仅在北京科技大学校园网内可达；用户可在设置里改/关 */
 export const DEFAULT_ANYSHARE_CONFIG: AnyShareConfig & { enabled: boolean } = {
   baseUrl: 'https://yunpan.ustb.edu.cn',
   linkId: 'AADAAEA94FBE6B4435B8D14A236FAC6469',
@@ -96,15 +65,13 @@ function getAnyShareConfig(db: DB): (AnyShareConfig & { enabled: boolean }) | nu
           enabled: j.enabled !== false,
         };
       }
-    } catch { /* fallthrough */ }
+    } catch {}
   }
   return { ...DEFAULT_ANYSHARE_CONFIG };
 }
 
 const FETCH_TIMEOUT_MS = 20000;
 
-// ==================== 码制 ====================
-/** 在字母表上生成 n 位随机码 */
 function randomCode(len: number): string {
   const bytes = randomBytes(len);
   let out = '';
@@ -112,34 +79,25 @@ function randomCode(len: number): string {
   return out;
 }
 
-/** 把字节串映射到字母表 */
 function bytesToCode(buf: Buffer, len: number): string {
   let out = '';
   for (let i = 0; i < len; i++) out += CODE_ALPHABET[buf[i] % CODE_ALPHABET.length];
   return out;
 }
 
-/** 生成一对码：随机 syncCode + 自包含校验的 publishCode */
 export function generateCodePair(): { syncCode: string; publishCode: string } {
   const syncCode = randomCode(SYNC_CODE_LEN);
   return { syncCode, publishCode: derivePublishCode(syncCode) };
 }
 
-/**
- * publishCode = syncCode(8位) + 校验位(4位)。
- * 前缀直接携带 syncCode（发布作业只需输入这一个码），后 4 位由
- * HMAC-SHA256(SECRET, 'publish:' + syncCode) 映射到字母表，防止随手编造。
- */
+/** publishCode = syncCode(8位) + HMAC-SHA256 校验位(4位) */
 export function derivePublishCode(syncCode: string): string {
   const s = (syncCode || '').trim().toUpperCase();
   const mac = createHmac('sha256', CODE_SECRET).update(`publish:${s}`).digest();
   return s + bytesToCode(mac, PUBLISH_CODE_LEN - SYNC_CODE_LEN);
 }
 
-/**
- * 从发布码解析出同步码（发布码自包含：前 8 位即同步码，后 4 位校验）。
- * 非法/编造的码返回 null。这就是「发布作业只输发布码」的验证入口。
- */
+/** 校验发布码并提取 syncCode；非法返回 null（这是「只输发布码就能发布」的本地验证入口） */
 export function parsePublishCode(raw: string): string | null {
   const p = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (p.length !== PUBLISH_CODE_LEN) return null;
@@ -149,14 +107,12 @@ export function parsePublishCode(raw: string): string | null {
   return syncCode;
 }
 
-/** 校验码对是否匹配（兼容旧调用：两码都在手上时使用） */
 export function verifyCodePair(syncCode: string, publishCode: string): boolean {
   const s = normalizeSyncCode(syncCode);
   if (!s) return false;
   return parsePublishCode(publishCode) === s;
 }
 
-/** 规范化 syncCode（去分隔符、大写、校验长度与字符表） */
 function normalizeSyncCode(raw: string): string | null {
   const s = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (s.length !== SYNC_CODE_LEN) return null;
@@ -164,21 +120,16 @@ function normalizeSyncCode(raw: string): string | null {
   return s;
 }
 
-// ==================== 类型 ====================
 export type HomeworkType = 'homework' | 'exam' | 'project' | 'reading' | 'other';
 
 export interface HomeworkEntry {
-  /** 稳定 ID（uuid，同步去重键） */
   id: string;
   courseName: string;
-  /** 上课日期 YYYY-MM-DD（每节课作业可能不同） */
   sessionDate: string;
-  /** 上课时段，如 "08:00-09:35"（可选） */
   sessionTime?: string | null;
   title: string;
   content: string;
   type: HomeworkType;
-  /** 截止时间 ms（可选，缺省用上课日 23:59） */
   dueDate?: number | null;
   publisher: string;
   publishedAt: number;
@@ -188,9 +139,7 @@ export interface HomeworkEntry {
 interface HomeworkFile {
   syncCode: string;
   courseName: string;
-  /** v1.1.6：发布方课程的 guid（接收端优先按它精确挂载，避开同名歧义；老包没有） */
   courseGuid?: string;
-  /** v1.1.7：课程通用固定 ID（同名同授课老师 → 确定性一致），接收端挂载的首选依据 */
   courseKey?: string;
   createdAt: number;
   updatedAt: number;
@@ -203,16 +152,11 @@ export interface CodePair {
 }
 
 export interface PublishPayload {
-  /** 可不传；传了必须与发布码前缀一致（发布码自包含同步码） */
   syncCode?: string;
-  /** 可不传：仅在发布方想加一道「只有自己知道密钥」时输入；留空 = 任何人凭 syncCode + GitHub PAT 即可发布 */
   publishCode?: string;
-  /** v1.1.6：发布目标列表。['github', 'cloud'] 同时推两源；单源时传单元素数组。
-   *  v1.1.4/v1.1.5 的单值 target 字段已废弃（兼容保留）。 */
   targets?: ('github' | 'cloud')[];
-  /** @deprecated v1.1.6 起改用 targets。保留兼容老调用方 */
+  /** @deprecated v1.1.6 起改用 targets */
   target?: 'github' | 'cloud';
-  /** v1.1.6：发布课程本地 ID（主进程据此查/生成 guid 写进包里，接收端精确挂载） */
   courseId?: number;
   courseName: string;
   sessionDate: string;
@@ -226,7 +170,6 @@ export interface PublishPayload {
 export interface SyncResult {
   ok: boolean;
   error?: string;
-  /** 命中的源名（github / cloud） */
   source?: string;
   syncCode?: string;
   courseName?: string;
@@ -237,13 +180,10 @@ export interface SyncResult {
   coursesCreated: string[];
   items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
   syncedAt: number;
-  /** v1.1.3 起：远端 bundle 引用了一个本地没有的课程，让前端弹窗询问是否新建 */
   courseNotFound?: boolean;
-  /** v1.1.6：本地存在多门同名课程且包里无 guid 可辨 → 返回候选让前端弹窗手选 */
   courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
 }
 
-// ==================== settings 读写 ====================
 function getSetting(db: DB, key: string): string {
   return (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? '';
 }
@@ -251,8 +191,6 @@ function setSetting(db: DB, key: string, value: string) {
   db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(key, value);
 }
 
-// ==================== 工具 ====================
-/** 课程名兜底展示（旧协议按课程 slug 存文件，这里仅用于展示） */
 export function courseSlug(name: string): string {
   return name
     .trim()
@@ -265,7 +203,6 @@ function decodeBase64Utf8(b64: string): string {
   return Buffer.from(b64, 'base64').toString('utf8');
 }
 
-/** 统一网络请求（带超时 + 令牌） */
 async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean } = {}) {
   const url = path.startsWith('http') ? path : `${API}${path}`;
   const controller = new AbortController();
@@ -289,60 +226,45 @@ async function ghFetch(path: string, opts: { method?: string; token?: string; bo
   }
 }
 
-/** 把网络/HTTP 异常翻译成人话 */
 function describeError(e: any): string {
   const msg = String(e?.message || e || '');
   if (/abort|timeout/i.test(msg)) return `请求超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒无响应），GitHub 可能暂时不可达`;
-  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(msg)) return '无法解析 api.github.com，请检查网络（无法连接 GitHub 可点设置页里的解决教程）';
-  if (/ERR_CONNECTION|ECONNRESET|ETIMED_OUT|Failed to fetch/i.test(msg)) return '连接 GitHub 失败，网络不可达（无法连接 GitHub 可点设置页里的解决教程）';
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(msg)) return '无法解析 api.github.com，请检查网络';
+  if (/ERR_CONNECTION|ECONNRESET|ETIMED_OUT|Failed to fetch/i.test(msg)) return '连接 GitHub 失败，网络不可达';
   return msg || '未知错误';
 }
 
 function describeStatus(status: number, text: string): string {
   let detail = '';
-  try { detail = JSON.parse(text)?.message || ''; } catch { /* ignore */ }
-  if (status === 401) return 'GitHub 令牌无效或已过期，请重新填写（发布时的令牌设置）';
+  try { detail = JSON.parse(text)?.message || ''; } catch {}
+  if (status === 401) return 'GitHub 令牌无效或已过期，请重新填写';
   if (status === 403) return /rate limit/i.test(detail) ? 'GitHub API 速率限制（匿名每小时 60 次），稍后再试或配置发布令牌' : `没有权限（${detail || status}）。令牌需要对 ${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME} 的 Contents 读写权限`;
-  if (status === 404) return '作业包不存在（检查同步作业码是否输对，或发布者是否已发布）';
+  if (status === 404) return '作业包不存在（检查同步作业码是否输对）';
   if (status === 409) return '文件已被其他人更新（写入冲突），请重试一次';
   return `GitHub 返回 ${status}${detail ? '：' + detail : ''}`;
 }
 
-// ==================== 源适配器 ====================
-/**
- * 作业包数据源接口。v1.1.4 起有两个实现：
- *   - GitHub（读走 raw.githubusercontent.com CDN，**不受 API 60 次/小时限制**；写走 Contents API）
- *   - 北科云盘（AnyShare 外链 + 提取码，需校园网；匿名可传、不可覆盖/删除）
- */
 export interface HomeworkSource {
   name: string;
-  /** 按 syncCode 拉取作业包；返回 null = 该源没有这个包 */
   fetchBundle(syncCode: string, token?: string): Promise<{ file: HomeworkFile } | null>;
 }
 
 const RAW_BASE = `https://raw.githubusercontent.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}/${HOMEWORK_BRANCH}`;
 
-/** GitHub 源：优先 raw CDN（无限速），失败再回退 Contents API */
 const githubSource: HomeworkSource = {
   name: 'github',
   async fetchBundle(syncCode) {
     const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
-    // 1) raw CDN —— 接收方高频路径，不走 API 配额。
-    //    但 raw.githubusercontent.com 有 1-5 分钟级 CDN 缓存，发布后立刻读取可能拿到旧/空文件。
-    //    发现 syncCode 不一致或 entries 缺失就回退 Contents API 拿实时数据。
+    // raw CDN 无限速但有 1-5 分钟缓存；CDN 给空或 syncCode 不一致就回退 Contents API
     try {
       const r = await ghFetch(`${RAW_BASE}/${filePath}?t=${Date.now()}`, { raw: true });
       if (r.ok) {
         try {
           const file = JSON.parse(r.text) as HomeworkFile;
           if (file && Array.isArray(file.entries) && file.syncCode === syncCode) return { file };
-          // 文件存在但 syncCode 不对 = CDN stale 给到同名旧文件 → 继续回退
-        } catch { /* 解析失败也回退 */ }
-      } else if (r.status !== 404) {
-        // 非 404 错误（5xx、解析失败）→ 留给 API 兜底
+        } catch {}
       }
-    } catch { /* raw 不可达：继续试 API，别把网络错误直接抛出去 */ }
-    // 2) Contents API 回退（匿名每小时 60 次，仅兜底；保证 publish 后实时可读）
+    } catch {}
     const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}`);
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(describeStatus(r.status, r.text));
@@ -354,17 +276,15 @@ const githubSource: HomeworkSource = {
 };
 
 /**
- * 北科云盘源（v1.1.4 建立，v1.1.7 升级为目录转接范式）：
- *   新结构 homework/<发布码>/<课程ID>-<时间戳>.json（发布码文件夹=一个课程的作业包）
- *   旧结构 <syncCode>-<时间戳>.json（分享根目录扁平存放，v1.1.4~1.1.6）
- * 接收时先按新结构找（发布码由 syncCode 本地 HMAC 派生），没有再回退旧结构按前缀取最新。
+ * 北科云盘源（v1.1.4 起；v1.1.7 升级为目录转接范式）：
+ *   新结构 homework/<publishCode>/<courseKey>-<时间戳>.json
+ *   旧结构 <syncCode>-<时间戳>.json（扁平，按前缀取最新）
  */
 const anyshareSource: HomeworkSource = {
   name: 'ustb-cloud',
   async fetchBundle(syncCode) {
     const cfg = anyshareCtx();
     if (!cfg || !cfg.enabled) return null;
-    // 1) v1.1.7 目录结构：homework/<publishCode>/ 里取最新 json
     try {
       const publishCode = derivePublishCode(syncCode);
       const root = await getShareRoot(cfg);
@@ -381,15 +301,13 @@ const anyshareSource: HomeworkSource = {
           if (jsons[0]) return { file: await downloadBundleFile(cfg, jsons[0]) };
         }
       }
-    } catch { /* 目录结构不可用（不在校园网 / 外链变更）→ 回退旧结构 */ }
-    // 2) 旧版扁平结构：根目录 <syncCode>-<ts>.json
+    } catch {}
     const latest = await findLatestByPrefix(cfg, `${syncCode}-`);
     if (!latest) return null;
     return { file: await downloadBundleFile(cfg, latest) };
   },
 };
 
-/** 从云盘下载一个作业包 json 并校验（v1.1.7 抽出公用） */
 async function downloadBundleFile(cfg: AnyShareConfig, file: AnyShareFile): Promise<HomeworkFile> {
   const url = await getFileDownloadUrl(cfg, file);
   const r = await ghFetch(url, { raw: true });
@@ -399,14 +317,13 @@ async function downloadBundleFile(cfg: AnyShareConfig, file: AnyShareFile): Prom
   return parsed;
 }
 
-/** 当前 DB 的云盘配置（注册 IPC 时注入，模块级函数用） */
 let _db: DB | null = null;
 function anyshareCtx(): (AnyShareConfig & { enabled: boolean }) | null {
   if (!_db) return null;
   try { return getAnyShareConfig(_db); } catch { return null; }
 }
 
-/** 按优先级依次尝试各源，返回第一个命中的包 */
+/** 任一源返回包即用；GitHub 404/云盘目录里没前缀文件 = 确认「码不存在」，不被其他源的网络错误遮蔽 */
 async function fetchBundleFromAnySource(syncCode: string, token?: string): Promise<{ source: string; file: HomeworkFile } | null> {
   const errors: string[] = [];
   let confirmedMissing = false;
@@ -415,26 +332,17 @@ async function fetchBundleFromAnySource(syncCode: string, token?: string): Promi
     try {
       const hit = await src.fetchBundle(syncCode, token);
       if (hit) return { source: src.name, file: hit.file };
-      // 该源**确认**没有这个码（GitHub 404 / 云盘目录里没有前缀文件）
       confirmedMissing = true;
     } catch (e: any) {
       errors.push(`${src.name}: ${e?.message || e}`);
     }
   }
-  // 任一源明确「没有这个码」时按不存在处理：
-  // 其余源可能只是网络不可达（典型：不在校园网时云盘源必失败），不应遮蔽「码不存在」语义
   if (confirmedMissing) return null;
   if (errors.length) throw new Error(errors.join('；'));
   return null;
 }
 
-// ==================== 发布 ====================
-/**
- * v1.1.7：取/生成某课程对应的同步作业码。
- * 码按**课程通用 ID（courseKey）**共享：同名同授课老师的课程（含跨设备、平行班、
- * 重新导入的课表）用同一个码、同一个作业包——这是「通用固定 ID」的另一半。
- * 兼容：老版本按 courseId 存的码自动迁移到按 courseKey 存。
- */
+/** 取/生成某课程同步作业码（按 courseKey 共享：同名同老师 = 同一份作业包） */
 function getOrCreateCourseSyncCode(db: DB, courseId: number | null | undefined): string {
   if (!courseId) return generateCodePair().syncCode;
   const row = db.prepare('SELECT name, instructor FROM courses WHERE id = ?').get(courseId) as { name: string; instructor?: string | null } | undefined;
@@ -456,7 +364,6 @@ function getOrCreateCourseSyncCode(db: DB, courseId: number | null | undefined):
   return fresh;
 }
 
-/** 取某课程的同步作业码（没存过就返回空，不落地） */
 function getCourseSyncCode(db: DB, courseId: number | null | undefined): string {
   if (!courseId) return '';
   const row = db.prepare('SELECT name, instructor FROM courses WHERE id = ?').get(courseId) as { name: string; instructor?: string | null } | undefined;
@@ -468,7 +375,6 @@ function getCourseSyncCode(db: DB, courseId: number | null | undefined): string 
   return normalizeSyncCode(getSetting(db, SETTING_COURSE_SYNC_PREFIX + courseId)) || '';
 }
 
-/** v1.1.6：取课程 guid（db 迁移会给所有课程回填；这里兜底自生成一次） */
 function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): string {
   if (!courseId) return '';
   const row = db.prepare('SELECT guid FROM courses WHERE id = ?').get(courseId) as { guid?: string | null } | undefined;
@@ -480,18 +386,7 @@ function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): str
   return fresh;
 }
 
-/**
- * 发布/更新一条作业到 homework/<syncCode>.json。
- * 幂等：同一课程同一上课日期 + 同标题 → 覆盖更新远端已有条目（保留其 id，接收端无感）。
- * - publishCode 可选：填了 = 校验 HMAC；空 = 仅依赖 GitHub PAT
- * - syncCode 可选：填了直接用；空且 courseId 给了 → 用该课程持久化的（首次自动生成）；
- *   都没有 → 返回错误
- */
-
-/**
- * v1.1.6：双源发布 wrapper。解析 payload.targets / payload.target（兼容）/ settings 持久化默认，
- * 对每个目标分别调一次底层 publishHomework。任一目标失败不阻塞其他目标。
- */
+/** 双源发布 wrapper：解析 payload.targets / settings 持久化默认，对每个目标分别调底层 publishHomework */
 export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Promise<{
   ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string;
   targets?: ('github' | 'cloud')[];
@@ -518,8 +413,6 @@ export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Pro
   let firstErr: string | undefined;
   let firstAny: string | undefined;
   for (const t of targets) {
-    // 复用底层 publishHomework：单 target 调一次，副作用（设置 course syncCode 等）会按目标重复执行；
-    // 但因 syncCode 已经持久化在 db，第二次调用会拿到同一个 syncCode，结果幂等。
     const r: any = await publishHomework(db, { ...payload, target: t, targets: undefined });
     perTarget.push({ target: t, ok: !!r.ok, error: r.error, fileUrl: r.fileUrl, anyshareRaw: r.anyshareRaw });
     if (r.ok) lastOk = r;
@@ -540,7 +433,6 @@ export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Pro
 }
 
 export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string }> {
-  // 1) 发布码验证（可选；填了就要通过 HMAC）
   let syncCode: string | undefined;
   if (payload.publishCode && payload.publishCode.trim()) {
     const decoded = parsePublishCode(payload.publishCode);
@@ -570,7 +462,6 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   const publisher = getSetting(db, SETTING_PUBLISHER).trim() || '佚名';
   const courseGuid = getOrCreateCourseGuid(db, payload.courseId ?? (payload as any).courseId);
 
-  // v1.1.7：课程通用固定 ID（同名同授课老师在所有设备上一致；缺则现算并落库）
   let courseKey = '';
   {
     const cid = payload.courseId ?? (payload as any).courseId;
@@ -587,14 +478,10 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
 
-  // ===== 云盘（北科云盘）目标 =====
   if (target === 'cloud') {
     const cfg = getAnyShareConfig(db);
     if (!cfg || !cfg.enabled) return { ok: false, error: '北科云盘同步源未启用（设置 → 作业同步）' };
 
-    // v1.1.7 目录转接范式：homework/<发布码>/<课程ID>-<时间戳>.json
-    //（发布码文件夹 = 一个课程的作业包；文件名带课程 ID，接收端好对应；
-    //  匿名不能覆盖 → 每次发布写新时间戳文件，读取按修改时间取最新）
     const publishCode = derivePublishCode(syncCode);
     let pubDir: { docid: string; name: string } | null = null;
     try {
@@ -605,7 +492,6 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
       return { ok: false, error: `创建云盘作业目录失败：${e?.message || e}` };
     }
 
-    // 读现有包：优先 <courseKey>- 前缀 → 目录里任意最新 json → 旧版扁平 <syncCode>-（自动迁移）
     let file: HomeworkFile = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
     try {
       let latest = courseKey
@@ -625,15 +511,14 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
           if (remote && Array.isArray(remote.entries)) file = remote;
         }
       }
-    } catch { /* 云盘读失败按首次发布处理 */ }
+    } catch {}
 
     const merged = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid, courseKey });
-    // 匿名无法覆盖同名 → 每次发布写一个新文件 <课程ID>-<时间戳>.json
+    // 匿名无法覆盖同名 → 每次发布写一个新文件 <courseKey>-<时间戳>.json
     const cloudName = `${courseKey || syncCode}-${Date.now()}.json`;
     try {
       await uploadTextFileToDir(cfg, pubDir.docid, cloudName, JSON.stringify(merged.file, null, 2));
     } catch (e: any) {
-      // v1.1.5: 把 asFetch 透传的 anyshareRaw 一并回给前端，方便排障
       const raw = (e as any)?.anyshareRaw;
       return {
         ok: false,
@@ -650,11 +535,10 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     };
   }
 
-  // ===== GitHub 目标 =====
+  // GitHub 目标
   const token = getSetting(db, SETTING_TOKEN).trim();
   if (!token) return { ok: false, error: '尚未配置 GitHub 发布令牌（第一次发布时填写，保存在本机）' };
 
-  // 2) 读取远端现有包（404 = 首次发布）
   let file: HomeworkFile;
   let sha: string | undefined;
   {
@@ -669,7 +553,6 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
         sha = meta.sha;
         file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
         if (!Array.isArray(file.entries)) file.entries = [];
-        // 包已存在但课程名不同：以最新发布为准（一个包一个课程）
         file.courseName = courseName;
       } catch {
         return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
@@ -679,7 +562,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   const { file: mergedFile, entry, existing } = mergeEntry(file, { syncCode, courseName, sessionDate, title, payload, publisher, courseGuid });
 
-  // 4) 写回（一次 409 冲突重试）
+  // 一次 409/422 冲突重试
   const put = async (currentSha?: string) => {
     const body = {
       message: `homework: ${existing ? '更新' : '发布'} [${syncCode}] ${courseName} ${sessionDate} ${title}`,
@@ -692,7 +575,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   let r = await put(sha);
   if (r.status === 409 || r.status === 422) {
     const g = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}`, { token });
-    if (g.ok) { try { sha = JSON.parse(g.text).sha; } catch { /* ignore */ } }
+    if (g.ok) { try { sha = JSON.parse(g.text).sha; } catch {} }
     r = await put(sha);
   }
   if (!r.ok) return { ok: false, error: describeStatus(r.status, r.text) };
@@ -710,7 +593,7 @@ function randomUUIDSafe(): string {
   try { return randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
 }
 
-/** 组装/合并一条作业到包里（同日期 + 同标题 → 覆盖；幂等，返回新 file 与条目） */
+/** 组装/合并一条作业到包里（同日期+同标题 → 覆盖；幂等） */
 function mergeEntry(
   base: HomeworkFile,
   ctx: {
@@ -741,9 +624,7 @@ function mergeEntry(
     ? base.entries.map((e) => (e.id === entry.id ? entry : e))
     : [...base.entries, entry];
   file.syncCode = syncCode;
-  // v1.1.6：以最新发布为准更新包级 guid（老包第一次被新版发布后就有 guid 了）
   if (courseGuid) file.courseGuid = courseGuid;
-  // v1.1.7：通用固定课程 ID（接收端挂载首选依据）
   if (courseKey) file.courseKey = courseKey;
   file.courseName = courseName;
   file.updatedAt = now;
@@ -751,7 +632,6 @@ function mergeEntry(
   return { file, entry, existing };
 }
 
-/** 拉取某码包的远端已发布作业（发布对话框里展示，避免重复发布） */
 export async function fetchRemoteEntries(db: DB, syncCode: string): Promise<{ ok: boolean; error?: string; entries: HomeworkEntry[]; courseName?: string }> {
   const code = normalizeSyncCode(syncCode);
   if (!code) return { ok: false, error: '同步作业码格式不对', entries: [] };
@@ -765,11 +645,8 @@ export async function fetchRemoteEntries(db: DB, syncCode: string): Promise<{ ok
   }
 }
 
-// ==================== 接收 ====================
-/**
- * 按同步作业码拉取一个作业包并写入本地课程。
- * v1.1.6 课程匹配链：用户手选 courseId > 包内 courseGuid 精确命中 > 同名唯一 > 同名多个（返回候选让前端弹窗）> 无同名（courseNotFound）。
- */
+/** 按同步作业码拉取一个作业包并写入本地课程。
+ * 课程匹配链：用户手选 > 包内 courseKey（命中所有平行班）> 包内 courseGuid > 同名唯一 > 同名多个（让前端弹窗手选）> 无（courseNotFound）。 */
 export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseId?: number | null): Promise<SyncResult> {
   const result: SyncResult = {
     ok: false, entries: 0, created: 0, updated: 0,
@@ -805,8 +682,6 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
     return result;
   }
 
-  // ===== v1.1.7 课程匹配链 =====
-  // 1) 用户在前端弹窗里手选了课程（同名多课时前端传回 chooseCourseId）→ 直接用
   let hitCourseIds: number[] = [];
   if (chooseCourseId) {
     const c = db.prepare('SELECT id FROM courses WHERE id = ?').get(chooseCourseId) as { id: number } | undefined;
@@ -816,13 +691,10 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
     }
     hitCourseIds = [c.id];
   } else {
-    // 2) v1.1.7 包内 courseKey（同名同授课老师 → 全设备一致）→ 命中的**所有**课程都挂载
-    //    （同名同老师在语义上是同一门课；本地若有多个平行班，每个班都应收到作业）
     const courseKey = (file.courseKey || '').trim();
     if (courseKey) {
       hitCourseIds = (db.prepare('SELECT id FROM courses WHERE course_key = ?').all(courseKey) as Array<{ id: number }>).map((r) => r.id);
     }
-    // 3) v1.1.6 包内 guid 精确命中（老包兼容）
     if (!hitCourseIds.length) {
       const courseGuid = (file.courseGuid || '').trim();
       if (courseGuid) {
@@ -830,20 +702,17 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
         if (g) hitCourseIds = [g.id];
       }
     }
-    // 4) 还没命中（老包 / 接收方没同步过这门课）→ 按课程名兜底
     if (!hitCourseIds.length) {
       const sameName = db.prepare('SELECT id, name, code, instructor FROM courses WHERE TRIM(name) = ?').all(courseName) as Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
       if (sameName.length === 1) {
         hitCourseIds = [sameName[0].id];
       } else if (sameName.length > 1) {
-        // 同名多门且无法辨别 → 让前端弹窗手选，绝不静默挂到第一门
         result.courseCandidates = sameName;
         result.error = `本地有 ${sameName.length} 门同名课程「${courseName}」，且作业包无法辨别是哪一门，请选择挂载目标`;
         return result;
       }
     }
   }
-  // 5) 没有任何匹配 → 前端弹窗询问是否新建（避免误建空课）
   if (!hitCourseIds.length) {
     result.courseName = courseName;
     result.courseNotFound = true;
@@ -852,16 +721,13 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
   }
   result.coursesTouched = hitCourseIds.length;
 
-  // 条目写入：remote_id 去重；已存在则只更新内容字段，不动本地完成状态。
-  // v1.1.7：支持挂载到多门课程（courseKey 命中的平行班全部写入）。
   for (const courseId of hitCourseIds) {
     for (const e of file.entries) {
       if (!e || !e.id || !e.title) continue;
-      if (courseId === hitCourseIds[0]) result.entries++;  // 条目计数只按包计一次
+      if (courseId === hitCourseIds[0]) result.entries++;
       const due = e.dueDate && Number.isFinite(e.dueDate)
         ? e.dueDate
         : new Date(`${e.sessionDate || '1970-01-01'}T23:59:00`).getTime();
-      // remote_id 全局唯一（带课程维度，避免平行班互相顶掉）：同一条包目挂到第 N 门课时用后缀区分
       const rid = hitCourseIds.length > 1 ? `${e.id}#c${courseId}` : e.id;
       const local = db.prepare('SELECT id FROM course_requirements WHERE remote_id = ?').get(rid) as { id: number } | undefined;
       if (local) {
@@ -896,7 +762,6 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
   return result;
 }
 
-// ==================== IPC ====================
 export function registerHomework(db: DB) {
   _db = db;
   ipcMain.handle('homework:config', () => {
@@ -914,7 +779,6 @@ export function registerHomework(db: DB) {
     };
   });
 
-  /** v1.1.4：保存北科云盘作业同步源配置（外链地址 + 提取码 + 启用开关） */
   ipcMain.handle('homework:saveCloud', (_e, cfg: { url?: string; password?: string; enabled?: boolean }) => {
     const current = getAnyShareConfig(db) || { ...DEFAULT_ANYSHARE_CONFIG };
     let next: AnyShareConfig & { enabled: boolean };
@@ -939,19 +803,16 @@ export function registerHomework(db: DB) {
     return { ok: true, tokenSet: !!getSetting(db, SETTING_TOKEN).trim() };
   });
 
-  /** 生成一对新码（App 端生成；网站端生成需用相同 SECRET，见协议文档） */
   ipcMain.handle('homework:generateCodes', () => {
     const pair = generateCodePair();
     return { ok: true, ...pair };
   });
 
-  /** 校验发布码（本地 HMAC 比对，无需联网）；通过则一并返回解析出的同步码 */
   ipcMain.handle('homework:verifyCodes', (_e, publishCode: string) => {
     const syncCode = parsePublishCode(publishCode);
     return syncCode ? { ok: true, syncCode } : { ok: false };
   });
 
-  /** v1.1.3：取某课程已持久化的同步作业码（首次自动生成）；没指定 courseId 返回空 */
   ipcMain.handle('homework:courseSyncCode', (_e, courseId: number | null | undefined) => {
     if (!courseId) return { ok: false, syncCode: '', error: '请指定 courseId' };
     const existing = getCourseSyncCode(db, courseId);
@@ -962,8 +823,6 @@ export function registerHomework(db: DB) {
 
   ipcMain.handle('homework:publish', async (_e, payload: PublishPayload) => {
     try {
-      // v1.1.6：targets / target 字段都支持。Multi 处理双源 + 单源两种情况
-      // （单 target 时退化成一次 publishHomework 调用）。
       return await publishHomeworkMulti(db, payload);
     } catch (e: any) {
       return { ok: false, error: describeError(e) };

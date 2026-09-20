@@ -1,16 +1,7 @@
-/**
- * 关于面板（v1.1.7+）
- *
- *  - 启动时拉缓存显示；用户可点「立即拉取最新」从所有启用源聚合最新 about.txt
- *  - 用户可在本地直接编辑（保存到 %APPDATA%/task-manager/about.txt）
- *  - 勾「锁定本地」→ 下次启动不会被云端覆盖（与补丁原理一致：云端是源、本地是缓存）
- */
 import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Pencil, Save, X, Lock, Unlock, FolderOpen, FileText, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import dayjs from 'dayjs';
 
-/** 极简 Markdown 渲染：# / ## / ###、- 列表、**bold**、`code`、分段换行。
- *  不依赖第三方库（包体最小、可控）。 */
 function renderMarkdown(md: string): { __html: string } {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
   const lines = md.split('\n');
@@ -137,13 +128,11 @@ export default function AboutPanel({ appVersion }: { appVersion: string }) {
 
   return (
     <div className="space-y-3">
-      {/* 固定元信息：版本号、技术栈（与 markdown 内的内容并列，方便用户一眼看到） */}
       <div className="space-y-1 text-sm font-mono">
         <div className="flex"><span className="w-28 text-text-dim">应用名称</span><span className="text-neon-green">TaskManager</span></div>
         <div className="flex"><span className="w-28 text-text-dim">版本</span><span>v{appVersion || '—'}</span></div>
       </div>
 
-      {/* 关于文本 */}
       <div className="rounded-md border border-neon-green/15 bg-ink-900/40 overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-neon-green/10 bg-ink-800/60 text-[11px] font-mono text-text-dim">
           <FileText size={12} className="text-neon-green" />
@@ -166,7 +155,7 @@ export default function AboutPanel({ appVersion }: { appVersion: string }) {
               className="input-neon w-full font-mono text-[13px] leading-relaxed"
               rows={14}
               spellCheck={false}
-              placeholder="支持 # / ## / ### 标题，- 列表，**粗体**，\`代码\`，[text](url) 链接…"
+              placeholder="支持 # / ## / ### 标题，- 列表，**粗体**，`代码`，[text](url) 链接…"
             />
             <div className="flex gap-2 mt-2">
               <button onClick={saveLocal} className="btn-neon text-xs"><Save size={12} /> 保存本地</button>
@@ -186,7 +175,6 @@ export default function AboutPanel({ appVersion }: { appVersion: string }) {
         )}
       </div>
 
-      {/* 工具栏 */}
       <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
         <button onClick={refresh} disabled={refreshing} className="btn-neon text-xs">
           <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
@@ -212,14 +200,12 @@ export default function AboutPanel({ appVersion }: { appVersion: string }) {
         )}
       </div>
 
-      {/* 协议提示 */}
       <div className="text-[10px] text-text-dim font-mono leading-relaxed space-y-0.5">
         <div className="flex items-start gap-1"><Info size={10} className="mt-0.5 shrink-0" />
-          这份关于文本由 App 从所有启用更新源聚合（<strong>与补丁原理一致</strong>），首次启动写入本地缓存
-          <code className="px-1 mx-0.5 rounded bg-ink-700/60 text-neon-green">{cache.sha256 ? 'about.txt（已缓存）' : 'about.txt（默认内容）'}</code>。
+          这份关于文本会从所有启用的更新源自动同步到本地缓存 <code className="px-1 mx-0.5 rounded bg-ink-700/60 text-neon-green">{cache.sha256 ? 'about.txt（已缓存）' : 'about.txt（默认内容）'}</code>。
         </div>
-        <div>· 要全网同步更新：编辑仓库根 <code className="px-1 mx-0.5 rounded bg-ink-700/60">about.txt</code> → commit + push → 用户下次启动自动拉到</div>
-        <div>· 想保留本地版：编辑后勾「锁定本地」即可阻止云端覆盖</div>
+        <div>· 全网同步：编辑仓库根 <code className="px-1 mx-0.5 rounded bg-ink-700/60">about.txt</code> → commit + push → 用户下次启动自动拉到</div>
+        <div>· 保留本地版：编辑后勾「锁定本地」即可阻止云端覆盖</div>
       </div>
     </div>
   );

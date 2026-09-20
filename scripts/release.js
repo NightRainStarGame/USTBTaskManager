@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * 一键生成「服务器更新源」所需文件
+ * 生成「服务器更新源」所需文件
  *
- * 用法示例：
- *   node scripts/release.js --base-url https://dl.example.com/taskmanager
- *   node scripts/release.js --base-url https://dl.example.com/taskmanager --notes "修复了XXX"
- *   node scripts/release.js --base-url https://dl.example.com/taskmanager --notes-file RELEASE_NOTES.md --copy
+ * 用法：
+ *   node scripts/release.js --base-url https://dl.example.com/taskmanager --notes-file NOTES.md [--apply-default]
  *   node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
  *
  * 产物（默认输出到 release-manifest/）：
- *   latest.json                  ← 固定地址，每次发版覆盖它即可，老用户靠它感知更新
- *   releases/<version>.json      ← 历史版本清单归档（回滚用）
- *   SHA256SUMS.txt               ← 校验和清单
+ *   latest.json                  ← 固定地址，每次发版覆盖
+ *   releases/<version>.json      ← 历史清单归档
+ *   SHA256SUMS.txt
  *   UPLOAD-<version>.md          ← 上传清单与命令
+ *
+ * 本项目主流程已统一用 release-one-click.js（直接发布到 GitHub leastversion）。
+ * release.js 是给「想自己搭服务器 / CDN」的人用的：把产物一次性同步到自建站。
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -20,7 +21,6 @@ const crypto = require('node:crypto');
 
 const ROOT = path.resolve(__dirname, '..');
 
-// ============ 参数解析 ============
 function parseArgs(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -43,7 +43,7 @@ const version = String(args.version || pkg.version).replace(/^v/i, '');
 const outDir = path.resolve(ROOT, args.out || 'release-manifest');
 const filesSub = String(args['files-dir'] || 'files').replace(/^\/+|\/+$/g, '');
 
-// ============ 校验模式：直接检查线上地址是否可用 ============
+// 校验模式：直接检查线上地址是否可用
 if (args.verify) {
   verifyLive(String(args.verify)).catch((e) => {
     console.error(`✗ 校验过程出错：${e && e.message ? e.message : e}`);
@@ -53,7 +53,7 @@ if (args.verify) {
   main();
 }
 
-// ============ 主流程 ============
+// 主流程
 function main() {
   const file = resolveInstaller();
   if (!file) {
@@ -114,7 +114,7 @@ function main() {
   if (!selfCheck.ok) process.exit(1);
 }
 
-// ============ 定位安装包 ============
+// 定位安装包
 function resolveInstaller() {
   if (args.file && args.file !== true) {
     const p = path.resolve(ROOT, String(args.file));
@@ -139,7 +139,7 @@ function resolveInstaller() {
   return candidates[0] || null;
 }
 
-// ============ 工具函数 ============
+// 工具函数
 function hashFile(file) {
   const h = crypto.createHash('sha256');
   const buf = Buffer.allocUnsafe(1 << 20);
@@ -340,7 +340,7 @@ function printSummary(o) {
   line('');
 }
 
-// ============ 线上地址校验 ============
+// 线上地址校验
 async function verifyLive(url) {
   console.log(`\n检查更新源：${url}\n`);
   let text;

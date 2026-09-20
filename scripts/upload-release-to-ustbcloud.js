@@ -1,22 +1,20 @@
 /**
- * 发版辅助：把 latest.json + 安装包上传到北科云盘（AnyShare）分享根目录
+ * 发版辅助：把 latest.json + 安装包 + 补丁 + about.txt 上传到北科云盘（AnyShare）
  * 供「北科云盘更新源」的校内用户升级。
  *
- * 用法：node scripts/upload-release-to-ustbcloud.js <exe路径> [latest.json路径]
+ * 用法：
+ *   node scripts/upload-release-to-ustbcloud.js <exe路径> [latest.json路径]
+ *   node scripts/upload-release-to-ustbcloud.js --only-about    # 只推 about.txt
  */
 const path = require('path');
-
-const projectRoot = path.resolve(__dirname, '..');
-// 直接复用主进程的 AnyShare 客户端（编译产物，不依赖 electron API —— asFetch 用的是 net.fetch，
-// 但脚本环境没有 electron；这里做一个轻量 polyfill：用 Node 原生 fetch + 手动 redirect 处理）
 const fs = require('fs');
 
+const projectRoot = path.resolve(__dirname, '..');
 const LINK_URL = 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469';
 const PASSWORD = 'kc26';
 const BASE = 'https://yunpan.ustb.edu.cn';
 const LINK_ID = LINK_URL.split('/').pop();
 
-// ===== AnyShare 极简客户端（Node 版，独立于 electron/anyshare.ts）=====
 async function jfetch(url, opts = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 120000);
@@ -105,9 +103,7 @@ async function upload(root, name, buf) {
   return true;
 }
 
-// ===== 主流程 =====
 (async () => {
-  // --only-about：单独推送 about.txt（不传 exe / latest.json / 补丁），用户改了关于文本后快速推
   const args = process.argv.slice(2);
   const ONLY_ABOUT = args.includes('--only-about');
   const exePath = args.find((a) => !a.startsWith('--'));
@@ -133,21 +129,17 @@ async function upload(root, name, buf) {
   const before = await listFiles(root);
   console.log('[cloud] 当前文件:', before.map((f) => f.name).join(', ') || '(空)');
 
-  // latest.json：匿名不能覆盖，用时间戳版本名
   const ts = Date.now();
-// v1.1.6：anonymous 分享里安装包按 "<basename>-<ts>.exe" 命名（不能覆盖）。
-  // 同步给云盘的 latest.json 里 url 字段要写成 basename（不带 ts），App 端
-  // resolveDownloadUrl 按 base 前缀找最新一份换签名直链。
   const jsonRaw = fs.readFileSync(jsonPath, 'utf8');
   const jsonObj = JSON.parse(jsonRaw);
+  // 匿名不能覆盖：安装包按 "<basename>-<ts>.exe" 上传，latest.json 里 url 改成 basename（不带 ts），
+  // App 端 resolveDownloadUrl 按 base 前缀找最新一份换签名直链
   const baseExeName = path.basename(exePath).replace(/\.exe$/i, '') + '.exe';
   jsonObj.url = baseExeName;
   jsonObj.fileName = baseExeName;
   if (!jsonObj.page) jsonObj.page = 'https://github.com/NightRainStarGame/USTBTaskManager/releases';
 
-  // v1.1.7：增量补丁同步上传（命名范式 TaskManager-Patch-<from>-to-<to>.zip）。
-  // patches[].url 在 GitHub 版 latest.json 里是 raw 绝对链；云盘版改写成云盘内
-  // 的 basename（App 端 resolveDownloadUrl 按前缀找最新一份换签名直链）。
+  // 增量补丁：raw 绝对链 → 云盘 basename；命名范式 TaskManager-Patch-<from>-to-<to>.zip
   const patchUploads = [];
   if (Array.isArray(jsonObj.patches)) {
     for (const p of jsonObj.patches) {
@@ -160,14 +152,11 @@ async function upload(root, name, buf) {
       patchUploads.push({ local, baseName, entry: p });
     }
   }
-
-  // patches[].url 改写成云盘 basename 后再上传清单
   for (const u of patchUploads) u.entry.url = u.baseName;
   const jsonBuf2 = Buffer.from(JSON.stringify(jsonObj, null, 2) + '\n', 'utf8');
   await upload(root, `latest-${ts}.json`, jsonBuf2);
   console.log(`[cloud] ✓ latest-${ts}.json (${jsonBuf2.length} B, patches=${(jsonObj.patches || []).length})`);
 
-  // 安装包：<版本>-<时间戳>.exe（App 端按文件名前缀取最新）
   const exeName = path.basename(exePath);
   const exeBuf = fs.readFileSync(exePath);
   const cloudExeName = exeName.replace(/\.exe$/i, '') + `-${ts}.exe`;
@@ -175,7 +164,6 @@ async function upload(root, name, buf) {
   await upload(root, cloudExeName, exeBuf);
   console.log(`[cloud] ✓ ${cloudExeName}`);
 
-  // about.txt（v1.1.7）：仓库根常驻，云盘也同步一份 about-<ts>.txt
   const aboutLocal = path.join(projectRoot, 'about.txt');
   if (fs.existsSync(aboutLocal)) {
     const buf = fs.readFileSync(aboutLocal);
@@ -187,7 +175,6 @@ async function upload(root, name, buf) {
     console.log('[cloud] about.txt 不存在，跳过');
   }
 
-  // 补丁包：<basename>-<时间戳>.zip（App 端 resolveDownloadUrl 按前缀取最新）
   for (const u of patchUploads) {
     const buf = fs.readFileSync(u.local);
     const cloudName = u.baseName.replace(/\.zip$/i, '') + `-${ts}.zip`;

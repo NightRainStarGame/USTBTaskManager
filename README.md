@@ -4,44 +4,32 @@
 
 ## 下载安装
 
-**推荐：自建站点直链（nrsc.games，国内速度稳定）**
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.7.exe`
 
-| 版本   | 下载地址                                                                              |
-| ------ | ------------------------------------------------------------------------------------- |
-| 最新版 | `https://nrsc.games/downloads/taskmanager/leastversion/TaskManager-Setup-1.1.6.exe`    |
-| 上一版 | `https://nrsc.games/downloads/taskmanager/oldversion/TaskManager-Setup-1.1.5.exe`      |
+[Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
-也可以走 GitHub 通道（国内可能较慢）—— [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest)
-或仓库固定目录：
-
-- 最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.6.exe`
-- 上一版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/oldversion/TaskManager-Setup-1.1.5.exe`
+> 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.1.7.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
 ## 自动更新
 
-应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查三个更新源**，取版本号最高的那个升级；
-一个源连不上不影响其他源 —— 三通道备份。
+应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查所有启用的源**，取版本号最高的那个升级；
+一个源连不上不影响其他源。
+
+App 自带默认两个源：
 
 | 源 | 清单地址 | 说明 |
 |---|---|---|
-| **StarOS 自建站**（主源） | `https://nrsc.games/downloads/taskmanager/latest.json` | 安装包同站托管，国内速度快、无 GitHub 限速 |
-| GitHub / leastversion（备用） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | raw.githubusercontent.com 国内常超时，仅作兜底 |
-| **北科云盘**（AnyShare，需校园网） | `https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469` + 提取码 `kc26` | 校园网内速度最快，非校园网会超时失败，不影响其他源 |
+| **GitHub / leastversion**（主源） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | 与仓库发布动作同步，国内偶尔慢 |
+| **北科云盘**（AnyShare，需校园网） | `https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469` + 提取码 `kc26` | 校园网内速度最快，非校园网会超时失败 |
 
-> **v1.1.6 起：默认源自动追加。** 升级到 1.1.6 及以后时，应用启动时会**合并**当前内置的三个源与本地已有源（按 URL + 密码三元组比对），新增的源自动并入、用户手动加的源不动 —— 老用户升级后不会因为历史配置只看到 1 个源而漏升。
-
-自建源还有一个等价短地址，填哪个都行：
-
-```
-https://nrsc.games/taskmanager/latest.json
-```
+> 应用启动时会**合并**内置源与本地已有源（按 URL + 密码三元组比对），新增的源自动并入、用户手动加的源不动。
 
 清单里的 `url` 指向该源自己的安装包，下载后校验 SHA-256，**不匹配会拒绝安装**。
 
-> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可以增删源、切换主源；
-> 也可以填第三方镜像，例如 `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json`。
+> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可以增删源、切换主源。
 
 ## 使用指南
 
@@ -95,10 +83,10 @@ https://nrsc.games/taskmanager/latest.json
 1. 点「发布作业」→ 输入**发布密码**（班级共享口令）
 2. 首次发布会要求填一个 GitHub 令牌（对仓库有写权限即可，只存在本机，填一次）
 3. 选择**课程**和**上课日期**（会自动列出这门课近期的上课日期，每节课的作业可以不一样）
-4. 选择**发布目标**（v1.1.6 起**默认同时勾上 GitHub + 北科云盘**，双通道发布；只勾一个也行）
+4. 选择**发布目标**（默认同时勾上 GitHub + 北科云盘，双通道发布；只勾一个也行）
 5. 写作业标题和具体内容，点「发布」
 
-> **v1.1.6 双源发布** —— 一次填写会同时推到 GitHub 仓库和北科云盘（任一失败不影响另一个）。
+> **双源发布** —— 一次填写会同时推到 GitHub 仓库和北科云盘（任一失败不影响另一个）。
 > 设置 → 作业同步里也能改默认发布目标，持久化到本机。
 
 **同步作业**（全班都能用，无需密码）：
@@ -134,8 +122,8 @@ https://nrsc.games/taskmanager/latest.json
 
 **设置 → 软件更新**：
 
-1. 点「**检查更新**」，会同时查自建站和 GitHub 两个源，有新版本时显示版本号和更新说明
-2. 下载完成后显示 **SHA-256 校验值**，点「**立即安装并重启**」完成升级
+1. 点「**检查更新**」，会同时查所有启用源，有新版本时显示版本号和更新说明
+2. 下载完成后显示**SHA-256 校验值**，点「**立即安装并重启**」完成升级
 3. 网络不好可点「**打开发布页**」到浏览器手动下载
 4. 不想被打扰可以关掉「自动检查」，或对某个版本点「忽略此版本」
 5. 下方「更新源」可以增删源、切换主源（改了记得点「保存源」）
@@ -149,7 +137,7 @@ https://nrsc.games/taskmanager/latest.json
 - 📂 **项目** 看板 / 列表 / 时间线三种视图 · 拖拽切换状态
 - 💾 **数据安全** 一键备份 / 恢复 · 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 三源（自建站 + GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装；**v1.1.6 起支持增量补丁**（典型更新 12% 体积）；输入框失灵自检（v1.1.6）；splash 启动动画 + 樱花粉主题（v1.1.6）
+- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装；增量补丁协议（典型更新 12% 体积）；输入框失灵自检与补焦
 - ⚙️ **设置** 主题 / 学期 / 数据导出 / 小程序配置
 - 🪟 **小程序** 微信小程序 PC 端嵌套（架构预留，当前占位）
 
@@ -169,70 +157,49 @@ npm run dev
 npm run build:exe
 ```
 
-输出在 `release/` 目录，NSIS 安装包约 80MB。
+输出在 `release-v<版本>/` 目录，NSIS 安装包约 85MB。
 
 ## 发布新版本
 
 改完 `package.json` 里的 `version` 后：
 
 ```bash
-npm run release:one -- 1.1.7 --notes-file RELEASE-NOTES.md        # 一键：build + 三源分发 + commit + push
+npm run release:one -- 1.1.7 --notes-file RELEASE-NOTES.md        # 一键：build + 双源分发 + commit + push + Release 附件
 # 或手动分步：
 npm run build:exe          # 打包
-npm run publish:vps        # ① 发布到自建更新站（nrsc.games，主源）
-npm run publish:github     # ② 同步一份到 GitHub（备用镜像源）
-npm run publish:ustbcloud  # ③ 上传到北科云盘（需校园网；校园网外会超时失败，不阻塞主流程）
+npm run publish:github     # ① 同步一份到 GitHub（含 Release 附件）
+npm run publish:ustbcloud  # ② 上传到北科云盘（需校园网；校园网外会超时失败，不阻塞主流程）
 ```
 
-> **v1.1.6 起推荐用 `release:one`（一键脚本）。** 自动完成：打包 → 校验 → 分发目录滚动 →
-> latest.json 写入 → 增量补丁生成 → GitHub leastversion 推送 → GitHub Release 创建 → 草稿上传。
+> **推荐用 `release:one`（一键脚本）**：自动完成打包 → 校验 → 分发目录滚动 → latest.json 写入 →
+> 增量补丁生成 → GitHub leastversion 推送 → GitHub Release 创建 → 草稿附件上传 → 云盘同步上传。
 > `--execute` 才会真正改动文件；默认 dry-run 只预览计划。
 
-### ③ 北科云盘发布（`npm run publish:ustbcloud`）
+### 双源清单内容差异
 
-`scripts/upload-release-to-ustbcloud.js` 把 `latest.json` + 安装包上传到北科云盘
-（分享 ID = `AADAAEA94FBE6B4435B8D14A236FAC6469`，提取码 `kc26`），仅供校园网内用户升级。
-匿名分享不能覆盖同名文件，因此脚本会把清单上传成 `latest-<timestamp>.json`、把安装包上传成
-`<basename>-<timestamp>.exe`。App 端按前缀找修改时间最新的一份下载。
+GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `url` 改写为**云盘内 basename**
+（匿名不能覆盖同名，安装包按 `<basename>-<ts>.exe` 上传）。App 端 `resolveDownloadUrl`
+按 basename 前缀找修改时间最新的一份再换签名直链下载。
 
-```bash
-node scripts/upload-release-to-ustbcloud.js release-v1.1.6/TaskManager\ Setup\ 1.1.6.exe latest.json
-```
+`patches[]` 同样规则：GitHub 版是 raw 绝对链，云盘版改写成云盘内 basename。
 
-### ① 自建站主源（`npm run publish:vps`）
+### 自建源（可选）
 
-`scripts/publish-vps.js` 会自动完成整条链路：
-
-1. 定位安装包、计算 SHA-256
-2. 把 `leastversion/` 里的旧版滚进 `oldversion/`，新包放进 `leastversion/`
-3. 重写 `latest.json`、`oldversion/versions.json`、`SHA256SUMS.txt`
-   （写入站点目录 `D:\StarMain\Web\downloads\taskmanager\`，再由站点部署到 VPS）
-4. 打印同步到 VPS 的 rsync 命令
+如需额外搭建自建更新源（VPS / CDN），脚本 `scripts/publish-vps.js` 会把 `leastversion/` 的安装包
+和 `latest.json` 拷到站点目录（默认 `D:\StarMain\Web\downloads\taskmanager\`），再由站点部署到线上：
 
 ```bash
 node scripts/publish-vps.js                # 发布当前版本
 node scripts/publish-vps.js --dry-run      # 只预览计划，不动文件
-node scripts/publish-vps.js --notes-file RELEASE_NOTES.md
+node scripts/publish-vps.js --notes-file RELEASE-NOTES.md
 node scripts/publish-vps.js --site D:\StarMain\Web   # 换站点目录
 node scripts/publish-vps.js --keep 1       # 历史版本只留 1 个（默认 2）
 npm run verify:vps                         # 自检线上清单是否正常
 ```
 
-发布后把文件同步到 VPS（安装包约 85 MB，rsync 支持断点续传），**不用重启服务** —— 清单每次请求都读盘。
-
-### ② GitHub 备用源（`npm run publish:github`）
-
-`scripts/publish-github.js` 会创建 tag `vX.Y.Z` 的 Release、把安装包重命名为
-`TaskManager-Setup-X.Y.Z.exe` 上传，并生成/推送仓库根目录的 `latest.json`。
-可用 `--notes` / `--notes-file` 写更新说明，`--dry-run` 只预览不发布。
-
-> GitHub 单文件上限 100 MB，所以安装包走 Release 附件，不要提交进 Git 仓库。
-
-> 两个源的版本号不必强求同步 —— App 聚合时取**最高版本**，某个源发布慢了不会让用户漏更新。
-
-**更新源地址写在哪？** 内置默认值是 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`
-（**重新打包后才对新装用户生效**）；已安装用户的值存在本机 SQLite 的 `update_sources` 设置里，
-在「设置 → 软件更新 → 更新源」改，不用重新打包。
+> **更新源地址写在哪？** 内置默认值是 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`
+> （**重新打包后才对新装用户生效**）；已安装用户的值存在本机 SQLite 的 `update_sources` 设置里，
+> 在「设置 → 软件更新 → 更新源」改，不用重新打包。
 
 ## 清理历史打包产物
 
@@ -277,66 +244,3 @@ SQLite 数据库存放在系统用户目录：
 真实接入步骤：
 1. 小程序后台「设置 → 关联设置」关联公众号
 2. 配置「业务域名」白名单
-3. 用 Electron `<webview>` 替换占位组件，或集成 WMPF PC 框架
-
-## 技术栈
-
-| 层 | 选型 |
-|---|---|
-| 桌面壳 | Electron 33 |
-| 前端 | React 18 + TypeScript + Vite 5 |
-| 数据库 | better-sqlite3 |
-| 样式 | TailwindCSS 3 |
-| 状态 | Zustand |
-| 路由 | React Router 6 |
-| 图标 | Lucide React |
-| 日期 | Day.js |
-| 打包 | electron-builder |
-
-## 更新日志
-
-### v1.1.6（2026-09）
-
-- **软件更新三源** —— 内置第 3 个源：北科云盘（AnyShare，校园网内最快）；App 启动时自动合并 DEFAULT_UPDATE_SOURCES 与用户列表，新增源自动并入、用户手动加的源不动。
-- **增量补丁** —— 同版本差异的 asar 补丁包，典型更新体积从 90 MB 降到 ~11 MB（12%）；App 端检测到 patch 可用时优先走补丁通道（失败回退全量 Setup）；latest.json 的 patches 字段列出 <fromVersion>-to-<toVersion>.zip + sha256 + baseAsarSha256。
-- **作业同步双源发布** —— UI 默认同时勾上 GitHub + 北科云盘；homework_default_targets 持久化默认。
-- **课程同步精确挂载** —— 课程表新增 guid 列（8 位 + 唯一索引）；作业包带 courseGuid，同名多门课程不再乱挂。
-- **作业内容可展开** —— 同步下来的作业 description 终于渲染出来了。
-- **真·启动动画** —— splash 阶段显示 StarOS logo 缩放渐入 + 进度点 + 加载文案轮播，由 dbReady / domReady 里程碑驱动；守住 v1.1.5 红线（无 alwaysOnTop、paintWhenInitiallyHidden + skipTaskbar、先 ready-to-show 再 loadFile）。
-- **樱花粉主题** —— 设置 → 主题新增「🌸 樱花粉」（粉白底 + 玫瑰粉强调）；done / in_progress / overdue 状态色重调使其在粉系下协调。
-- **输入框失灵自检** —— 渲染层探测器（环形缓冲 50 条），input focus 状态下 keydown 停止 > 8s 自动判定失灵、抓快照 + 写 %TMP%/taskmanager-input-diag.log；设置 → 高级可导出诊断日志。
-- **发版一键化** —— npm run release:one 自动完成 build + patch + leastversion + GitHub Release + 北科云盘上传 + commit + push；--no-cloud / --no-release-page 可关掉单步。
-
-### v1.1.5（2026-09-18）
-
-- 启动动画（基础 splash）、星辉（青蓝荧光）主题、输入框 IME 修复、USTB 学期更新。
-
-### v1.1.4（2026-09-08）
-
-- 北科云盘（AnyShare）作业/更新双源、GitHub 速率限制解除、AnyShare 透传错误。
-
-## 目录
-
-```
-TaskManager/
-├─ electron/      # 主进程 + 数据库 + IPC
-│  ├─ db/         # SQLite schema / 迁移 / 自检修复
-│  ├─ ipc/        # 渲染进程 IPC 接口
-│  ├─ backup/     # 备份与恢复
-│  ├─ updater/    # 软件更新（检查 / 下载 / 校验 / 安装）
-│  └─ ustb/       # 教务课表导入
-├─ src/
-│  ├─ components/ # 通用组件
-│  ├─ pages/      # 六大模块
-│  ├─ store/      # Zustand
-│  ├─ hooks/      # 自定义 hooks
-│  ├─ types/      # 类型定义
-│  └─ styles/     # 全局样式
-├─ scripts/       # 发布脚本（publish-vps / publish-github）+ 端到端测试脚本
-├─ docs/          # 设计问答与部署文档
-├─ build/         # 应用图标（electron-builder 资源）
-├─ latest.json    # GitHub 备用源的更新清单（App 也会读取）
-├─ dist/          # Vite 产物
-├─ dist-electron/ # 主进程产物
-└─ release/       # electron-builder 打包输出（不入库）
-```

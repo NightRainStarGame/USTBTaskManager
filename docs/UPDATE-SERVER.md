@@ -1,140 +1,110 @@
-# 服务器更新源搭建指南
+# 更新源协议与自建指南
 
-> 目标：在服务器上准备一个**永远不变的地址**，App 从它读取版本信息，从而实现「老版本用户自动收到更新」。
+App 启动后（或点「检查更新」）会从所有启用的源并行查版本，取**最高版本**升级，单个源失败不影响其他源。
 
----
+App 内置默认两个公开源：
 
-## 0. 原理（一句话）
-
-App 不关心你的服务器是什么技术，它只做一件事：**GET 一个固定 URL，期待返回一段版本清单文本**。
-
-```
-App 启动 / 点击「检查更新」
-   │
-   ├─ GET  https://你的域名/taskmanager/latest.json     ← 这个地址永远不变
-   │
-   ├─ 返回 {"version":"0.3.1", "url":"...exe", "sha256":"...", "notes":"..."}
-   │
-   ├─ 比较 version 与本地版本 → 有新版则提示
-   ├─ 从 url 下载安装包 → 校验 sha256
-   └─ 启动安装包并退出当前应用
-```
-
-所以服务器上**只需要静态文件托管，不需要写任何后端代码**。
-
-每次发版你要做的只有两件事：
-
-1. 把新安装包传上去（放哪个路径都行，只要清单里的 `url` 指对了）
-2. 用新的内容**覆盖**那个固定地址的 `latest.json`
-
----
-
-## ⭐ 本项目当前实际使用的更新源（先看这节）
-
-已经搭好并投入使用了。**两个源并存，App 会同时查、取版本号最高的那个升级**，单个源挂掉不影响另一个。
-
-| 源 | 清单地址 | 托管在哪 |
+| 源 | 清单地址 | 备注 |
 |---|---|---|
-| **主源** | `https://nrsc.games/downloads/taskmanager/latest.json` | StarOS 站点（相邻项目 `D:\StarMain\Web`；VPS 上是 `/opt/starmain`） |
-| 备用 | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | GitHub 仓库根目录 |
+| **GitHub / leastversion**（主源） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | raw.githubusercontent.com 国内偶尔慢 |
+| **北科云盘**（AnyShare，需校园网） | `https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469` + 提取码 `kc26` | 校园网内速度最快 |
 
-- 主源短地址等价：`https://nrsc.games/taskmanager/latest.json`
-- 主源目录布局是 `downloads/taskmanager/{leastversion,oldversion}/`，**不是**下面「推荐结构」里的 `files/releases`。
-  站点页面「历史版本」区块就是按这个布局读 `oldversion/versions.json` 的。
-- 清单里 `url` / `page` 用 `__BASE__` 占位符，由站点服务端替换成 `.env` 的 `PUBLIC_BASE_URL`（当前是 `https://nrsc.games`）；
-  所以**换域名不用改清单**，改站点 `.env` 即可。
-- 清单响应头是 `Cache-Control: no-store`，客户端每次拿到最新版本 —— 不要改成可缓存。
-
-**发新版本只要两条命令**（细节见仓库 README「发布新版本」一节）：
-
-```bash
-npm run build:exe
-
-npm run publish:vps      # 写清单 + 滚版本 + 算 SHA-256，并打印 rsync 上服务器命令
-npm run publish:github   # 顺手把同一版本发到 GitHub 备用源（可选，但推荐）
-```
-
-发布完不用重启 VPS 上的服务 —— 清单每次请求都读盘。
-
-**改默认源地址**：`electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`（**重新打包后**才对新装用户生效）；
-已安装用户的值存在各自本机 SQLite 的 `update_sources` 里，在「设置 → 软件更新 → 更新源」改，不需要重新打包。
-
-> 下面 1~5 节是**从零搭一个更新源**的通用指南（自建服务器 / 腾讯云 COS / 阿里云 OSS / GitHub / 网盘），
-> 以后想换托管方案再看；照当前方案走的话不需要重新搭建。
+> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可增删源、切换主源。
+> 默认源地址写在 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`，新装用户首次启动自动并入。
 
 ---
 
-## 1. 服务器目录结构（推荐）
+## 1. 协议（latest.json）
 
-```
-<网站根目录>/taskmanager/
-├── latest.json                                   ← 固定地址，每次发版覆盖它
-├── releases/
-│   ├── 0.3.0.json                                ← 历史清单归档（可选，便于回滚）
-│   └── 0.3.1.json
-└── files/
-    ├── TaskManager Setup 0.3.0.exe               ← 旧版安装包建议保留
-    └── TaskManager Setup 0.3.1.exe
-```
+App 不关心服务器技术栈，只 GET 一个**永久不变**的 URL，期待返回版本清单文本。
 
-对应的更新源地址就是：
-
-```
-https://你的域名/taskmanager/latest.json
-```
-
-> **核心原则**：`latest.json` 的 URL 一旦发布给用户，就**永远不要改**。改路径 = 所有老版本 App 集体失联。
-
----
-
-## 2. 清单文件格式（latest.json）
+最小清单：
 
 ```json
 {
-  "version": "0.3.1",
-  "notes": "· 新增设置页软件更新功能\n· 修复课程无法添加作业",
-  "url": "https://dl.example.com/taskmanager/files/TaskManager%20Setup%200.3.1.exe",
-  "sha256": "b92a254f273bb210fe253f143f50b84fa1770e88cdc4bf344cd8dca87b7cad50",
-  "page": "https://pan.example.com/s/abcd",
-  "force": false
+  "version": "1.1.7",
+  "notes": "更新说明…",
+  "url": "https://…/TaskManager-Setup-1.1.7.exe",
+  "sha256": "…64位十六进制…",
+  "size": 97393759
 }
 ```
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `version` | ✅ | 形如 `0.3.1`，必须比用户本地版本大才会提示更新 |
-| `notes` | 建议 | 更新说明，App 里原样多行展示 |
-| `url` | 强烈建议 | 安装包**直链**。留空时 App 只能引导用户手动打开 `page` |
-| `sha256` | 建议 | 64 位十六进制；有值时下载完自动校验，不匹配会拒绝安装 |
-| `page` | 可选 | 发布页 / 网盘分享页，给用户手动下载的入口 |
-| `force` | 可选 | `true` 时 App 界面标为强制更新（不提供「忽略」） |
-| `minVersion` | 可选 | 预留字段，当前仅解析 |
+| `version` | ✅ | 必须大于用户本地版本才会提示更新 |
+| `notes` | 建议 | 多行文本，App 原样展示 |
+| `url` | 建议 | 直链；下载完验 SHA-256，不匹配拒绝安装 |
+| `sha256` | 建议 | 64 位十六进制 |
+| `size` | 建议 | 安装包字节数 |
+| `page` | 可选 | 网盘分享页等手动下载入口 |
+| `force` | 可选 | true 时标为强制更新 |
+| `patches[]` | 否 | 增量补丁（详见 §4） |
+| `asarSha256` / `asarSize` | 建议 | 配合 `patches[]` 让客户端核对基线 |
 
-**字段别名**（写错也能识别）：`latest`/`ver`/`tag` → `version`，`changelog`/`body` → `notes`，`download`/`installer`/`file` → `url`，`share`/`website`/`html_url` → `page`，`hash`/`checksum` → `sha256`。
+**字段别名**（写错也能识别）：`latest`/`ver`/`tag` → `version`，`changelog`/`body` → `notes`，`download`/`installer` → `url`，`share`/`website` → `page`，`hash`/`checksum` → `sha256`。
 
-> 也支持**纯文本清单**：只要文本里出现 `x.y.z` 形式的版本号，App 会自行抽出版本号、`http` 开头的下载地址、以及 64 位十六进制校验和。
+也支持**纯文本清单**（网盘直链里放一个 `latest.txt`）：任意位置出现 `x.y.z` 作为版本号；`http` 开头的行当作下载地址；64 位十六进制当作 sha256。
+
+服务器上**只需要静态文件托管**，不需要任何后端代码。
 
 ---
 
-## 3. 四种托管方式
+## 2. 命名范式（v1.1.7 起全源统一）
 
-### 方式 A：自建服务器（nginx）— 最推荐，完全可控
+清单文件 `latest.json` 是「哪个需要更新」的**唯一指路文件**。命名约定如下：
 
-假设网站根目录是 `/var/www`，把文件放到 `/var/www/taskmanager/`：
+### GitHub 源（仓库内，永久固定名）
+
+| 文件 | 命名 |
+|---|---|
+| 清单 | `latest.json`（仓库根） |
+| 整装包 | `leastversion/TaskManager-Setup-<v>.exe` |
+| 回退包 | `oldversion/TaskManager-Setup-<prev>.exe`（保留一个回退位） |
+| 增量补丁 | `leastversion/patches/TaskManager-Patch-<from>-to-<to>.zip` |
+| 关于文本 | `about.txt`（仓库根，常驻） |
+
+### 北科云盘源（匿名不能覆盖 → 一律 `<固定名>-<unix_ts>.<ext>` 时间戳版）
+
+| 文件 | 命名 | App 端查找方式 |
+|---|---|---|
+| 清单 | `latest-<ts>.json` | `findLatestByPrefix('latest', '.json')` 取最新 |
+| 整装包 | `TaskManager Setup <v>-<ts>.exe` | 清单 `url` 填 basename；`resolveDownloadUrl` 按前缀取最新换签名直链 |
+| 增量补丁 | `TaskManager-Patch-<from>-to-<to>-<ts>.zip` | `patches[].url` 填 basename；同上前缀解析 |
+| 关于文本 | `about-<ts>.txt` | `findLatestByPrefix('about', '.txt')` 取最新 |
+
+清单的差别**只有一处**：`url` / `patches[].url` 是云盘 basename 还是 http 直链，其他字段通用。
+
+---
+
+## 3. 自建源（可选）
+
+> 下面是为「想自己搭服务器 / CDN」的人准备的通用方案。多数用户用 GitHub + 北科云盘两个默认源就够。
+
+### 推荐目录结构
+
+```
+<网站根>/taskmanager/
+├── latest.json
+├── files/
+│   └── TaskManager Setup 1.1.7.exe
+└── releases/
+    └── 1.1.7.json              ← 历史清单归档（可选）
+```
+
+### nginx
 
 ```nginx
 server {
     listen 80;
     server_name dl.example.com;
 
-    # 1) 版本清单：固定地址，必须禁用缓存，否则用户拿到旧版本号
     location = /taskmanager/latest.json {
         root /var/www;
         default_type application/json;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
     }
 
-    # 2) 安装包与归档：以二进制流返回，避免被当成网页
     location /taskmanager/ {
         root /var/www;
         default_type application/octet-stream;
@@ -143,360 +113,124 @@ server {
 ```
 
 ```bash
-# 重载配置
 nginx -t && systemctl reload nginx
-# 加 HTTPS（强烈建议，否则部分网络环境会拦截）
-certbot --nginx -d dl.example.com
+certbot --nginx -d dl.example.com   # 强烈建议 HTTPS
 ```
 
-**关键点**
-- `latest.json` 必须走 `no-store`，否则中间任何一层缓存都会让用户看不到新版
-- `.exe` 必须以 `application/octet-stream`（或任意非 `text/html`）返回，App 会拒绝下载 `text/html` 响应
-- 目录要有读权限：`chmod -R 755 /var/www/taskmanager`
+要点：
+- `latest.json` 必须 `no-store` —— 否则中间任何一层缓存都会让用户看不到新版
+- `.exe` 必须 `application/octet-stream`（或任意非 `text/html`）—— App 会拒绝 `text/html` 响应
+- 临时测试：`python3 -m http.server 8080` 即可
 
-**临时快速测试**（不装 nginx）：
+### 云对象存储（腾讯云 COS / 阿里云 OSS）
 
-```bash
-cd /var/www/taskmanager && python3 -m http.server 8080
-```
+1. 创建存储桶，权限设**公有读、私有写**
+2. 上传到 `/taskmanager/latest.json` 和 `/taskmanager/files/...`
+3. **必做**：`latest.json` 加 HTTP 头 `Cache-Control: no-cache`（控制台 → 对象 → 自定义头部）
+4. `.exe` 缓存时间可以设长，文件名带版本号不会冲突
 
-Caddy 极简写法：
+### GitHub Releases
 
-```
-dl.example.com {
-    root * /var/www
-    file_server
-    header /taskmanager/latest.json Cache-Control "no-store"
+适合开源项目：
+
+- 安装包上传到 Release 资产 → 直链形如
+  `https://github.com/<user>/<repo>/releases/download/v1.1.7/TaskManager-Setup-1.1.7.exe`
+- `latest.json` 放仓库根，用 raw 访问
+- 国内访问 raw 经常超时，不建议作为国内用户的主源
+
+### 网盘
+
+多数网盘（百度、夸克、阿里云盘分享页）**不支持直链**，只能作为手动下载入口：清单里 `page` 填分享页地址、`url` 留空，App 检测到更新时引导用户跳浏览器手动下载。
+
+---
+
+## 4. 增量补丁协议
+
+`latest.json` 扩展：
+
+```json
+{
+  "version": "1.1.7",
+  "url": "…/TaskManager-Setup-1.1.7.exe",
+  "asarSha256": "…",
+  "asarSize":   72278590,
+  "patches": [
+    {
+      "fromVersion":     "1.1.6",
+      "url":             "…/TaskManager-Patch-1.1.6-to-1.1.7.zip",
+      "sha256":          "…",
+      "size":            22122937,
+      "baseAsarSha256":  "…1.1.6 app.asar sha256…",
+      "baseAsarSize":    72253048,
+      "appAsarSha256":   "…1.1.7 app.asar sha256…",
+      "appAsarSize":     72278590,
+      "createdAt":       "2026-09-20T07:26:36.053Z"
+    }
+  ]
 }
 ```
 
----
+补丁 zip 结构：
+  1) `app.asar` —— electron-builder 输出的新 asar 完整副本（deflate 后一般 ≤ 25 MB）
+  2) `manifest.json` —— `{ schema, fromVersion, toVersion, baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize, createdAt }`
 
-### 方式 B：云对象存储（腾讯云 COS / 阿里云 OSS）
+客户端应用流程（`scripts/release-one-click.js` + `electron/updater/patchApply.ts`）：
+1. 找 `patches[]` 里有 `fromVersion == app.getVersion()` 的补丁
+2. 下载 zip + 验 sha256
+3. helper 进程比对 `baseAsarSha256` ↔ 当前 `app.asar` sha256（不匹配 → 回退全量）
+4. helper 解压 `app.asar`、自检 `appAsarSha256`、rename 旧 asar、落新 asar
+5. 校验通过 → 主进程重启
 
-最适合「不想运维服务器」的场景。
+任意一步失败 → 自动回退全量 Setup 安装。
 
-1. 创建存储桶（地域选离你近的，如 `ap-beijing`）
-2. 权限设为 **公有读、私有写**
-3. 上传到 `/taskmanager/latest.json`、`/taskmanager/files/...`
-4. 拿到访问地址：
-
-```
-https://<bucket>-<appid>.cos.ap-beijing.myqcloud.com/taskmanager/latest.json
-```
-
-**必做设置（最容易踩的坑）**
-- 给 `latest.json` 单独设置 HTTP 头部 `Cache-Control: no-cache`（COS 控制台 → 对象 → 自定义头部）
-- 或者给它绑定一条 CDN 刷新规则 / 短缓存策略
-- 其余 `.exe` 文件缓存时间可以设长（如 30 天），文件名带版本号不会冲突
-
-**上传命令**
-
-```bash
-pip install coscmd
-coscmd config -a <SecretId> -s <SecretKey> -b <bucket> -r ap-beijing
-coscmd upload -r release-manifest/ /taskmanager/
-coscmd upload "release-0.3.1/TaskManager Setup 0.3.1.exe" /taskmanager/files/
-```
-
-> 有自定义域名的话可以绑到存储桶上，地址更好看：`https://dl.example.com/taskmanager/latest.json`
+发版约定：
+- `scripts/release-one-click.js` 已集成（一键：build → 滚动 → 补丁 → latest.json → commit → push → Release 附件 → 云盘）
+- 历史 asar 缓存在 `scripts/.asar-cache/`，不提交仓库
+- `scripts/verify-patch-build.js` 自检补丁链可生成 + 可解压
 
 ---
 
-### 方式 C：GitHub / Gitee Releases
+## 5. about.txt 多源分发
 
-适合开源项目。
+「关于」页面文本也走相同的两个源协议（与补丁原理一致）：App 启动后从所有启用源并行 GET `about.txt`，按 sha256 选最新一份缓存到 `%APPDATA%/task-manager/about.txt`。
 
-- 安装包上传到 Release 资产 → 直链形如
-  `https://github.com/<user>/<repo>/releases/download/v0.3.1/TaskManager.Setup.0.3.1.exe`
-- `latest.json` 放在仓库里，用 raw 地址访问：
-  `https://raw.githubusercontent.com/<user>/<repo>/main/latest.json`
-  或开 GitHub Pages：`https://<user>.github.io/<repo>/latest.json`
+文件命名见 §2（GitHub 仓库根 `about.txt`；云盘 `about-<ts>.txt`）。
 
-**注意**
-- App 下载时已开启重定向跟随，GitHub 的 302 跳转没问题
-- 国内网络访问 `raw.githubusercontent.com` / `objects.githubusercontent.com` 经常超时 → 不建议作为国内用户的主更新源
-- 更稳的做法：GitHub 仅作为归档，更新源放在你自己的服务器或对象存储
+UI：
+- 关于页面提供「立即拉取最新」「编辑本地」「锁定本地」「打开缓存目录」
+- 锁定本地后，云端下次启动不再覆盖（本地编辑优先）
 
----
-
-### 方式 D：网盘
-
-**结论先说**：绝大多数网盘（百度网盘、夸克、阿里云盘分享页）**不支持直链下载**，无法作为自动更新源。
-
-可行的两种用法：
-
-| 用法 | 配置 | 效果 |
-|---|---|---|
-| **分享页 + 手动下载**（推荐） | `page` 填分享页地址，`url` 留空 | 检查更新能提示新版本，点「打开发布页」跳浏览器，用户手动下载 |
-| **直链**（需自行解析） | `url` 填解析出的直链 | 需要满足：链接长期有效、无防盗链 UA 校验、Content-Type 非 HTML |
-
-即使有直链，也要注意：
-- 直链**不能过期**（很多网盘直链几小时就失效 → 用户第二天点下载就 403）
-- 部分网盘按 UA 防盗链 → App 已伪装成浏览器 UA，但仍可能被拦
-- 建议：网盘作为**备份通道**，正式更新走静态托管
+发布 about：
+1. 编辑仓库根 `about.txt` → `git commit && git push` → 所有用户下次启动自动拉到
+2. （可选）传到云盘：`about-<unix_ts>.txt` —— 走 `npm run about:push`
 
 ---
 
-## 4. 发版流程
-
-```bash
-# 1) 改版本号（package.json 的 version）
-#    Settings 页显示的版本号自动读主进程，无需手改
-
-# 2) 打包
-npx electron-builder --win nsis --x64 --config.directories.output=release-0.3.1
-
-# 3) 生成服务器所需文件（自动算 SHA-256 + 写清单 + 出自检）
-node scripts/release.js --base-url https://dl.example.com/taskmanager \
-  --notes-file RELEASE_NOTES.md --copy
-
-# 4) 上传 release-manifest/ 整个目录 + 安装包到服务器
-
-# 5) 自检线上地址
-node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
-```
-
-### `release.js` 参数
-
-| 参数 | 说明 |
-|---|---|
-| `--base-url <url>` | **必填**，服务器上 taskmanager 目录的公开地址，用于拼出下载链接 |
-| `--file <path>` | 指定安装包；默认自动找 `release-<版本>/TaskManager Setup <版本>.exe` |
-| `--version <v>` | 覆盖版本号；默认读 `package.json` |
-| `--notes <文本>` | 更新说明；`\n` 会被转成换行 |
-| `--notes-file <路径>` | 从文件读更新说明（**多行说明推荐这个**） |
-| `--page <url>` | 填发布页 / 网盘分享页地址 |
-| `--sha256 <hash>` | 手填校验和（默认自动计算） |
-| `--force` | 标记为强制更新 |
-| `--min-version <v>` | 最低可升级版本 |
-| `--out <dir>` | 输出目录，默认 `release-manifest/` |
-| `--files-dir <name>` | 安装包子目录名，默认 `files` |
-| `--copy` | 把安装包复制进输出目录，方便整目录一次上传 |
-| `--apply-default` | 把更新地址直接写进 `electron/updater/index.ts` 的默认常量 |
-| `--verify <url>` | **校验模式**：拉取线上清单，检查连通性、版本号、下载地址、Content-Type |
-
-产物：
-
-```
-release-manifest/
-├── latest.json              上传到  <base>/latest.json
-├── releases/0.3.1.json      上传到  <base>/releases/0.3.1.json（归档）
-├── SHA256SUMS.txt           校验和清单
-└── UPLOAD-0.3.1.md          本次上传清单与命令
-```
-
----
-
-## 5. 把地址告诉 App
-
-有两个位置，优先级：**设置页手填 > 代码默认值**。
-
-### 方式 1（推荐）：写进代码默认值，所有用户自动生效
-
-```ts
-// electron/updater/index.ts
-export const DEFAULT_UPDATE_SOURCE = 'https://dl.example.com/taskmanager/latest.json';
-```
-
-改完必须**重新 build + 打包**，之后分发出的安装包自带更新源，用户什么都不用填。
-
-也可以直接由脚本写入：
-
-```bash
-node scripts/release.js --base-url https://dl.example.com/taskmanager --apply-default
-```
-
-### 方式 2：用户自己填
-
-设置 → 软件更新 → 更新源地址 → 粘贴 → 保存地址。
-
-> ⚠️ 注意时序：**已经分发出去的安装包**，如果里面 `DEFAULT_UPDATE_SOURCE` 是空的，那用户必须手动填一次地址才能收到更新。所以第一次带更新功能的版本，最好就把默认地址填好再打包。
-
----
-
-## 6. 排查对照表
+## 6. 排查
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 「尚未配置更新源地址」 | 地址为空 | 检查设置页，或确认打包时 `DEFAULT_UPDATE_SOURCE` 已填 |
-| 「域名无法解析」 | DNS 未生效 / 地址拼写错误 | `nslookup 域名` 确认 |
-| 「连接失败：目标拒绝连接」 | 服务未启动 / 端口不对 | 浏览器直接访问该 URL 试 |
-| 「HTTP 404」 | 文件没上传，或路径大小写不一致 | 用 `--verify` 定位；Linux 区分大小写 |
-| 「更新源内容无法识别为版本清单」 | 返回的是 HTML（错误页 / 网盘分享页） | 确认是 JSON 直链，不是分享页 |
-| 检查到新版本但下载失败，提示「返回的是网页/接口数据」 | `url` 指向分享页而非文件直链 | 换成真实文件地址 |
+| 「尚未配置更新源地址」 | 地址为空 | 检查设置页；或确认打包时 `DEFAULT_UPDATE_SOURCES` 已填 |
+| 「域名无法解析」 | DNS 未生效 / 拼写错误 | `nslookup 域名` 确认 |
+| 「HTTP 404」 | 文件没上传，或路径大小写不一致 | Linux 区分大小写 |
+| 「更新源内容无法识别为版本清单」 | 返回的是 HTML（错误页 / 网盘分享页） | 确认是 JSON 直链 |
+| 检测到新版本但下载提示「返回的是网页/接口数据」 | `url` 指向分享页而非文件直链 | 换成真实文件地址 |
 | 服务器上明明有新版本，App 却说「已是最新」 | 清单被缓存 | 给 `latest.json` 加 `Cache-Control: no-store` |
-| 「安装包校验失败（SHA-256 不匹配）」 | 上传不完整 / 打包后又重新生成过 | 重新跑 `release.js` 并重新上传两者 |
+| 「安装包校验失败（SHA-256 不匹配）」 | 上传不完整 / 重新生成过 | 重跑发版脚本并重传两者 |
 | 「该端口被浏览器安全策略禁止」 | 用了 1 / 7 / 9 等不安全端口 | 改用 80 / 443 / 8080 |
 | 「HTTPS 证书校验失败」 | 自签证书 | 用合法证书，或先用 http 测试 |
 
-### 常用自检命令
+常用自检：
 
 ```bash
-# 清单能不能拿到、是不是 JSON
-curl -sI https://dl.example.com/taskmanager/latest.json
-
-# 安装包直链是否存在、Content-Type 对不对
-curl -sI "https://dl.example.com/taskmanager/files/TaskManager%20Setup%200.3.1.exe"
-# 期望： 200，Content-Type 不是 text/html
-
-# 完整校验（推荐）
-node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
+curl -sI https://你的域名/taskmanager/latest.json
+curl -sI "https://你的域名/taskmanager/files/TaskManager%20Setup%201.1.7.exe"
 ```
 
 ---
 
 ## 7. 已知限制
 
-- **不支持自动降级**：只有当清单里的版本号大于用户本地版本时才会提示。想回滚，只能手动分发旧安装包（或临时把 `latest.json` 指到一个更高版本号 + 旧安装包，不推荐）。
-- **不做增量更新**：每次都是完整安装包（约 84 MB）。网速慢的用户会有等待。
-- **不静默安装**：App 只负责下载并拉起安装包，安装过程仍由用户确认（NSIS 向导）。
-- **无灰度 / 无下载统计**：当前是纯静态方案。如需按用户分批放量或统计下载量，需要在服务器上加一层简单的接口（可以以后再加，App 侧只需改地址）。
-
----
-
-## 8. v1.1.6 增量补丁协议（块 4a/4b）
-
-> 引入目的：常规发版 ~90 MB，对网速慢或限流用户不够友好。补丁包只携带新 `app.asar`（deflate 压缩后一般 10~25 MB），客户端校验基线 + helper 进程落新 asar 两步完成升级。
-
-### 协议字段（latest.json 扩展）
-
-在原字段之外，新增：
-
-```json
-{
-  ...,
-  "asarSha256": "...",      // 本次发布对应的 app.asar sha256
-  "asarSize":   12345678,   // app.asar 字节数
-  "patches": [
-    {
-      "fromVersion": "1.1.5",
-      "url":         "https://.../leastversion/patches/1.1.5-to-1.1.6.zip",
-      "sha256":      "...补丁包 sha256...",
-      "size":        12345678,
-      "baseAsarSha256": "...1.1.5 app.asar sha256...",  // 升级前的预期 asar 哈希
-      "baseAsarSize":   12345678,
-      "appAsarSha256":  "...1.1.6 app.asar sha256...",  // 升级后的 asar 哈希
-      "appAsarSize":    12345678,
-      "createdAt":      "2026-09-20T13:00:00.000Z"
-    }
-  ]
-}
-```
-
-| 新字段 | 必填 | 说明 |
-|---|---|---|
-| `asarSha256` | 建议 | 让客户端能核对「自己磁盘上的 app.asar 哈希」与最新版的预期值，配合下面 `patches` 用 |
-| `patches[]` | 否 | 每个补丁对应一个起点版本。可存在多条（如 1.1.4→1.1.6、1.1.5→1.1.6） |
-| `fromVersion` | ✅ | 客户端必须在自己 `app.getVersion()` 等于该值时才尝试应用（防跨版本跳过） |
-| `baseAsarSha256` | ✅ | 升级**前**的 `app.asar` sha256；Helper 进程用它核对基线漂移 |
-| `appAsarSha256` | ✅ | 升级**后**的 `app.asar` sha256；Helper 落盘后自检 |
-
-### 补丁 zip 内容
-
-```
-<fromVersion>-to-<toVersion>.zip
-├── app.asar          ← 完整新 app.asar（deflate 压缩）
-└── manifest.json     ← { schema: 'taskmanager-patch-v1', fromVersion, toVersion,
-                        baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize,
-                        createdAt, createdIso }
-```
-
-约束：
-
-- `app.asar` 必须是 electron-builder 产物 `resources/app.asar` 的**逐字节拷贝**，无重打包
-- `manifest.json` 的所有 sha256 必须是发布者现场计算（不要复用模板）
-- 体积预期：deflate 压缩后一般 ≤ 25 MB（视源 asar 内容而定）
-
-### 客户端应用流程（块 4b）
-
-```
-检测到 winner.hasUpdate=true
-   │
-   ├── 找 patches[] 里有 fromVersion == 本地 app.getVersion() 的补丁
-   │     │
-   │     ├── 找到 → 走补丁通道：
-   │     │     1. 下载补丁 zip + 验 sha256
-   │     │     2. 读 manifest → 校验基线 baseAsarSha256 vs 当前 app.asar sha256
-   │     │        （不一致 → fall back 全量 Setup）
-   │     │     3. 解压 app.asar → sha256 自检 vs manifest.appAsarSha256
-   │     │     4. 弹窗「重启完成更新」+ 显示补丁大小 vs 全量大小
-   │     │     5. 用户确认 → app.relaunch() 前 spawn helper 进程
-   │     │     6. helper 等主进程退出 → rename 旧 asar（backup）→ 落新 asar
-   │     │     7. 校验落盘后 sha256 == appAsarSha256
-   │     │
-   │     └── 没找到 → 走老全量通道
-   │
-   └── 任何一步失败 → 自动回退全量下载
-```
-
-### 故障兜底矩阵
-
-| 场景 | 行为 |
-|---|---|
-| 补丁下载 404/超时 | 回退全量 Setup |
-| 补丁 sha256 不匹配 | 删除已下载 zip，回退全量 Setup |
-| `baseAsarSha256` 与当前 asar 不一致 | 用户可能跨版本跳了，**不要回退**——直接把全量 Setup 走下去 |
-| helper 落盘失败 | helper 回滚 rename，App 启动时检测 sha256 不对，继续走全量补丁 |
-| 没有匹配 fromVersion 的补丁（用户早于 fromVersion） | 全量 Setup |
-
-### 发版侧约定
-
-- 脚本：`scripts/release-one-click.js`（已集成）
-- 发布后产物：`leastversion/{TaskManager-Setup-<v>.exe, patches/<prev>-to-<v>.zip}` + 同步的 `latest.json`
-- 历史 asar 缓存：`scripts/.asar-cache/<version>.{asar,json}` —— 不要提交到仓库，由脚本维护
-- 自检脚本：`scripts/verify-patch-build.js` —— 验证补丁链可生成 + 可解压，无须真正 build:exe
-
-## 9. v1.1.7 文件命名范式（全源统一）
-
-清单文件（latest.json）是「哪个需要更新」的**唯一指路文件**：App 只 GET 清单，
-按清单里的 `version` / `url` / `patches[]` 决定走全量还是增量。文件命名约定如下：
-
-### GitHub 源（仓库内，永久固定名）
-
-| 文件 | 命名 | 说明 |
-|---|---|---|
-| 最新清单 | `latest.json`（仓库根） | App 每次启动 GET 的入口 |
-| 整装包 | `leastversion/TaskManager-Setup-<v>.exe` | `<v>` 形如 1.1.7 |
-| 回退包 | `oldversion/TaskManager-Setup-<prev>.exe` | 保留上一版一个回退位 |
-| 增量补丁 | `leastversion/patches/TaskManager-Patch-<from>-to-<to>.zip` | v1.1.7 起统一 `TaskManager-Patch-` 前缀（旧 `1.1.5-to-1.1.6.zip` 保留不动，清单仍指路） |
-
-### 北科云盘源（匿名不能覆盖 → 一律 `<固定名>-<unix_ts>.<ext>` 时间戳版）
-
-| 文件 | 命名 | App 端查找方式 |
-|---|---|---|
-| 清单 | `latest-<ts>.json` | `findLatestByPrefix('latest', '.json')` 取最新 |
-| 整装包 | `TaskManager Setup <v>-<ts>.exe` | 清单 `url` 填 basename，`resolveDownloadUrl` 按前缀取最新 |
-| 增量补丁 | `TaskManager-Patch-<from>-to-<to>-<ts>.zip` | 清单 `patches[].url` 填 basename，补丁下载前同样按前缀解析 |
-
-### 清单字段速查（与命名范式配套）
-
-- `version`：最新版本号；`url`：整装包（http 直链或云盘 basename）；`sha256` / `size`：整装包校验
-- `patches[]`：每条 `{ fromVersion, url, sha256, size, baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize }`
-  - `fromVersion` = 补丁适用于的**当前版本**；`baseAsarSha256` 用于校验用户当前 asar 是否匹配基线
-- 云盘版清单与 GitHub 版清单的差别**只有一处**：`url` / `patches[].url` 是云盘 basename 还是 http 直链
-
-## 10. v1.1.7 about.txt 多源分发
-
-「关于」页面文本同样从所有启用源拉取（**与补丁原理一致**），按 sha256 选最新一份缓存到本地。
-
-### 文件命名
-
-| 文件 | 命名 | App 端查找方式 |
-|---|---|---|
-| 关于文本 | `about.txt`（GitHub 仓库根，常驻） | 直接 GET |
-| 云盘版 | `about-<ts>.txt`（云盘匿名不能覆盖） | `findLatestByPrefix('about', '.txt')` 取最新 |
-
-App 启动时把源 url 的 `latest.json` 替换成 `about.txt` 作为拉取地址，云盘源则走云盘前缀解析。
-
-### 协议要点
-
-- App 启动 → 从所有启用源并行 GET `about.txt` → 写入 `%APPDATA%/task-manager/about.txt`
-- 关于页面提供「立即拉取最新」按钮 + 「本地编辑」 + 「锁定本地」开关
-- 锁定本地后，云端下次启动不再覆盖（本地编辑优先）
-
-### 发布时如何同时推 about.txt
-
-1. 编辑仓库根 `about.txt` → `git commit && git push`
-2. （可选）传到云盘：`about-<unix_ts>.txt`
-3. 用户启动 App → 关于页面拉到最新
+- **不支持自动降级**：清单版本号必须大于本地版本才会提示。回滚只能手动分发旧安装包。
+- **不静默安装**：App 只下载并拉起安装包，安装过程仍由用户在 NSIS 向导里确认。
+- **无灰度 / 下载统计**：纯静态方案，需要的话在服务器加一层简单接口即可，App 侧只需改地址。

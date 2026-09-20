@@ -29,7 +29,6 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
-// ==================== 参数解析（与 release.js 同一套写法） ====================
 function parseArgs(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -74,7 +73,7 @@ const SUMS_TXT = path.join(DL_DIR, 'SHA256SUMS.txt');
 const NEW_NAME = `${productName}-Setup-${version}.exe`;
 const MANIFEST_URL = `${BASE_URL}/${SUB}/latest.json`;
 
-// ==================== 入口 ====================
+// 入口
 if (args.verify) {
   verifyLive(typeof args.verify === 'string' ? args.verify : MANIFEST_URL).catch((e) => {
     console.error(`✗ 校验过程出错：${e && e.message ? e.message : e}`);
@@ -84,7 +83,7 @@ if (args.verify) {
   main();
 }
 
-// ==================== 主流程 ====================
+// 主流程
 function main() {
   log('');
   log('══════════════════════════════════════════════');
@@ -175,7 +174,7 @@ function main() {
   printSummary({ manifest, plan });
 }
 
-// ==================== 定位安装包 ====================
+// 定位安装包
 function resolveInstaller() {
   if (args.file && args.file !== true) {
     const p = path.resolve(ROOT, String(args.file));
@@ -200,7 +199,7 @@ function resolveInstaller() {
   return hits[0] || null;
 }
 
-// ==================== 滚动规划 ====================
+// 滚动规划
 /**
  * 决定哪些文件从 leastversion/ 滚进 oldversion/、哪些历史版本该删。
  * 注意：与新版**同名**的文件视为重复发布，直接覆盖，不参与滚动。
@@ -280,7 +279,7 @@ function resolveNotes(prevManifest) {
   return `TaskManager v${version}`;
 }
 
-// ==================== 工具 ====================
+// 工具
 function log(msg) { console.log(msg); }
 function step(msg) { console.log(`\n▶ ${msg}`); }
 function fail(msg) { console.error(`\n✗ ${msg}\n`); process.exit(1); }
@@ -352,7 +351,7 @@ function fmtSize(n) {
   return n + ' B';
 }
 
-// ==================== 结果输出 ====================
+// 结果输出
 function printSummary(o) {
   const line = (s) => console.log(s);
   line('');
@@ -382,7 +381,7 @@ function printSummary(o) {
 
 function toPosix(p) { return String(p).replace(/\\/g, '/'); }
 
-// ==================== 线上校验 ====================
+// 线上校验
 /**
  * 发一个请求拿响应。优先用系统 curl —— 它和 App（Chromium net 栈）一样走**操作系统证书库**；
  * node 自带的 CA 包在装了 HTTPS 中间盒 / 企业根证书的机器上会 `unable to verify the first
