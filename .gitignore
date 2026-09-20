@@ -21,6 +21,9 @@ out-app*/
 .workbuddy/
 .vs/
 scripts/.input-test*/
+scripts/.asar-cache/
+scripts/_*.py
+scripts/_*.txt
 scripts/*.png
 scripts/*.ps1
 *.log
@@ -75,3 +78,9 @@ _mobile_dom.html
 # ==================== safe-delete 拦不住、用 mv 兜底的废弃产物 ====================
 _deprecated_garbage/
 _deprecated*/
+
+# temp scratch files (truncated to 0 byte; safe-delete blocks rm)
+_ps_result.txt
+electron/anyshare/_*.ts
+electron/homework/_*.txt
+electron/updater/_*.ts
