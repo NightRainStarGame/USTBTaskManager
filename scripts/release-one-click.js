@@ -205,7 +205,12 @@ try {
   newAsarInfo = asarPatch.stashAsar(version, ASAR_PATH(version));
   ok(`app.asar sha256=${newAsarInfo.sha256.slice(0, 16)}… size=${(newAsarInfo.size / 1024 / 1024).toFixed(2)} MB`);
 
-  if (prevDistVersion) {
+  /**
+   * 防自指 bug：prevDistVersion 推断来自 leastversion/，如果 prevDistVersion === version
+   * （如本脚本自己刚把新包拷到 leastversion 但缓存里只有这个版本），生成 1.1.6→1.1.6 自指
+   * 补丁没意义，应跳过。
+   */
+  if (prevDistVersion && prevDistVersion !== version) {
     let fromInfo = asarPatch.readAsarInfo(prevDistVersion);
     if (!fromInfo) {
       // 缓存丢失：从旧 NSIS 包（leastversion 已滚走 → 去 oldversion/ 找）抽
@@ -241,6 +246,8 @@ try {
     } else {
       console.log(`    [!] 历史 asar 信息缺失且无法从 NSIS 抽出，跳过补丁生成`);
     }
+  } else if (prevDistVersion === version) {
+    console.log(`    [!] prevDistVersion === version（${version}），跳过自指补丁`);
   } else {
     console.log('    无前一版本（first release），跳过补丁');
   }
@@ -283,7 +290,14 @@ if (newAsarInfo) {
   latest.asarSize = newAsarInfo.size;
 }
 latest.patches = newPatches;
-fs.writeFileSync(latestPath, JSON.stringify(latest, null, 2) + '\n');
+// 幂等：--resume 重跑时如果内容字节不变就跳过写文件，避免无意义 commit
+const newLatestContent = JSON.stringify(latest, null, 2) + '\n';
+const oldLatestContent = fs.readFileSync(latestPath, 'utf8');
+if (newLatestContent === oldLatestContent) {
+  console.log('    latest.json 内容未变（--resume 跳过写盘）');
+} else {
+  fs.writeFileSync(latestPath, newLatestContent);
+}
 ok(`version=${version} url=${latest.url} patches=${newPatches.length}`);
 
 // ---------- 7. git 提交推送 ----------
@@ -316,6 +330,17 @@ if (!NO_RELEASE_PAGE) {
       console.log(`    Release id=${releaseId}`);
     }
 
+    // 拉取已有附件列表，跳过已存在的（GitHub 不允许同名重复上传）
+    let existingNames = new Set();
+    try {
+      const assetsJson = curlJson(token, `${REPO_API}/releases/${releaseId}/assets?per_page=100`, 'GET');
+      const arr = JSON.parse(assetsJson);
+      if (Array.isArray(arr)) existingNames = new Set(arr.map((a) => a.name));
+      if (existingNames.size) console.log(`    已有附件 ${existingNames.size} 个：${[...existingNames].join(', ')}`);
+    } catch (e) {
+      console.log(`    [!] 拉取附件列表失败：${e.message}（可能稍后会因同名重复而失败）`);
+    }
+
     // 上传附件：Setup exe + 增量补丁 zip（v1.1.6 块 4）
     const assetsToUpload = [
       { path: path.join(leastDir, DIST_NAME(version)), name: DIST_NAME(version), type: 'application/octet-stream' },
@@ -330,6 +355,10 @@ if (!NO_RELEASE_PAGE) {
     for (const a of assetsToUpload) {
       if (!fs.existsSync(a.path)) {
         console.log(`    [!] 附件不存在，跳过 ${a.name}`);
+        continue;
+      }
+      if (existingNames.has(a.name)) {
+        console.log(`    附件 ${a.name} 已存在，跳过上传`);
         continue;
       }
       const sizeMB = fs.statSync(a.path).size / 1024 / 1024;

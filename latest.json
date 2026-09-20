@@ -21,17 +21,6 @@
       "appAsarSha256": "a684e1f7c2b6459baf0e8650fd9a565343ed47ed309ea84c332e12084bde569b",
       "appAsarSize": 72253048,
       "createdAt": "2026-09-20T06:23:10.640Z"
-    },
-    {
-      "fromVersion": "1.1.6",
-      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/1.1.6-to-1.1.6.zip",
-      "sha256": "5d479a3e28b4e00952b254c65de2bb800ce64fcb5ab5d2da582070b19c447bbe",
-      "size": 22110392,
-      "baseAsarSha256": "a684e1f7c2b6459baf0e8650fd9a565343ed47ed309ea84c332e12084bde569b",
-      "baseAsarSize": 72253048,
-      "appAsarSha256": "a684e1f7c2b6459baf0e8650fd9a565343ed47ed309ea84c332e12084bde569b",
-      "appAsarSize": 72253048,
-      "createdAt": "2026-09-20T06:35:15.465Z"
     }
   ]
 }
