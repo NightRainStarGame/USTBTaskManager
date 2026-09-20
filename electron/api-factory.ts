@@ -171,6 +171,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
           sourceIndex?: number;
           sourceName?: string;
           checkedAt?: number;
+          latencyMs?: number;
         } | null;
         perSource: Array<{
           source: UpdateSourceDTO;
@@ -192,6 +193,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
             reason?: string;
             message?: string;
             checkedAt?: number;
+            latencyMs?: number;
           };
         }>;
         checkedAt: number;

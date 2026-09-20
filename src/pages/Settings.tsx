@@ -30,7 +30,25 @@ interface PerSourceResult {
     sha256?: string | null;
     notes?: string | null;
     forced?: boolean;
+    /** 拉清单耗时（毫秒） */
+    latencyMs?: number;
+    sourceIndex?: number;
+    sourceName?: string;
   };
+}
+
+/** 延迟格式化：<1s 显示 ms，≥1s 显示 x.xs */
+function fmtLatency(ms?: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** 延迟分级配色：绿 <800ms / 黄 <3s / 红 ≥3s */
+function latencyClass(ms?: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return 'text-text-dim';
+  if (ms < 800) return 'text-neon-green';
+  if (ms < 3000) return 'text-neon-yellow';
+  return 'text-neon-danger';
 }
 
 const PROFILE_FIELDS: { key: keyof UserProfile; label: string; placeholder?: string; type?: string }[] = [
@@ -275,6 +293,10 @@ export default function SettingsPage() {
           latestVersion: result.latestVersion,
           reason: result.reason,
           message: result.message,
+          latencyMs: result.latencyMs,
+          downloadUrl: result.downloadUrl,
+          sha256: result.sha256,
+          pageUrl: result.pageUrl,
         }));
         setUpdateInfo({ ...r.winner, perSource } as any);
       } else {
@@ -287,6 +309,16 @@ export default function SettingsPage() {
     } finally {
       setUpdateChecking(false);
     }
+  };
+
+  /** 同版本多源可用时，手动选择从哪个源下载更新 */
+  const pickSource = (i: number) => {
+    setAggregate((a) => {
+      if (!a) return a;
+      const entry = a.perSource[i];
+      if (!entry?.result?.ok || !entry.result.downloadUrl) return a;
+      return { ...a, winner: entry.result };
+    });
   };
 
   const startDownload = async () => {
@@ -925,22 +957,55 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* 多源结果汇总 */}
+        {/* 多源结果汇总（含测速延迟 + 手动选源下载） */}
         {aggregate && aggregate.perSource.length > 0 && !updateMsg && (
           <div className="mt-1 p-3 rounded-md border border-neon-green/15 bg-ink-base/40 space-y-1">
             <div className="font-mono text-[10px] text-text-dim mb-1">
               {aggregate.checkedAt ? `检查时间：${dayjs(aggregate.checkedAt).format('YYYY-MM-DD HH:mm:ss')}` : '本次检查结果'}
+              {' · '}
+              {aggregate.perSource.filter((p) => p.result.ok).length}/{aggregate.perSource.length} 源连通
             </div>
-            {aggregate.perSource.map(({ source, result }, i) => (
-              <div key={i} className="flex justify-between font-mono text-[10px]">
-                <span className="text-text-secondary truncate pr-2">{source.name}{source.primary ? ' (主)' : ''}</span>
-                <span className={result.ok ? 'text-neon-green' : 'text-neon-danger'}>
-                  {result.ok
-                    ? `v${result.latestVersion}${result.hasUpdate ? ' · 有更新' : ' · 已是最新'}`
-                    : (result.reason || '失败') + (result.message ? ` · ${result.message}` : '')}
-                </span>
-              </div>
-            ))}
+            {aggregate.perSource.map(({ source, result }, i) => {
+              const isWinner = aggregate.winner?.sourceIndex === result.sourceIndex && !!aggregate.winner;
+              const canPick = result.ok && !!result.downloadUrl && result.hasUpdate &&
+                result.latestVersion === aggregate.winner?.latestVersion;
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center justify-between gap-2 font-mono text-[10px] rounded px-1.5 py-1 border ${
+                    isWinner ? 'border-neon-green/40 bg-neon-green/5' : 'border-transparent'
+                  }`}
+                >
+                  <span className="text-text-secondary truncate pr-1 flex items-center gap-1.5">
+                    {source.name}{source.primary ? ' (主)' : ''}
+                    {result.ok && result.latencyMs != null && (
+                      <span className={`px-1 rounded bg-ink-base/60 border border-current/20 ${latencyClass(result.latencyMs)}`} title="拉取该源清单的耗时">
+                        {fmtLatency(result.latencyMs)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex items-center gap-1.5 shrink-0">
+                    <span className={result.ok ? 'text-neon-green' : 'text-neon-danger'}>
+                      {result.ok
+                        ? `v${result.latestVersion}${result.hasUpdate ? ' · 有更新' : ' · 已是最新'}`
+                        : (result.reason === 'network' ? '连不上' : (result.reason || '失败')) + (result.message ? ` · ${result.message}` : '')}
+                    </span>
+                    {canPick && !isWinner && (
+                      <button
+                        onClick={() => pickSource(i)}
+                        className="px-1.5 py-0.5 rounded text-[9px] border border-neon-yellow/40 text-neon-yellow hover:bg-neon-yellow/10"
+                        title="从该源下载更新（版本相同，速度可能不同）"
+                      >
+                        用此源下载
+                      </button>
+                    )}
+                    {isWinner && result.hasUpdate && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-green/10 border border-neon-green/40 text-neon-green">下载源</span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 

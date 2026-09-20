@@ -22,7 +22,20 @@ interface UpdatePayload {
     name: string; url: string; ok: boolean; latestVersion: string | null;
     reason?: string; message?: string;
     type?: 'anyshare' | 'http'; password?: string; sourceIndex?: number;
+    latencyMs?: number; downloadUrl?: string | null; sha256?: string | null; pageUrl?: string | null;
   }>;
+}
+
+/** 延迟格式化与分级配色（与 Settings 页一致） */
+function fmtLatency(ms?: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+function latencyColor(ms?: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  if (ms < 800) return '#00FF88';
+  if (ms < 3000) return '#FFD60A';
+  return '#FF5566';
 }
 
 interface DownloadState {
@@ -130,6 +143,23 @@ export default function UpdateNotification({ externalTrigger }: Props) {
     if (url) await window.taskAPI.updater.openExternal(url);
   };
 
+  /** 切换下载源：点击多源详情里同版本可用的源行 */
+  const switchSource = (i: number) => {
+    const ps = payload?.perSource?.[i];
+    if (!ps || !ps.ok || !ps.downloadUrl || ps.latestVersion !== payload?.latestVersion) return;
+    setPayload({
+      ...payload!,
+      downloadUrl: ps.downloadUrl,
+      sha256: ps.sha256 ?? payload!.sha256,
+      pageUrl: ps.pageUrl || payload!.pageUrl,
+      source: ps.url,
+      sourceIndex: ps.sourceIndex ?? payload!.sourceIndex,
+      sourceName: ps.name,
+    });
+    setDlPath(null);
+    setDl(null);
+  };
+
   return (
     <div
       // v1.1.5: 外层 pointer-events-none 避免挡住右下角其他按钮（保存设置、Calendar + 按钮）；
@@ -172,7 +202,7 @@ export default function UpdateNotification({ externalTrigger }: Props) {
           </div>
         )}
 
-        {/* 多源详情（可折叠） */}
+        {/* 多源详情（可折叠，显示测速延迟，点击行切换下载源） */}
         {payload.perSource && payload.perSource.length > 1 && (
           <div>
             <button
@@ -180,18 +210,40 @@ export default function UpdateNotification({ externalTrigger }: Props) {
               className="font-mono text-[10px] text-text-dim hover:text-neon-green flex items-center gap-1"
             >
               {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-              查看 {payload.perSource.length} 个源的检查结果
+              查看 {payload.perSource.length} 个源的连通与测速
             </button>
             {expanded && (
               <div className="mt-1 space-y-1">
-                {payload.perSource.map((s, i) => (
-                  <div key={i} className="font-mono text-[10px] text-text-secondary bg-ink-base/40 rounded px-2 py-1 border border-neon-green/10 flex justify-between">
-                    <span className="truncate">{s.name}</span>
-                    <span className={s.ok ? 'text-neon-green' : 'text-neon-danger'}>
-                      {s.ok ? `v${s.latestVersion}` : (s.reason || '失败')}
-                    </span>
-                  </div>
-                ))}
+                {payload.perSource.map((s, i) => {
+                  const canSwitch = s.ok && !!s.downloadUrl && s.latestVersion === payload.latestVersion;
+                  const isActive = s.sourceIndex === payload.sourceIndex;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => canSwitch && !isActive && switchSource(i)}
+                      disabled={!canSwitch}
+                      title={canSwitch && !isActive ? '从该源下载（点击切换）' : canSwitch ? '当前下载源' : '该源不可用或版本不同'}
+                      className={`w-full font-mono text-[10px] rounded px-2 py-1 border flex justify-between items-center gap-2 text-left ${
+                        isActive
+                          ? 'border-neon-green/40 bg-neon-green/5'
+                          : canSwitch
+                            ? 'border-neon-green/10 bg-ink-base/40 hover:border-neon-green/40 cursor-pointer'
+                            : 'border-neon-green/10 bg-ink-base/40 opacity-70 cursor-default'
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-1.5">
+                        {s.name}
+                        {s.latencyMs != null && (
+                          <span style={{ color: latencyColor(s.latencyMs) }}>{fmtLatency(s.latencyMs)}</span>
+                        )}
+                      </span>
+                      <span className={`shrink-0 flex items-center gap-1.5 ${s.ok ? 'text-neon-green' : 'text-neon-danger'}`}>
+                        {s.ok ? `v${s.latestVersion}` : (s.reason || '失败')}
+                        {isActive && <span className="text-[9px] text-neon-green border border-neon-green/40 rounded px-1">下载源</span>}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

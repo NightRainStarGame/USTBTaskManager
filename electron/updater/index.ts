@@ -82,6 +82,8 @@ export interface UpdateCheckResult {
   sourceIndex?: number;
   sourceName?: string;
   checkedAt?: number;
+  /** 拉取该源清单的耗时（毫秒），用于测速展示与同版本择优 */
+  latencyMs?: number;
 }
 
 export interface UpdateAggregate {
@@ -374,13 +376,15 @@ export async function checkForUpdate(
   }
 
   let text: string;
+  const t0 = Date.now();
   try {
     text = await fetchManifestText(src);
   } catch (e: any) {
     const cfg = anyshareCfgFromSource(src);
     const hint = cfg ? '（北科云盘源：请确认在校园网内、提取码正确、分享里有 latest.json）' : '';
-    return { ...base, reason: 'network', message: describeError(e) + hint };
+    return { ...base, reason: 'network', message: describeError(e) + hint, latencyMs: Date.now() - t0 };
   }
+  const latencyMs = Date.now() - t0;
 
   const manifest = parseManifest(text, src.url);
   if (!manifest) {
@@ -411,10 +415,11 @@ export async function checkForUpdate(
     pageUrl: manifest.page || src.url,
     sha256: manifest.sha256,
     forced: hasUpdate && !!manifest.force,
+    latencyMs,
   };
 }
 
-/** 查所有启用源，挑版本号最高的更新；任一源失败不影响其他源 */
+/** 查所有启用源，挑版本号最高的更新（同版本取延迟最低的源）；任一源失败不影响其他源 */
 export async function checkAllSources(db: DB | null): Promise<UpdateAggregate> {
   const currentVersion = app.getVersion();
   const all = getSources(db);
@@ -443,7 +448,11 @@ export async function checkAllSources(db: DB | null): Promise<UpdateAggregate> {
       compareVersions(result.latestVersion, currentVersion) > 0
     )
     .map(({ result }) => result)
-    .sort((a, b) => compareVersions(b.latestVersion!, a.latestVersion!))[0] ?? null;
+    // 版本号最高者优先；同版本时延迟低（速度更快）的源胜出
+    .sort((a, b) =>
+      compareVersions(b.latestVersion!, a.latestVersion!) ||
+      (a.latencyMs ?? Number.MAX_SAFE_INTEGER) - (b.latencyMs ?? Number.MAX_SAFE_INTEGER)
+    )[0] ?? null;
 
   const anyConfigured = all.some((s) => s.enabled && !!s.url);
   return { currentVersion, ok: anyConfigured, anyConfigured, winner, perSource, checkedAt };
@@ -778,6 +787,10 @@ export async function autoCheckUpdate(db: DB | null, win: BrowserWindow | null) 
         latestVersion: result.latestVersion,
         reason: result.reason,
         message: result.message,
+        latencyMs: result.latencyMs,
+        downloadUrl: result.downloadUrl,
+        sha256: result.sha256,
+        pageUrl: result.pageUrl,
       }));
       const payload = { ...agg.winner, perSource };
       if (win && !win.isDestroyed()) win.webContents.send('update:available', payload);
