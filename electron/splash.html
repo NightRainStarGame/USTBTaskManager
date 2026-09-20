@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
     <title>StarOS 启动中…</title>
     <style>
       :root {
@@ -32,7 +32,7 @@
           radial-gradient(circle at 50% 45%, rgba(0,255,136,0.10) 0%, transparent 55%),
           var(--c-bg);
       }
-      .stage { position: relative; width: 140px; height: 140px; }
+      .stage { position: relative; width: 140px; height: 140px; animation: logoIn 0.7s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
 
       /* 中心 logo 方块 */
       .core {
@@ -82,30 +82,65 @@
         text-transform: uppercase;
         text-shadow: 0 0 8px rgba(0,255,136,0.55), 0 0 22px rgba(0,255,136,0.30);
         margin-left: 0.35em; /* 视觉居中补偿 letter-spacing */
+        animation: fadeSlideIn 0.6s ease-out 0.25s both;
       }
       .tagline {
         font-size: 10px;
         letter-spacing: 0.3em;
         color: var(--c-text-dim);
         text-transform: uppercase;
+        animation: fadeSlideIn 0.6s ease-out 0.4s both;
       }
 
-      /* 进度条 */
+      /* 阶段文案（真实里程碑驱动；无事件时本地轮播兜底） */
+      .status {
+        height: 16px;
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: var(--c-text-dim);
+        animation: fadeSlideIn 0.6s ease-out 0.55s both;
+        transition: opacity 0.25s ease;
+      }
+      .status.blink { animation: fadeSlideIn 0.6s ease-out 0.55s both, statusBlink 1.8s ease-in-out 1.2s infinite; }
+
+      /* 进度条（真实里程碑驱动，宽度由 JS 设置） */
       .bar-wrap {
-        margin-top: 12px;
+        margin-top: 2px;
         width: 220px;
-        height: 2px;
+        height: 3px;
         background: rgba(0,255,136,0.10);
         border-radius: 2px;
         overflow: hidden;
+        animation: fadeSlideIn 0.6s ease-out 0.55s both;
       }
       .bar-fill {
+        width: 8%;
         height: 100%;
         background: linear-gradient(90deg, var(--c-primary) 0%, var(--c-primary-bright) 100%);
         box-shadow: 0 0 6px rgba(0,255,136,0.7);
-        animation: fill 2.6s cubic-bezier(.55,.05,.45,.95) infinite;
+        transition: width 0.45s cubic-bezier(0.3, 0.8, 0.3, 1);
+        border-radius: 2px;
+      }
+      .pct {
+        font-size: 9px;
+        color: var(--c-text-dim);
+        letter-spacing: 0.2em;
+        margin-top: 8px;
+        animation: fadeSlideIn 0.6s ease-out 0.55s both;
       }
 
+      @keyframes logoIn {
+        0%   { transform: scale(0.2); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      @keyframes fadeSlideIn {
+        0%   { opacity: 0; transform: translateY(8px); }
+        100% { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes statusBlink {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.45; }
+      }
       @keyframes pulseCore {
         0%, 100% { transform: scale(1); filter: brightness(1); }
         50%      { transform: scale(1.06); filter: brightness(1.18); }
@@ -117,11 +152,6 @@
       @keyframes spin {
         from { transform: rotate(0deg); }
         to   { transform: rotate(360deg); }
-      }
-      @keyframes fill {
-        0%   { width: 0%; }
-        60%  { width: 92%; }
-        100% { width: 100%; opacity: 0.55; }
       }
     </style>
   </head>
@@ -135,6 +165,43 @@
     </div>
     <div class="wordmark">StarOS</div>
     <div class="tagline">made by Lasarac</div>
-    <div class="bar-wrap"><div class="bar-fill"></div></div>
+    <div class="status" id="status">正在唤醒小豆芽…</div>
+    <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
+    <div class="pct" id="pct">INIT</div>
   </body>
+  <script>
+    (function () {
+      var statusEl = document.getElementById('status');
+      var barEl = document.getElementById('bar');
+      var pctEl = document.getElementById('pct');
+      var driven = false; // 收到第一个真实里程碑后停止本地轮播
+
+      // 兜底轮播：万一 IPC 迟到，文案也不至于干等
+      var fallbackMsgs = ['正在唤醒小豆芽…', '正在加载课程数据…', '正在连接模块…', '正在绘制界面…'];
+      var fi = 0;
+      var fallbackTimer = setInterval(function () {
+        if (driven) { clearInterval(fallbackTimer); return; }
+        fi = (fi + 1) % fallbackMsgs.length;
+        statusEl.textContent = fallbackMsgs[fi];
+      }, 1400);
+
+      function setProgress(pct, text) {
+        driven = true;
+        clearInterval(fallbackTimer);
+        if (typeof text === 'string' && text) statusEl.textContent = text;
+        if (typeof pct === 'number' && pct >= 0) {
+          barEl.style.width = Math.min(100, Math.max(2, pct)) + '%';
+          pctEl.textContent = Math.min(100, Math.max(0, Math.round(pct))) + '%';
+        }
+        statusEl.classList.add('blink');
+      }
+
+      // 主进程真实里程碑（db ready → 窗口创建 → 渲染层就绪）
+      if (window.splashAPI && typeof window.splashAPI.onProgress === 'function') {
+        window.splashAPI.onProgress(function (data) {
+          setProgress(data && data.pct, data && data.text);
+        });
+      }
+    })();
+  </script>
 </html>

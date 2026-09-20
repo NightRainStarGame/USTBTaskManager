@@ -6,7 +6,7 @@ export function useApplyTheme() {
   const theme = useStore((s) => s.settings.theme);
 
   useEffect(() => {
-    const valid = theme === 'starry' || theme === 'neon-green' ? theme : 'neon-green';
+    const valid = theme === 'starry' || theme === 'neon-green' || theme === 'sakura' ? theme : 'neon-green';
     document.documentElement.dataset.theme = valid;
   }, [theme]);
 }

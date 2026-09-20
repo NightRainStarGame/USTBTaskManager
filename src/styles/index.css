@@ -27,6 +27,17 @@
     --c-text: #E8FFEE;
     --c-text-secondary: #8FA89B;
     --c-text-dim: #4A5C52;
+    /* v1.1.6：背景层级变量（原 tailwind 硬编码墨色，现随主题走） */
+    --c-ink-base-rgb: 0 0 0;
+    --c-ink-900-rgb: 10 15 13;
+    --c-ink-800-rgb: 16 24 21;
+    --c-ink-700-rgb: 26 36 32;
+    --c-ink-600-rgb: 36 48 41;
+    --c-ink-500-rgb: 47 61 54;
+    /* v1.1.6：警示黄变量（更新提示；sakura 浅底换琥珀） */
+    --c-warn-rgb: 255 234 0;
+    --c-warn-bright-rgb: 255 255 102;
+    --c-warn-dim-rgb: 204 186 0;
   }
 
   /* 星辉主题：青蓝荧光渐变（v1.1.5 新增） */
@@ -42,6 +53,40 @@
     --c-text: #DCEFFF;
     --c-text-secondary: #7AA0C4;
     --c-text-dim: #3D5C7D;
+    --c-ink-base-rgb: 2 8 23;
+    --c-ink-900-rgb: 8 16 34;
+    --c-ink-800-rgb: 13 24 45;
+    --c-ink-700-rgb: 20 34 60;
+    --c-ink-600-rgb: 28 45 77;
+    --c-ink-500-rgb: 38 58 96;
+    --c-warn-rgb: 255 234 0;
+    --c-warn-bright-rgb: 255 255 102;
+    --c-warn-dim-rgb: 204 186 0;
+  }
+
+  /* 樱花粉主题：粉白萌系（v1.1.6 新增，需求 #5）
+     浅底 + 玫瑰粉强调 + 深梅文字；ink 层级翻转为粉白系，黄改琥珀保证可读 */
+  [data-theme="sakura"] {
+    --c-primary-rgb: 236 110 166;
+    --c-primary-bright-rgb: 249 168 197;
+    --c-primary-dim-rgb: 205 92 146;
+    --c-primary-deep-rgb: 173 71 122;
+    --c-primary: #EC6EA6;
+    --c-primary-bright: #F9A8C5;
+    --c-bg-deep: #FFF5F8;
+    --c-bg-glow: rgba(236, 110, 166, 0.08);
+    --c-text: #5C2B40;
+    --c-text-secondary: #A3708A;
+    --c-text-dim: #C9A3B5;
+    --c-ink-base-rgb: 255 245 248;
+    --c-ink-900-rgb: 255 240 245;
+    --c-ink-800-rgb: 255 228 238;
+    --c-ink-700-rgb: 253 215 230;
+    --c-ink-600-rgb: 248 196 218;
+    --c-ink-500-rgb: 240 174 200;
+    --c-warn-rgb: 199 122 0;
+    --c-warn-bright-rgb: 224 150 30;
+    --c-warn-dim-rgb: 160 94 0;
   }
 
   html, body, #root {
@@ -64,12 +109,42 @@
       var(--c-bg-deep);
   }
 
+  /* 樱花粉主题：粉白底 + 柔和樱花渐变 + 可爱的漂浮光斑 */
+  [data-theme="sakura"] body {
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(249,168,197,0.28) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 100%, rgba(236,110,166,0.16) 0%, transparent 55%),
+      var(--c-bg-deep);
+  }
+
+  /* 樱花粉专属质感：加大圆角（胶囊按钮）、柔光阴影、去掉荧光锐边 */
+  [data-theme="sakura"] .btn-neon { border-radius: 999px; }
+  [data-theme="sakura"] .btn-ghost { border-radius: 999px; }
+  [data-theme="sakura"] .input-neon { border-radius: 12px; }
+  [data-theme="sakura"] .glass-panel {
+    border-radius: 16px;
+    box-shadow: 0 6px 24px rgba(205, 92, 146, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  [data-theme="sakura"] .data-pill { border-radius: 999px; }
+  /* 荧光文字光晕在浅底上会发灰，收敛为淡淡的粉晕 */
+  [data-theme="sakura"] .text-glow {
+    text-shadow: 0 1px 6px rgba(236, 110, 166, 0.25);
+  }
+  [data-theme="sakura"] .text-glow-green {
+    text-shadow: 0 1px 6px rgba(236, 110, 166, 0.25);
+  }
+  [data-theme="sakura"] .text-glow-yellow {
+    text-shadow: 0 1px 6px rgba(199, 122, 0, 0.25);
+  }
+
   *::-webkit-scrollbar { width: 8px; height: 8px; }
   *::-webkit-scrollbar-track { background: rgb(var(--c-primary-rgb) / 0.04); }
   *::-webkit-scrollbar-thumb { background: rgb(var(--c-primary-rgb) / 0.30); border-radius: 4px; }
   *::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-primary-rgb) / 0.60); }
 
   ::selection { background: rgb(var(--c-primary-rgb) / 0.40); color: #fff; }
+  /* 浅底主题下白字不可读，换深梅色 */
+  [data-theme="sakura"] ::selection { background: rgb(var(--c-primary-rgb) / 0.25); color: #5C2B40; }
 }
 
 @layer components {

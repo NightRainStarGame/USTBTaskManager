@@ -11,21 +11,21 @@ export default {
           'green-bright': 'rgb(var(--c-primary-bright-rgb) / <alpha-value>)',
           'green-dim': 'rgb(var(--c-primary-dim-rgb) / <alpha-value>)',
           'green-deep': 'rgb(var(--c-primary-deep-rgb) / <alpha-value>)',
-          // 黄色（更新提示用，不随主题切换）
-          yellow: '#FFEA00',
-          'yellow-bright': '#FFFF66',
-          'yellow-dim': '#CCBA00',
+          // 黄色（更新提示用；v1.1.6 改为变量驱动——sakura 浅底上纯黄不可读，换成琥珀）
+          yellow: 'rgb(var(--c-warn-rgb) / <alpha-value>)',
+          'yellow-bright': 'rgb(var(--c-warn-bright-rgb) / <alpha-value>)',
+          'yellow-dim': 'rgb(var(--c-warn-dim-rgb) / <alpha-value>)',
           // 语义色（危险/逾期，不随主题切换）
           danger: '#FF3366',
         },
-        // 背景层级（深色结构色，不随主题切换）
+        // 背景层级（v1.1.6 改为变量驱动：深色主题给墨色系，sakura 给粉白系）
         ink: {
-          base: '#000000',
-          900: '#0A0F0D',
-          800: '#101815',
-          700: '#1A2420',
-          600: '#243029',
-          500: '#2F3D36',
+          base: 'rgb(var(--c-ink-base-rgb) / <alpha-value>)',
+          900: 'rgb(var(--c-ink-900-rgb) / <alpha-value>)',
+          800: 'rgb(var(--c-ink-800-rgb) / <alpha-value>)',
+          700: 'rgb(var(--c-ink-700-rgb) / <alpha-value>)',
+          600: 'rgb(var(--c-ink-600-rgb) / <alpha-value>)',
+          500: 'rgb(var(--c-ink-500-rgb) / <alpha-value>)',
         },
         // 文本（v1.1.5：跟随主题切换）
         text: {
