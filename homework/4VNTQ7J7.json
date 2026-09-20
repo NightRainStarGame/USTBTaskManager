@@ -1,0 +1,35 @@
+{
+  "syncCode": "4VNTQ7J7",
+  "courseName": "中国科技发展史",
+  "createdAt": 1789910684019,
+  "updatedAt": 1789910684019,
+  "entries": [
+    {
+      "id": "8c3576d0-de6b-425e-a6e4-717dc277aaac",
+      "courseName": "中国科技发展史",
+      "sessionDate": "2026-09-14",
+      "sessionTime": null,
+      "title": "Test111",
+      "content": "1111",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789910684019,
+      "updatedAt": 1789910684019
+    },
+    {
+      "id": "a63b7c81-2982-462b-8e25-8063307b7c93",
+      "courseName": "中国科技发展史",
+      "sessionDate": "2026-09-14",
+      "sessionTime": null,
+      "title": "2123",
+      "content": "32123",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789910684019,
+      "updatedAt": 1789910684019
+    }
+  ],
+  "courseGuid": "C-8XAD4554"
+}
