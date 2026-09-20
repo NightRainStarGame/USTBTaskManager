@@ -3,6 +3,7 @@ import { getDbPath, refreshCourseKeys } from '../db/index';
 import { ipcMain } from 'electron';
 import { registerInputDiagIpc } from '../diag/inputDiag';
 import { registerAboutIpc as registerAbout } from '../about';
+import { softDeleteRow, registerCleanup } from '../cleanup';
 
 // ====== Courses ======
 function registerCourses(db: DB) {
@@ -53,13 +54,14 @@ function registerRequirements(db: DB) {
   });
   ipcMain.handle('db:requirements:create', (_e, data) => {
     const stmt = db.prepare(
-      `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status, estimated_hours, actual_hours, notes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status, estimated_hours, actual_hours, notes, created_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       data.course_id, data.title, data.type ?? 'homework',
       data.description ?? null, data.due_date, data.priority ?? 2,
-      data.status ?? 'pending', data.estimated_hours ?? null, data.actual_hours ?? null, data.notes ?? null, Date.now()
+      data.status ?? 'pending', data.estimated_hours ?? null, data.actual_hours ?? null, data.notes ?? null, Date.now(),
+      data.status === 'done' ? Date.now() : null
     );
     return db.prepare('SELECT * FROM course_requirements WHERE id = ?').get(info.lastInsertRowid);
   });
@@ -67,10 +69,15 @@ function registerRequirements(db: DB) {
     db.prepare(
       `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, priority=?, status=?, estimated_hours=?, actual_hours=?, notes=? WHERE id=?`
     ).run(data.title, data.type, data.description, data.due_date, data.priority, data.status, data.estimated_hours, data.actual_hours, data.notes ?? null, id);
+    // v1.1.9 自动清理：完成时间戳（变 done 记录时刻；取消完成清空）
+    db.prepare(
+      `UPDATE course_requirements SET completed_at = CASE WHEN status = 'done' THEN COALESCE(completed_at, ?) ELSE NULL END WHERE id = ?`
+    ).run(Date.now(), id);
     return db.prepare('SELECT * FROM course_requirements WHERE id = ?').get(id);
   });
   ipcMain.handle('db:requirements:delete', (_e, id) => {
-    db.prepare('DELETE FROM course_requirements WHERE id = ?').run(id);
+    // v1.1.9：手动删除进回收站（30 天可恢复）
+    softDeleteRow(db, 'requirement', id);
     return { ok: true };
   });
 }
@@ -138,7 +145,8 @@ function registerEvents(db: DB) {
     `).get(id);
   });
   ipcMain.handle('db:events:delete', (_e, id) => {
-    db.prepare('DELETE FROM events WHERE id = ?').run(id);
+    // v1.1.9：手动删除进回收站
+    softDeleteRow(db, 'event', id);
     return { ok: true };
   });
 }
@@ -253,11 +261,15 @@ function registerProjects(db: DB) {
     db.prepare(
       `UPDATE projects SET name=?, description=?, status=?, start_date=?, due_date=?, progress=? WHERE id=?`
     ).run(data.name, data.description, data.status, data.start_date, data.due_date, data.progress, id);
+    // v1.1.9 自动清理：完结时间戳
+    db.prepare(
+      `UPDATE projects SET completed_at = CASE WHEN status IN ('done','completed') THEN COALESCE(completed_at, ?) ELSE NULL END WHERE id = ?`
+    ).run(Date.now(), id);
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
   });
   ipcMain.handle('db:projects:delete', (_e, id) => {
-    db.prepare('DELETE FROM project_tasks WHERE project_id = ?').run(id);
-    db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    // v1.1.9：手动删除进回收站（项目 + 任务一起快照）
+    softDeleteRow(db, 'project', id);
     return { ok: true };
   });
 }
@@ -274,13 +286,14 @@ function registerTasks(db: DB) {
   });
   ipcMain.handle('db:tasks:create', (_e, data) => {
     const stmt = db.prepare(
-      `INSERT INTO project_tasks (project_id, course_id, title, status, assignee, due_date, order_index)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO project_tasks (project_id, course_id, title, status, assignee, due_date, order_index, done_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       data.project_id, data.course_id ?? null, data.title,
       data.status ?? 'todo', data.assignee ?? null,
-      data.due_date ?? null, data.order_index ?? 0
+      data.due_date ?? null, data.order_index ?? 0,
+      data.status === 'done' ? Date.now() : null
     );
     return db.prepare('SELECT * FROM project_tasks WHERE id = ?').get(info.lastInsertRowid);
   });
@@ -288,10 +301,15 @@ function registerTasks(db: DB) {
     db.prepare(
       `UPDATE project_tasks SET title=?, status=?, assignee=?, due_date=?, order_index=?, course_id=? WHERE id=?`
     ).run(data.title, data.status, data.assignee, data.due_date, data.order_index, data.course_id, id);
+    // v1.1.9 自动清理：完成时间戳
+    db.prepare(
+      `UPDATE project_tasks SET done_at = CASE WHEN status = 'done' THEN COALESCE(done_at, ?) ELSE NULL END WHERE id = ?`
+    ).run(Date.now(), id);
     return db.prepare('SELECT * FROM project_tasks WHERE id = ?').get(id);
   });
   ipcMain.handle('db:tasks:delete', (_e, id) => {
-    db.prepare('DELETE FROM project_tasks WHERE id = ?').run(id);
+    // v1.1.9：手动删除进回收站
+    softDeleteRow(db, 'task', id);
     return { ok: true };
   });
 }
@@ -632,4 +650,6 @@ export function registerAllIpc(db: DB) {
   registerAbout(db);
   // v1.1.6：输入框失灵埋点（块 3）—— 不依赖 db，save dialog 不传 parent 即可
   registerInputDiagIpc();
+  // v1.1.9：自动清理 & 回收站
+  registerCleanup(db);
 }

@@ -406,6 +406,62 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       cachePath: () => invoke('about:cache-path') as Promise<string>,
       openCache: () => invoke('about:open-cache') as Promise<{ ok: boolean }>,
     },
+
+    /** v1.1.9：自动清理 & 回收站 */
+    cleanup: {
+      rules: () => invoke('cleanup:rules') as Promise<{
+        enabled: boolean;
+        reqDays: number;
+        taskDays: number;
+        eventDays: number;
+        projectDays: number;
+        homeworkDays: number;
+        binDays: number;
+      }>,
+      setRules: (patch: {
+        enabled?: boolean;
+        reqDays?: number;
+        taskDays?: number;
+        eventDays?: number;
+        projectDays?: number;
+        homeworkDays?: number;
+        binDays?: number;
+      }) => invoke('cleanup:setRules', patch) as Promise<{
+        enabled: boolean;
+        reqDays: number;
+        taskDays: number;
+        eventDays: number;
+        projectDays: number;
+        homeworkDays: number;
+        binDays: number;
+      }>,
+      run: () => invoke('cleanup:run') as Promise<{
+        local: {
+          ranAt: number;
+          enabled: boolean;
+          binned: { requirements: number; tasks: number; events: number; projects: number };
+          purgedBin: number;
+        };
+        cloud: {
+          ranAt: number;
+          codes: string[];
+          github: { checked: number; rewritten: number; deleted: number; removedEntries: number; errors: string[] };
+          cloud: { checked: number; rewritten: number; removedEntries: number; errors: string[] };
+        };
+      }>,
+      bin: (opts?: { kind?: string; limit?: number }) => invoke('cleanup:bin', opts) as Promise<Array<{
+        id: number;
+        kind: string;
+        entity_id: number | null;
+        title: string;
+        reason: string | null;
+        deleted_at: number;
+        purge_at: number;
+        snapshot: Record<string, any>;
+      }>>,
+      restore: (id: number) => invoke('cleanup:bin:restore', id) as Promise<{ ok: boolean; error?: string; newId?: number }>,
+      purge: (id?: number | null) => invoke('cleanup:bin:purge', id ?? null) as Promise<{ purged: number }>,
+    },
   };
 
   return api;

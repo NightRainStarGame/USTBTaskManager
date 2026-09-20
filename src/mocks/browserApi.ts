@@ -590,6 +590,19 @@ export function createBrowserApi() {
       onProgress: () => () => { /* noop */ },
       onAvailable: () => () => { /* noop */ },
     },
+
+    /** v1.1.9：自动清理 & 回收站（浏览器预览 mock） */
+    cleanup: {
+      rules: async () => ({ enabled: true, reqDays: 1, taskDays: 1, eventDays: 7, projectDays: 7, homeworkDays: 7, binDays: 30 }),
+      setRules: async (patch: any) => ({ enabled: true, reqDays: 1, taskDays: 1, eventDays: 7, projectDays: 7, homeworkDays: 7, binDays: 30, ...patch }),
+      run: async () => ({
+        local: { ranAt: Date.now(), enabled: true, binned: { requirements: 0, tasks: 0, events: 0, projects: 0 }, purgedBin: 0 },
+        cloud: { ranAt: Date.now(), codes: [], github: { checked: 0, rewritten: 0, deleted: 0, removedEntries: 0, errors: [] }, cloud: { checked: 0, rewritten: 0, removedEntries: 0, errors: [] } },
+      }),
+      bin: async () => [] as any[],
+      restore: async () => ({ ok: false, error: '(浏览器预览模式不支持恢复，请在桌面应用中使用)' }),
+      purge: async () => ({ purged: 0 }),
+    },
   };
 }
 

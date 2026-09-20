@@ -52,7 +52,7 @@ export const DEFAULT_ANYSHARE_CONFIG: AnyShareConfig & { enabled: boolean } = {
   enabled: true,
 };
 
-function getAnyShareConfig(db: DB): (AnyShareConfig & { enabled: boolean }) | null {
+export function getAnyShareConfig(db: DB): (AnyShareConfig & { enabled: boolean }) | null {
   const raw = getSetting(db, SETTING_CLOUD);
   if (raw) {
     try {
@@ -113,7 +113,7 @@ export function verifyCodePair(syncCode: string, publishCode: string): boolean {
   return parsePublishCode(publishCode) === s;
 }
 
-function normalizeSyncCode(raw: string): string | null {
+export function normalizeSyncCode(raw: string): string | null {
   const s = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (s.length !== SYNC_CODE_LEN) return null;
   if (![...s].every((c) => CODE_ALPHABET.includes(c))) return null;
@@ -136,7 +136,7 @@ export interface HomeworkEntry {
   updatedAt: number;
 }
 
-interface HomeworkFile {
+export interface HomeworkFile {
   syncCode: string;
   courseName: string;
   courseGuid?: string;
@@ -220,8 +220,7 @@ function decodeBase64Utf8(b64: string): string {
   return Buffer.from(b64, 'base64').toString('utf8');
 }
 
-async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean; ifNoneMatch?: string } = {}) {
-  const url = path.startsWith('http') ? path : `${API}${path}`;
+export async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean; ifNoneMatch?: string } = {}) {  const url = path.startsWith('http') ? path : `${API}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -361,7 +360,7 @@ const anyshareSource: HomeworkSource = {
 };
 
 /** 多份历史快照合并成一份（条目级去重：id 命中或 课程名+日期+标题 命中 → 后写的覆盖） */
-function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
+export function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
   const byId = new Map<string, HomeworkEntry>();
   const keyToId = new Map<string, string>();
   for (const f of bundles) {
@@ -398,6 +397,25 @@ function anyshareCtx(): (AnyShareConfig & { enabled: boolean }) | null {
   try { return getAnyShareConfig(_db); } catch { return null; }
 }
 
+/** v1.1.9：作业云端 TTL（settings.cleanup_homework_days，默认 7 天；0 = 永久保留）。
+ *  过期条目不再参与接收挂载——所有新版客户端统一执行，等效于从云端删除（云盘匿名删不了文件）。 */
+export function homeworkTtlMs(): number {
+  if (!_db) return 7 * 86400000;
+  try {
+    const v = parseInt(getSetting(_db, 'cleanup_homework_days'), 10);
+    if (Number.isFinite(v) && v >= 0) return v * 86400000;
+  } catch {}
+  return 7 * 86400000;
+}
+
+function applyHomeworkTtl(hit: { source: string; file: HomeworkFile }): { source: string; file: HomeworkFile } {
+  const ttl = homeworkTtlMs();
+  if (ttl <= 0) return hit;
+  const cutoff = Date.now() - ttl;
+  const entries = (hit.file.entries || []).filter((e) => (e.publishedAt || 0) >= cutoff);
+  return { source: hit.source, file: { ...hit.file, entries } };
+}
+
 /** 多源全试、命中全并：GitHub / 云盘各自可能有对方没有的条目（比如某次发布单侧失败），
  *  合并后返回；所有源都确认「码不存在」才返回 null，网络错误不被遮蔽 */
 async function fetchBundleFromAnySource(syncCode: string, token?: string): Promise<{ source: string; file: HomeworkFile } | null> {
@@ -414,13 +432,13 @@ async function fetchBundleFromAnySource(syncCode: string, token?: string): Promi
       errors.push(`${src.name}: ${e?.message || e}`);
     }
   }
-  if (hits.length === 1) return hits[0];
+  if (hits.length === 1) return applyHomeworkTtl(hits[0]);
   if (hits.length > 1) {
     // 多源合并：条目级去重（id / 课程名+日期+标题），任一侧多出的条目都保留
-    return {
+    return applyHomeworkTtl({
       source: hits.map((h) => h.source).join('+'),
       file: mergeBundleFiles(hits.map((h) => h.file), syncCode),
-    };
+    });
   }
   if (confirmedMissing) return null;
   if (errors.length) throw new Error(errors.join('；'));

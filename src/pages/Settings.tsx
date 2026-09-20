@@ -144,6 +144,60 @@ export default function SettingsPage() {
   const [hwCloudSaved, setHwCloudSaved] = useState(false);
   const [hwCloudErr, setHwCloudErr] = useState('');
 
+  // ===== 自动清理 & 回收站（v1.1.9） =====
+  const [cleanRules, setCleanRules] = useState<{
+    enabled: boolean; reqDays: number; taskDays: number; eventDays: number;
+    projectDays: number; homeworkDays: number; binDays: number;
+  } | null>(null);
+  const [binItems, setBinItems] = useState<Array<{
+    id: number; kind: string; title: string; reason: string | null;
+    deleted_at: number; purge_at: number;
+  }>>([]);
+  const [cleanBusy, setCleanBusy] = useState(false);
+  const [cleanMsg, setCleanMsg] = useState<string | null>(null);
+  const [showBin, setShowBin] = useState(false);
+
+  const refreshBin = async () => {
+    try { setBinItems(await window.taskAPI.cleanup.bin({ limit: 50 })); } catch { /* ignore */ }
+  };
+
+  const patchCleanRule = async (patch: Partial<{ enabled: boolean; reqDays: number; taskDays: number; eventDays: number; projectDays: number; homeworkDays: number; binDays: number }>) => {
+    try { setCleanRules(await window.taskAPI.cleanup.setRules(patch)); } catch { /* ignore */ }
+  };
+
+  const runCleanup = async () => {
+    setCleanBusy(true); setCleanMsg(null);
+    try {
+      const r = await window.taskAPI.cleanup.run();
+      const b = r.local.binned;
+      const lines = [`本地：作业 ${b.requirements} · 任务 ${b.tasks} · 日程 ${b.events} · 项目 ${b.projects} 项移入回收站；回收站过期清除 ${r.local.purgedBin} 项`];
+      if (r.cloud.codes.length) {
+        const gh = r.cloud.github, cl = r.cloud.cloud;
+        lines.push(`云端（${r.cloud.codes.join('、')}）：GitHub 重写 ${gh.rewritten} 个文件 / 清理 ${gh.removedEntries} 条${gh.deleted ? ` / 删空文件 ${gh.deleted} 个` : ''}；云盘快照重写 ${cl.rewritten} 个 / 清理 ${cl.removedEntries} 条`);
+        const errs = [...gh.errors, ...cl.errors];
+        if (errs.length) lines.push('部分错误：' + errs.slice(0, 3).join('；'));
+      } else {
+        lines.push('云端：本轮未执行（每天最多一次，或未配置发布码）');
+      }
+      setCleanMsg(lines.join('\n'));
+      await refreshBin();
+    } catch (e: any) {
+      setCleanMsg('清理失败：' + (e?.message || e));
+    } finally { setCleanBusy(false); }
+  };
+
+  const restoreBinItem = async (id: number) => {
+    const r = await window.taskAPI.cleanup.restore(id);
+    if (!r.ok) { alert('恢复失败：' + (r.error || '未知错误')); return; }
+    await refreshBin();
+  };
+
+  const purgeBinItem = async (id: number) => {
+    if (!confirm('彻底删除后无法恢复，确定？')) return;
+    await window.taskAPI.cleanup.purge(id);
+    await refreshBin();
+  };
+
   // ===== 课表 Excel 导入 =====
   const [xlsOpen, setXlsOpen] = useState(false);
   const [xlsStep, setXlsStep] = useState<'file' | 'mapping' | 'options' | 'preview' | 'done'>('file');
@@ -190,6 +244,13 @@ export default function SettingsPage() {
           });
         }
       } catch { /* 忽略 */ }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try { setCleanRules(await window.taskAPI.cleanup.rules()); } catch { /* ignore */ }
+      void refreshBin();
     })();
   }, []);
 
@@ -763,6 +824,111 @@ export default function SettingsPage() {
                 <div key={t} className="flex justify-between"><span className="text-text-dim">{t}</span><span className="text-text-secondary">{c}</span></div>
               ))}
             </div>
+          </div>
+        )}
+      </Section>
+
+      {/* 自动清理 & 回收站（v1.1.9） */}
+      <Section icon={<Trash2 size={14} />} title="自动清理 & 回收站">
+        <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
+          <div>· 完成的作业/任务、过期日程、完结项目到期后自动移入<strong className="text-neon-green">回收站</strong>，回收站到期后彻底删除</div>
+          <div>· 上传到 GitHub/云盘的共享作业超过保留天数后云端同步清理（云盘为写过滤快照，旧客户端也不再挂载过期条目）</div>
+          <div>· 手动删除的数据同样先进回收站，可随时恢复</div>
+        </div>
+        {cleanRules ? (
+          <>
+            <Row label="自动清理">
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={cleanRules.enabled}
+                  onChange={(e) => patchCleanRule({ enabled: e.target.checked })}
+                  className="accent-[#00FF88]"
+                />
+                <span className="font-mono text-[10px] text-text-dim">{cleanRules.enabled ? '每小时后台检查' : '已关闭'}</span>
+              </div>
+            </Row>
+            <Row label="完成的作业">
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} max={365} value={cleanRules.reqDays}
+                  onChange={(e) => patchCleanRule({ reqDays: Math.max(0, Number(e.target.value) || 0) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后移入回收站</span>
+              </div>
+            </Row>
+            <Row label="完成的任务">
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} max={365} value={cleanRules.taskDays}
+                  onChange={(e) => patchCleanRule({ taskDays: Math.max(0, Number(e.target.value) || 0) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后移入回收站</span>
+              </div>
+            </Row>
+            <Row label="过期的日程">
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} max={365} value={cleanRules.eventDays}
+                  onChange={(e) => patchCleanRule({ eventDays: Math.max(0, Number(e.target.value) || 0) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后移入回收站</span>
+              </div>
+            </Row>
+            <Row label="完结的项目">
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} max={365} value={cleanRules.projectDays}
+                  onChange={(e) => patchCleanRule({ projectDays: Math.max(0, Number(e.target.value) || 0) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后移入回收站</span>
+              </div>
+            </Row>
+            <Row label="上传的作业（云端）">
+              <div className="flex items-center gap-1">
+                <input type="number" min={1} max={365} value={cleanRules.homeworkDays}
+                  onChange={(e) => patchCleanRule({ homeworkDays: Math.max(1, Number(e.target.value) || 1) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后云端清理</span>
+              </div>
+            </Row>
+            <Row label="回收站保留">
+              <div className="flex items-center gap-1">
+                <input type="number" min={1} max={365} value={cleanRules.binDays}
+                  onChange={(e) => patchCleanRule({ binDays: Math.max(1, Number(e.target.value) || 1) })}
+                  className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+                <span className="text-xs text-text-dim">天后彻底删除</span>
+              </div>
+            </Row>
+          </>
+        ) : (
+          <div className="font-mono text-[10px] text-text-dim">规则加载中…</div>
+        )}
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={runCleanup} disabled={cleanBusy} className="btn-neon">
+            {cleanBusy ? '清理中…' : '立即清理'}
+          </button>
+          <button onClick={() => { setShowBin((v) => !v); void refreshBin(); }} className="btn-ghost">
+            回收站（{binItems.length}）
+          </button>
+        </div>
+        {cleanMsg && (
+          <div className="mt-3 p-3 rounded-md border border-neon-green/40 text-neon-green bg-neon-green/5 font-mono text-xs whitespace-pre-wrap">
+            {cleanMsg}
+          </div>
+        )}
+        {showBin && (
+          <div className="mt-3 rounded-md border border-neon-green/15 bg-ink-base/40 p-2 space-y-1 max-h-64 overflow-y-auto">
+            {binItems.length === 0 ? (
+              <div className="font-mono text-[10px] text-text-dim p-1">回收站是空的</div>
+            ) : binItems.map((it) => (
+              <div key={it.id} className="flex items-center gap-2 font-mono text-[10px] p-1.5 rounded border border-neon-green/10 bg-ink-base/30">
+                <span className="px-1.5 py-0.5 rounded text-[9px] border border-text-dim/30 text-text-dim shrink-0">
+                  {{ requirement: '作业', task: '任务', event: '日程', project: '项目' }[it.kind] || it.kind}
+                </span>
+                <span className="text-text-secondary truncate flex-1" title={it.title}>{it.title}</span>
+                <span className="text-text-dim shrink-0">{dayjs(it.deleted_at).format('MM-DD HH:mm')} 删</span>
+                <span className="text-text-dim shrink-0">{dayjs(it.purge_at).format('MM-DD')} 清除</span>
+                <button onClick={() => restoreBinItem(it.id)} className="px-1.5 py-0.5 rounded text-[9px] border border-neon-green/40 text-neon-green hover:bg-neon-green/10 shrink-0">恢复</button>
+                <button onClick={() => purgeBinItem(it.id)} className="px-1.5 py-0.5 rounded text-[9px] border border-neon-danger/40 text-neon-danger hover:bg-neon-danger/10 shrink-0">彻底删</button>
+              </div>
+            ))}
           </div>
         )}
       </Section>

@@ -294,6 +294,36 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'course_requirements', 'publisher', 'TEXT');
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_req_remote ON course_requirements(remote_id) WHERE remote_id IS NOT NULL`);
 
+  // v1.1.9：自动清理——完成时间戳（status 变 done 的时刻；取消完成置 NULL）
+  addColumnIfMissing(db, 'course_requirements', 'completed_at', 'INTEGER');
+  addColumnIfMissing(db, 'project_tasks', 'done_at', 'INTEGER');
+  addColumnIfMissing(db, 'projects', 'completed_at', 'INTEGER');
+  // 存量 done 行回填：作业用 created_at（历史完成时间近似）；任务表无时间列用迁移时刻
+  db.exec(`
+    UPDATE course_requirements SET completed_at = created_at
+     WHERE status = 'done' AND completed_at IS NULL;
+    UPDATE project_tasks SET done_at = ${Date.now()}
+     WHERE status = 'done' AND done_at IS NULL;
+    UPDATE projects SET completed_at = ${Date.now()}
+     WHERE status IN ('done','completed') AND completed_at IS NULL;
+  `);
+
+  // v1.1.9：回收站（软删除快照；purge_at 到期后真删）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recycle_bin (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      entity_id INTEGER,
+      snapshot TEXT NOT NULL,
+      extra TEXT,
+      reason TEXT,
+      deleted_at INTEGER NOT NULL,
+      purge_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_bin_purge ON recycle_bin(purge_at);
+    CREATE INDEX IF NOT EXISTS idx_bin_kind ON recycle_bin(kind);
+  `);
+
   // 若从未设置开学日，但库里有教务导入的课程（type='class'）→
   // 用最早一节课所在周的周一当作第 1 周，这样课表/日历能直接显示「第 N 周」
   const hasSemesterStart = db.prepare("SELECT 1 FROM settings WHERE key = 'semester_start'").get();

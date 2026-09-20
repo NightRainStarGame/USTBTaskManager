@@ -6,6 +6,7 @@ import { initDatabase, getDb, getStartupRecovery } from './db/index';
 import { registerAllIpc } from './ipc/index';
 import { autoCheckUpdate } from './updater/index';
 import { refreshAbout } from './about/index';
+import { scheduleAutoCleanup } from './cleanup';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -243,6 +244,13 @@ app.whenReady().then(() => {
     registerAllIpc(getDb());
     bootLog('ipc registered');
     splashProgress(55, '正在连接模块…');
+
+    // v1.1.9 自动清理：启动 45s 后首跑 + 每小时一次（本地必跑；云端每天最多一次）
+    try {
+      scheduleAutoCleanup(getDb());
+    } catch (e: any) {
+      bootLog('CLEANUP SCHEDULE FAILED: ' + (e?.message || e));
+    }
   } catch (e: any) {
     bootLog('DB SETUP FAILED: ' + (e?.stack || String(e)));
     dialog.showErrorBox(
