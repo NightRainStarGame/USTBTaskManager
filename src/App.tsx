@@ -10,6 +10,7 @@ import MiniProgramPage from './pages/MiniProgram';
 import UpdateNotification from './components/UpdateNotification';
 import { useStore } from './store';
 import { useApplyTheme } from './hooks/useApplyTheme';
+import { useInputDiag } from './hooks/useInputDiag';
 
 export default function App() {
   const refreshAll = useStore((s) => s.refreshAll);
@@ -19,6 +20,8 @@ export default function App() {
 
   // v1.1.5：把 settings.theme 应用到 <html data-theme="...">
   useApplyTheme();
+  // v1.1.6：装输入框失灵探测器（块 3 埋点）
+  useInputDiag();
 
   useEffect(() => {
     refreshAll();

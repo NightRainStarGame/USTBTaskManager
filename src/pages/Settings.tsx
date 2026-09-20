@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
-import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload } from 'lucide-react';
+import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
@@ -653,8 +653,7 @@ export default function SettingsPage() {
           <select value={theme} onChange={(e) => setTheme(e.target.value)} className="input-neon w-48">
             <option value="neon-green">霓虹绿（默认）</option>
             <option value="starry">星辉（青蓝荧光）</option>
-            <option value="neon-yellow">霓虹黄</option>
-            <option value="mixed">绿黄混合</option>
+            <option value="sakura">🌸 樱花粉（萌系）</option>
           </select>
         </Row>
         <Row label="当前学期">
@@ -886,6 +885,7 @@ export default function SettingsPage() {
           <button onClick={checkUpdate} disabled={updateChecking} className="btn-neon">
             <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查更新'}
           </button>
+          <PatchUpdateButton aggregate={aggregate} appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} onProgress={setDl} onExit={() => setDlPath(null)} />
           {aggregate?.winner?.hasUpdate && aggregate.winner.downloadUrl && !dlPath && (
             <button onClick={startDownload} disabled={!!dl?.running} className="btn-neon btn-neon-yellow">
               <Download size={14} /> {dl?.running ? '下载中…' : `下载 v${aggregate.winner.latestVersion}`}
@@ -1037,6 +1037,16 @@ export default function SettingsPage() {
             </div>
           </div>
         </Row>
+      </Section>
+
+      {/* v1.1.6：输入框失灵诊断（块 3 埋点 + 导出） */}
+      <Section icon={<Bug size={14} />} title="输入诊断">
+        <div className="text-[11px] text-text-dim font-mono mb-2 space-y-1">
+          <div>· 当焦点在输入框但 8 秒没收到 keydown，<strong className="text-neon-yellow">自动落盘最近 50 条键盘 / IME / 焦点事件</strong>到 <code>%TMP%/taskmanager-input-diag.log</code></div>
+          <div>· 再次遭遇 → 反馈时把下面导出的日志附上即可定位是 IME 卡住、还是焦点被劫持、还是 IPC 阻塞</div>
+          <div>· 不会记录任何按键字符内容，只记事件序列（保护隐私）</div>
+        </div>
+        <DiagPanel />
       </Section>
 
       {/* 关于 */}
@@ -1365,5 +1375,198 @@ function Field({ label, children }: any) {
       <span className="label-tag block mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** v1.1.6 块 4b：增量更新按钮。
+ *  - 检查 winner.patches 是否有匹配 fromVersion = 当前 appVersion 的补丁
+ *  - 有则显示「下载补丁 X MB」按钮（旁注 vs 全量大小）
+ *  - 点 → 二次确认弹窗 → 调 patchApply → 退出当前应用让 helper 落盘
+ */
+function PatchUpdateButton({
+  aggregate, appVersion, onMessage, onProgress, onExit,
+}: {
+  aggregate: any;
+  appVersion: string;
+  onMessage: (m: string) => void;
+  onProgress: (p: any) => void;
+  onExit: () => void;
+}) {
+  const [preview, setPreview] = useState<{
+    available: boolean;
+    reason?: string;
+    patch?: any;
+    sizeMB?: number;
+    fullSizeMB?: number;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!aggregate?.winner) { setPreview(null); return; }
+    const winner = aggregate.winner;
+    if (!winner.hasUpdate) { setPreview(null); return; }
+    const manifest = {
+      version: winner.latestVersion,
+      size: winner.sha256 ? winner.size : undefined, // 主进程没传 size 就从 winner 取
+      sha256: winner.sha256,
+      url: winner.downloadUrl,
+      page: winner.pageUrl,
+      notes: winner.notes,
+      patches: [], // 真实补丁列表当前没塞进 winner；这里走 IPC 直查
+    };
+    void (async () => {
+      try {
+        // 用最新查到的 manifest 调一次 preview —— 实际补丁列表可以从扩展 winner 里读
+        // 当前简化：直接以 winner 当 manifest，patches 由 preview 接口读全部（前端已经能拿到）
+        // v1.1.6 协议：patches 列表在 winner 里以扩展属性传递
+        const extended = (aggregate.perSource || []).find((p: any) => p?.result?.latestVersion === winner.latestVersion)?.result || {};
+        const r = await window.taskAPI.updater.patchPreview({
+          version: winner.latestVersion,
+          patches: extended.patches || winner.patches || [],
+          size: winner.size || 90_000_000,
+        }, appVersion);
+        setPreview(r as any);
+      } catch { /* ignore */ }
+    })();
+  }, [aggregate?.winner?.latestVersion, aggregate?.checkedAt, appVersion]);
+
+  if (!preview || preview.available === false) return null;
+
+  const apply = async () => {
+    if (!preview.patch) return;
+    if (!confirm(
+      `即将下载增量补丁 ${preview.sizeMB?.toFixed(1)} MB 并自动重启应用。\n\n` +
+      `⚠ 应用开始后 App 会自动退出，所有未保存的数据会丢失。\n\n` +
+      `确定继续？`
+    )) return;
+    setBusy(true);
+    try {
+      onProgress({ running: true, percent: 0, received: 0, total: 0 });
+      // 通过 update:progress 订阅补丁下载进度
+      const off = window.taskAPI.updater.onProgress((p: any) => {
+        if (p.phase === 'progress' && p.fileName && /patch\.zip$/.test(String(p.fileName))) {
+          onProgress({ running: true, percent: p.percent || 0, received: p.received || 0, total: p.total || 0 });
+        } else if (p.phase === 'done' && p.note) {
+          onProgress({ running: false, percent: 100, received: p.received || 0, total: p.total || 0 });
+        }
+      });
+      const r = await window.taskAPI.updater.patchApply(preview.patch);
+      off?.();
+      if (!r.ok) {
+        onMessage('补丁应用失败：' + (r.error || 'unknown') + '——自动回退到整装下载');
+        onProgress(null);
+        setBusy(false);
+        return;
+      }
+      // 等待 1.5s 让 helper 准备充分，主进程在 600ms 后退出
+      onMessage(`补丁已启动（helper pid=${r.helperPid || '?'}），主进程将在 <1 秒内退出…`);
+      setTimeout(() => { onExit(); }, 1500);
+    } catch (e: any) {
+      onMessage(String(e?.message || e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button onClick={apply} disabled={busy} className="btn-neon" title={`下载补丁 ${preview.sizeMB?.toFixed(1)} MB（整装 ${preview.fullSizeMB?.toFixed(0)} MB）`}>
+      <Package size={14} /> {busy ? '应用补丁中…' : `增量补丁 ${preview.sizeMB?.toFixed(1)} MB`}
+    </button>
+  );
+}
+
+/** v1.1.6 输入诊断面板（块 3）—— 直接调 taskAPI.diag，不必走 settings 保存 */
+function DiagPanel() {
+  const [peek, setPeek] = useState<{
+    path: string; byteCount: number; recent: Array<{ ts: number; iso: string; reason: string; focusedTag: string; stallCount: number; msSinceLastKeydown: number; appVersion: string }>;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const r = await window.taskAPI.diag.peek();
+      if (r.ok) {
+        setPeek({ path: r.path, byteCount: r.byteCount, recent: r.recent as any });
+      } else {
+        setMsg('读取失败：' + (r.error || 'unknown'));
+      }
+    } catch (e: any) {
+      setMsg(e?.message || String(e));
+    }
+  };
+
+  useEffect(() => { void refresh(); }, []);
+
+  const onExport = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await window.taskAPI.diag.export();
+      if (r.canceled) { setMsg('已取消'); return; }
+      if (!r.ok) { setMsg('导出失败：' + (r.error || 'unknown')); return; }
+      setMsg(`已导出：${r.path}（${(r.byteCount || 0) / 1024 < 0.1 ? '空' : ((r.byteCount || 0) / 1024).toFixed(1) + ' KB'}）`);
+      void refresh();
+    } finally { setBusy(false); }
+  };
+
+  const onSelfTest = () => {
+    // 强制探测器立刻上报一次（调试用）—— 当前实现通过 window.__inputDiagHandle.flush
+    // 没有 IPC 暴露，但用户在 devtools 里也能调
+    try {
+      const h = (window as any).__inputDiagHandle;
+      if (h && typeof h.flush === 'function') {
+        h.flush();
+        setMsg('已触发一次测试快照（如果窗口有焦点中的输入元素，会立即落盘；否则忽略）');
+      } else {
+        setMsg('探测器未安装（可能不是 Electron 环境）');
+      }
+    } catch (e: any) {
+      setMsg(String(e));
+    }
+  };
+
+  const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
+  const fmtAge = (ts: number) => {
+    const sec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (sec < 60) return `${sec} 秒前`;
+    if (sec < 3600) return `${Math.round(sec / 60)} 分钟前`;
+    return `${Math.round(sec / 3600)} 小时前`;
+  };
+
+  return (
+    <div data-input-diag-host className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={refresh} className="btn-ghost text-xs py-1.5">刷新</button>
+        <button onClick={onExport} disabled={busy} className="btn-neon">
+          <Download size={14} /> {busy ? '导出中…' : '导出日志'}
+        </button>
+        <button onClick={onSelfTest} className="btn-ghost text-xs py-1.5" title="强制探测器立即上报一次（即使没到 8 秒）">手动触发一次</button>
+        {peek && (
+          <span className="font-mono text-[10px] text-text-dim">
+            日志文件 <code>{peek.path}</code> · 当前大小 {fmtSize(peek.byteCount)} · 最近 {peek.recent.length} 条记录
+          </span>
+        )}
+      </div>
+      {msg && (
+        <div className="p-2 rounded font-mono text-[11px] border border-neon-green/20 bg-ink-base/40 break-all whitespace-pre-wrap">
+          {msg}
+        </div>
+      )}
+      {peek && peek.recent.length > 0 && (
+        <div className="rounded-md border border-neon-green/15 bg-ink-base/40 p-3 font-mono text-[11px] space-y-1.5">
+          <div className="text-text-dim uppercase text-[10px]">最近失灵快照（最多 5 条）</div>
+          {peek.recent.map((r, i) => (
+            <div key={i} className="flex justify-between gap-3 border-t border-neon-green/10 pt-1.5 first:border-t-0 first:pt-0">
+              <span className="text-text-secondary">{fmtAge(r.ts)} · {r.reason === 'input_focus_no_composition_end' ? 'IME 候选中' : '无 keydown'} · 焦点 {r.focusedTag}</span>
+              <span className="text-text-dim shrink-0">空载 {(r.msSinceLastKeydown / 1000).toFixed(1)}s · app v{r.appVersion}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {peek && peek.recent.length === 0 && (
+        <div className="text-text-dim font-mono text-[11px]">
+          {peek.byteCount > 0 ? '日志存在但没有可解析的最近记录（可能格式较旧）。直接导出查看。' : '尚未捕获到失灵快照 —— 说明输入一直工作正常。'}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { DB } from '../db/index';
 import { getDbPath } from '../db/index';
 import { ipcMain } from 'electron';
+import { registerInputDiagIpc } from '../diag/inputDiag';
 
 // ====== Courses ======
 function registerCourses(db: DB) {
@@ -623,4 +624,6 @@ export function registerAllIpc(db: DB) {
   registerUpdater(db);
   registerHomework(db);
   registerXlsImport(db);
+  // v1.1.6：输入框失灵埋点（块 3）—— 不依赖 db，save dialog 不传 parent 即可
+  registerInputDiagIpc();
 }

@@ -352,3 +352,97 @@ node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
 - **不做增量更新**：每次都是完整安装包（约 84 MB）。网速慢的用户会有等待。
 - **不静默安装**：App 只负责下载并拉起安装包，安装过程仍由用户确认（NSIS 向导）。
 - **无灰度 / 无下载统计**：当前是纯静态方案。如需按用户分批放量或统计下载量，需要在服务器上加一层简单的接口（可以以后再加，App 侧只需改地址）。
+
+---
+
+## 8. v1.1.6 增量补丁协议（块 4a/4b）
+
+> 引入目的：常规发版 ~90 MB，对网速慢或限流用户不够友好。补丁包只携带新 `app.asar`（deflate 压缩后一般 10~25 MB），客户端校验基线 + helper 进程落新 asar 两步完成升级。
+
+### 协议字段（latest.json 扩展）
+
+在原字段之外，新增：
+
+```json
+{
+  ...,
+  "asarSha256": "...",      // 本次发布对应的 app.asar sha256
+  "asarSize":   12345678,   // app.asar 字节数
+  "patches": [
+    {
+      "fromVersion": "1.1.5",
+      "url":         "https://.../leastversion/patches/1.1.5-to-1.1.6.zip",
+      "sha256":      "...补丁包 sha256...",
+      "size":        12345678,
+      "baseAsarSha256": "...1.1.5 app.asar sha256...",  // 升级前的预期 asar 哈希
+      "baseAsarSize":   12345678,
+      "appAsarSha256":  "...1.1.6 app.asar sha256...",  // 升级后的 asar 哈希
+      "appAsarSize":    12345678,
+      "createdAt":      "2026-09-20T13:00:00.000Z"
+    }
+  ]
+}
+```
+
+| 新字段 | 必填 | 说明 |
+|---|---|---|
+| `asarSha256` | 建议 | 让客户端能核对「自己磁盘上的 app.asar 哈希」与最新版的预期值，配合下面 `patches` 用 |
+| `patches[]` | 否 | 每个补丁对应一个起点版本。可存在多条（如 1.1.4→1.1.6、1.1.5→1.1.6） |
+| `fromVersion` | ✅ | 客户端必须在自己 `app.getVersion()` 等于该值时才尝试应用（防跨版本跳过） |
+| `baseAsarSha256` | ✅ | 升级**前**的 `app.asar` sha256；Helper 进程用它核对基线漂移 |
+| `appAsarSha256` | ✅ | 升级**后**的 `app.asar` sha256；Helper 落盘后自检 |
+
+### 补丁 zip 内容
+
+```
+<fromVersion>-to-<toVersion>.zip
+├── app.asar          ← 完整新 app.asar（deflate 压缩）
+└── manifest.json     ← { schema: 'taskmanager-patch-v1', fromVersion, toVersion,
+                        baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize,
+                        createdAt, createdIso }
+```
+
+约束：
+
+- `app.asar` 必须是 electron-builder 产物 `resources/app.asar` 的**逐字节拷贝**，无重打包
+- `manifest.json` 的所有 sha256 必须是发布者现场计算（不要复用模板）
+- 体积预期：deflate 压缩后一般 ≤ 25 MB（视源 asar 内容而定）
+
+### 客户端应用流程（块 4b）
+
+```
+检测到 winner.hasUpdate=true
+   │
+   ├── 找 patches[] 里有 fromVersion == 本地 app.getVersion() 的补丁
+   │     │
+   │     ├── 找到 → 走补丁通道：
+   │     │     1. 下载补丁 zip + 验 sha256
+   │     │     2. 读 manifest → 校验基线 baseAsarSha256 vs 当前 app.asar sha256
+   │     │        （不一致 → fall back 全量 Setup）
+   │     │     3. 解压 app.asar → sha256 自检 vs manifest.appAsarSha256
+   │     │     4. 弹窗「重启完成更新」+ 显示补丁大小 vs 全量大小
+   │     │     5. 用户确认 → app.relaunch() 前 spawn helper 进程
+   │     │     6. helper 等主进程退出 → rename 旧 asar（backup）→ 落新 asar
+   │     │     7. 校验落盘后 sha256 == appAsarSha256
+   │     │
+   │     └── 没找到 → 走老全量通道
+   │
+   └── 任何一步失败 → 自动回退全量下载
+```
+
+### 故障兜底矩阵
+
+| 场景 | 行为 |
+|---|---|
+| 补丁下载 404/超时 | 回退全量 Setup |
+| 补丁 sha256 不匹配 | 删除已下载 zip，回退全量 Setup |
+| `baseAsarSha256` 与当前 asar 不一致 | 用户可能跨版本跳了，**不要回退**——直接把全量 Setup 走下去 |
+| helper 落盘失败 | helper 回滚 rename，App 启动时检测 sha256 不对，继续走全量补丁 |
+| 没有匹配 fromVersion 的补丁（用户早于 fromVersion） | 全量 Setup |
+
+### 发版侧约定
+
+- 脚本：`scripts/release-one-click.js`（已集成）
+- 发布后产物：`leastversion/{TaskManager-Setup-<v>.exe, patches/<prev>-to-<v>.zip}` + 同步的 `latest.json`
+- 历史 asar 缓存：`scripts/.asar-cache/<version>.{asar,json}` —— 不要提交到仓库，由脚本维护
+- 自检脚本：`scripts/verify-patch-build.js` —— 验证补丁链可生成 + 可解压，无须真正 build:exe

@@ -748,6 +748,82 @@ export function registerUpdater(db: DB | null) {
     setSetting(db as DB, SETTING_AUTO, enabled ? '1' : '0');
     return { ok: true, enabled };
   });
+
+  // ===================== v1.1.6 块 4b：增量更新 IPC =====================
+  // 延迟加载 patchApply 以保持 index.ts 顶部 import 区干净；它内部有自己的依赖（os/dialog）
+  const patchApply = require('./patchApply') as typeof import('./patchApply');
+  ipcMain.handle('update:patch:preview', async (_e, manifest: any, currentVersion: string) => {
+    const m: import('./patchApply').ManifestLite = manifest && typeof manifest === 'object' ? manifest : {};
+    const patch = patchApply.selectPatch(m, currentVersion);
+    if (!patch) return { available: false, reason: '当前版本没有可用的增量补丁（请走整装安装）' };
+    const cur = await patchApply.currentAsarSha256();
+    if (cur && cur !== patch.baseAsarSha256.toLowerCase()) {
+      return {
+        available: false,
+        reason: `基线不对：当前 app.asar sha256=${cur.slice(0, 8)}… 不匹配补丁期望 ${patch.baseAsarSha256.slice(0, 8)}…（可能跨版本跳过了）`,
+      };
+    }
+    return {
+      available: true,
+      patch: {
+        fromVersion: patch.fromVersion,
+        toVersion: m.version || '',
+        url: patch.url,
+        sha256: patch.sha256,
+        size: patch.size,
+        baseAsarSha256: patch.baseAsarSha256,
+        appAsarSha256: patch.appAsarSha256,
+      },
+      sizeMB: +(patch.size / 1024 / 1024).toFixed(2),
+      fullSizeMB: +(Number(m.size || 90000000) / 1024 / 1024).toFixed(1),
+    };
+  });
+
+  ipcMain.handle('update:patch:apply', async (_e, patch: any) => {
+    if (!patch || typeof patch.url !== 'string') return { ok: false, error: '补丁参数缺失' };
+    const entry: import('./patchApply').PatchEntry = {
+      fromVersion: patch.fromVersion,
+      url: patch.url,
+      sha256: (patch.sha256 || '').toLowerCase(),
+      size: patch.size || 0,
+      baseAsarSha256: (patch.baseAsarSha256 || '').toLowerCase(),
+      appAsarSha256: (patch.appAsarSha256 || '').toLowerCase(),
+      createdAt: new Date().toISOString(),
+    };
+    // 1) 下载补丁 zip
+    const dl = await patchApply.downloadPatchZip(entry, (p) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'progress', fileName: `${entry.fromVersion}-patch.zip`, ...p });
+      }
+    });
+    if (!dl.ok) {
+      return { ok: false, error: dl.error || '下载补丁失败' };
+    }
+    // 2) 启动 helper（落新 asar）
+    const spawned = patchApply.spawnPatchHelper(dl.path!, entry, { relaunch: true });
+    if (!spawned.ok) {
+      // helper 启动失败，自动回退全量
+      try { fs.unlinkSync(dl.path!); } catch {}
+      return { ok: false, error: `helper 启动失败：${spawned.error}` };
+    }
+    // 3) 通知 UI 即将退出
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'done', fileName: `${entry.fromVersion}-patch.zip`, percent: 100, note: '补丁已落盘，主进程即将退出' });
+    }
+    // 4) 600ms 后退出，让 UI 有时间渲染最后状态
+    setTimeout(() => {
+      try { app.exit(0); } catch { /* ignore */ }
+    }, 600);
+    return { ok: true, helperPid: spawned.pid };
+  });
+
+  ipcMain.handle('update:patch:state', () => {
+    const r = patchApply.checkPatchStateOnBoot();
+    let message: string | undefined;
+    if (r.applied) message = '上次补丁已成功应用';
+    else if (r.failed) message = `上次补丁未应用：基线或落盘失败（期望 ${r.baseline?.expected.slice(0, 8)}…，实际 ${r.baseline?.actual.slice(0, 8)}…），下次检查更新会走整装`;
+    return { ...r, message };
+  });
 }
 
 /** 启动后静默检查（供 main.ts 调用），查所有源，挑版本最高的，命中时推送给渲染进程 */

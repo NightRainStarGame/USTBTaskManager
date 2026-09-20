@@ -203,6 +203,37 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       install: (filePath: string) => invoke('update:install', filePath) as Promise<{ ok: boolean; error?: string }>,
       openExternal: (url: string) => invoke('update:openExternal', url) as Promise<{ ok: boolean; error?: string }>,
       skipVersion: (version: string) => invoke('update:skipVersion', version),
+      /** v1.1.6 块 4b：增量补丁相关。renderer 端拿当前 winner + 当前 app.getVersion() 自决 */
+      patchPreview: (manifest: any, currentVersion: string) =>
+        invoke('update:patch:preview', manifest, currentVersion) as Promise<{
+          available: boolean;
+          reason?: string;
+          patch?: {
+            fromVersion: string;
+            toVersion: string;
+            url: string;
+            sha256: string;
+            size: number;
+            baseAsarSha256: string;
+            appAsarSha256: string;
+          };
+          sizeMB?: number;
+          fullSizeMB?: number;
+        }>,
+      /** v1.1.6 块 4b：下载补丁 + 启动 helper + 退出主进程 */
+      patchApply: (patch: any) =>
+        invoke('update:patch:apply', patch) as Promise<{
+          ok: boolean;
+          error?: string;
+          helperPid?: number;
+          nextVersion?: string;
+        }>,
+      /** v1.1.6 块 4b：校验上次补丁是否应用成功（启动时调一次） */
+      patchState: () => invoke('update:patch:state') as Promise<{
+        applied?: boolean; failed?: boolean;
+        baseline?: { expected: string; actual: string };
+        message?: string;
+      }>,
       /** 兼容旧 API：用单源替换（保留旧行为） */
       setSource: (source: string) => invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: UpdateSourceDTO[] }>,
       /** 新 API：整体保存多源 + 切换主源 */
@@ -263,14 +294,33 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         ok: boolean; error?: string; courseName?: string;
         entries: Array<{ id: string; title: string; sessionDate: string; sessionTime?: string | null; content: string; publisher: string; publishedAt: number; updatedAt: number }>;
       }>,
-      /** 按同步作业码接收一个作业包到本地课程；本地缺课程时返回 courseNotFound=true 让前端弹窗询问 */
-      receive: (syncCode: string) => invoke('homework:receive', syncCode) as Promise<{
+      /** 按同步作业码接收一个作业包到本地课程；本地缺课程时返回 courseNotFound=true 让前端弹窗询问；
+       *  v1.1.6：同名多门课程时返回 courseCandidates 让前端手选，重试时传 chooseCourseId */
+      receive: (syncCode: string, chooseCourseId?: number | null) => invoke('homework:receive', syncCode, chooseCourseId) as Promise<{
         ok: boolean; error?: string; source?: string; syncCode?: string; courseName?: string;
         courseNotFound?: boolean;
+        courseCandidates?: Array<{ id: number; name: string; code?: string | null; instructor?: string | null }>;
         entries: number; created: number; updated: number;
         coursesTouched: number; coursesCreated: string[];
         items: Array<{ courseName: string; title: string; sessionDate: string; action: 'created' | 'updated' }>;
         syncedAt: number;
+      }>,
+    },
+    // v1.1.6 输入诊断（块 3）：探测器上报 + Settings 导出
+    diag: {
+      /** 探测器触发失灵快照时调用，无返回值（fire & forget）。浏览器环境无 IPC 也能调，但等于 noop */
+      append: (snapshot: any) => { send('input:diag:append', snapshot); },
+      /** 预览：返回最近 5 条失灵快照（用于 Settings 卡片展示） */
+      peek: () => invoke('input:diag:peek') as Promise<{
+        ok: boolean;
+        path: string;
+        byteCount: number;
+        recent: Array<{ ts: number; iso: string; reason: string; focusedTag: string; stallCount: number; msSinceLastKeydown: number; appVersion: string }>;
+        error?: string;
+      }>,
+      /** 导出：弹出 save dialog 把 %TMP%/taskmanager-input-diag.log 复制过去 */
+      export: () => invoke('input:diag:export') as Promise<{
+        ok: boolean; path?: string; canceled?: boolean; byteCount?: number; error?: string;
       }>,
     },
     // 全量备份 / 恢复 / 完整性检查

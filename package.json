@@ -15,6 +15,7 @@
     "cap:sync": "npm run build:mobile && npx cap sync android",
     "build:exe": "npm run build && electron-builder --win nsis --x64",
     "release:manifest": "node scripts/release.js",
+    "release:one": "node scripts/release-one-click.js",
     "release:verify": "node scripts/release.js --verify",
     "publish:github": "node scripts/publish-github.js",
     "publish:vps": "node scripts/publish-vps.js",
@@ -78,6 +79,12 @@
     ],
     "asarUnpack": [
       "node_modules/better-sqlite3/**"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/resources/patch-helper.cjs",
+        "to": "patch-helper.cjs"
+      }
     ],
     "npmRebuild": false,
     "buildDependenciesFromSource": false,

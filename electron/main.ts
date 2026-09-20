@@ -40,23 +40,58 @@ if (process.argv.includes('--disable-gpu') || process.env.TASKMGR_SOFTWARE_RENDE
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let splashHidden = false;
+let splashShownAt = 0;          // splash 真正可见的时刻（用于最短展示时长）
+let splashLoaded = false;       // splash 页面 did-finish-load（此后才能收 IPC）
+let splashLastMsg: { pct: number; text: string } | null = null;
 
-/** 关掉 splash、显示主窗口；幂等，多次调用安全 */
+/** splash 最短展示时长：保证动画被看见（用户核心诉求 #2：启动动画要像真窗口，不是闪一下的预载） */
+const SPLASH_MIN_MS = 1500;
+/** splash 淡出时长 */
+const SPLASH_FADE_MS = 320;
+
+/** 把真实启动里程碑推给 splash 页面（驱动进度条与文案）；页面未加载完时缓存，加载完补发 */
+function splashProgress(pct: number, text: string) {
+  splashLastMsg = { pct, text };
+  if (splashWindow && !splashWindow.isDestroyed() && splashLoaded) {
+    try { splashWindow.webContents.send('splash:progress', splashLastMsg); } catch { /* 忽略：页面可能正在销毁 */ }
+  }
+}
+
+/** 关掉 splash、显示主窗口；幂等，多次调用安全。
+ *  v1.1.6：主窗先 show，splash 同步 opacity 淡出，形成交叉过渡；并保证 splash 至少可见 SPLASH_MIN_MS。 */
 function hideSplashAndShowMain() {
   if (splashHidden) return;
   splashHidden = true;
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    splashWindow.hide();
-    setTimeout(() => {
-      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy();
-      splashWindow = null;
-    }, 200);
-  }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
-  bootLog('splash hidden, main shown');
+
+  const doTransition = () => {
+    // 先亮主窗，再淡出 splash —— 交叉过渡
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      const start = Date.now();
+      const fadeStep = () => {
+        if (!splashWindow || splashWindow.isDestroyed()) return;
+        const t = (Date.now() - start) / SPLASH_FADE_MS;
+        if (t >= 1) {
+          splashWindow.destroy();
+          splashWindow = null;
+        } else {
+          try { splashWindow.setOpacity(1 - t); } catch { /* 已销毁 */ }
+          setTimeout(fadeStep, 16);
+        }
+      };
+      fadeStep();
+    }
+    bootLog('splash fading out, main shown');
+  };
+
+  // 最短展示时长：动画刚起就被关掉等于没有动画
+  const elapsed = splashShownAt ? Date.now() - splashShownAt : SPLASH_MIN_MS;
+  const remain = Math.max(0, SPLASH_MIN_MS - elapsed);
+  if (remain > 0) setTimeout(doTransition, remain);
+  else doTransition();
 }
 
 function createSplash() {
@@ -76,13 +111,33 @@ function createSplash() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, 'splash-preload.js'), // v1.1.6：进度事件桥
     },
+  });
+  // 页面加载完成后才可能收 IPC；把缓存里最后一条里程碑补发过去
+  splashWindow.webContents.once('did-finish-load', () => {
+    splashLoaded = true;
+    if (splashLastMsg) {
+      try { splashWindow?.webContents.send('splash:progress', splashLastMsg); } catch { /* ignore */ }
+    }
   });
   // 先挂事件，再 loadFile（避免错过 ready-to-show）
   splashWindow.once('ready-to-show', () => {
+    if (splashHidden) return; // 主窗已就绪、过渡已开始：不再显示 splash
     splashWindow?.show();
-    bootLog('splash shown');
+    splashShownAt = Date.now();
+    bootLog('splash shown (ready-to-show)');
   });
+  // v1.1.6 保险丝：实测（boot log 无 'splash shown'）ready-to-show 在部分环境下不触发，
+  // splash 永远 hidden 直到被销毁——用户从来看不到启动画面。300ms 没显示就强制 show。
+  // （300ms 的取舍：比绝大多数启动里程碑早，动画能看到；只有主窗 300ms 内就绪的极速启动才跳过）
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed() && !splashHidden && !splashShownAt) {
+      try { splashWindow.show(); } catch { /* ignore */ }
+      splashShownAt = Date.now();
+      bootLog('splash shown (fuse timer, ready-to-show missed)');
+    }
+  }, 300);
   splashWindow.loadFile(path.join(__dirname, 'splash.html'));
 
   // 防呆：若主窗口长时间未 ready（5 秒还没关 splash），强制兜底
@@ -166,15 +221,31 @@ ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 // 渲染层完成 React mount + store.refreshAll() 后通过这个 channel 通知主进程"可以显示了"
 ipcMain.on('app:ready-to-show', () => {
   bootLog('renderer reports ready-to-show');
+  splashProgress(100, '就绪');
   hideSplashAndShowMain();
 });
 
 app.whenReady().then(() => {
   bootLog('app ready');
 
+  // v1.1.6 块 4b：检查上次补丁是否应用成功，并把结果广播给渲染层（弹一条 toast）
+  try {
+    const patchApply = require('./updater/patchApply');
+    const state = patchApply.checkPatchStateOnBoot();
+    if (state.applied) {
+      bootLog('patch state: APPLIED');
+    } else if (state.failed) {
+      const b = state.baseline || { expected: '?', actual: '?' };
+      bootLog(`patch state: FAILED expected=${b.expected} actual=${b.actual}`);
+    }
+  } catch (e: any) {
+    bootLog('patch state check failed: ' + (e?.message || e));
+  }
+
   // v1.1.5：先把 splash 挂出来占住屏幕，避免「点击图标后空窗期」
   try {
     createSplash();
+    splashProgress(12, '正在唤醒小豆芽…');
     bootLog('splash created');
   } catch (e: any) {
     bootLog('SPLASH CREATE FAILED (继续启动主窗口): ' + (e?.stack || String(e)));
@@ -185,6 +256,7 @@ app.whenReady().then(() => {
     initDatabase();
     dbReady = true;
     bootLog('db initialized');
+    splashProgress(45, '正在加载课程数据…');
 
     // 数据库发生过损坏恢复时，明确告知用户（而不是默默换了一个空库）
     const rec = getStartupRecovery();
@@ -198,6 +270,7 @@ app.whenReady().then(() => {
 
     registerAllIpc(getDb());
     bootLog('ipc registered');
+    splashProgress(55, '正在连接模块…');
   } catch (e: any) {
     bootLog('DB SETUP FAILED (window will still open): ' + (e?.stack || String(e)));
     dialog.showErrorBox(
@@ -210,6 +283,7 @@ app.whenReady().then(() => {
   try {
     createWindow();
     bootLog(`window created (dbReady=${dbReady})`);
+    splashProgress(72, '正在绘制界面…');
 
     // 启动后静默检查更新（仅当用户配置了更新源；失败不打扰）
     setTimeout(() => {
