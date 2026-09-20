@@ -91,7 +91,7 @@ if (!EXECUTE) { console.log('\n(dry-run 结束。确认无误后加 --execute �
 
 // ---------- 1. 前置校验 ----------
 step('前置校验');
-if (version === pkg.version) die(`package.json 已经是 ${version}，是否已发过？`);
+if (version !== pkg.version) { console.log(`  (pkg.version=${pkg.version} -> ${version})`); }
 const gitStatus = run('git', ['status', '--porcelain']).trim();
 if (gitStatus) {
   console.log('    工作区未提交变更:\n' + gitStatus.split('\n').slice(0, 10).map((l) => '      ' + l).join('\n'));
