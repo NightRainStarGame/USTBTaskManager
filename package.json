@@ -19,6 +19,7 @@
     "release:verify": "node scripts/release.js --verify",
     "publish:github": "node scripts/publish-github.js",
     "publish:vps": "node scripts/publish-vps.js",
+    "publish:ustbcloud": "node scripts/upload-release-to-ustbcloud.js",
     "verify:vps": "node scripts/publish-vps.js --verify",
     "test:updater": "tsc -p tsconfig.node.json && node scripts/test-updater-sources.js",
     "verify:update": "node scripts/verify-live-update.js",

@@ -1404,8 +1404,8 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
   // 可选 secret edit
   const [secretMode, setSecretMode] = useState(false);
   const [publishCode, setPublishCode] = useState('');
-  // v1.1.4：发布目标（GitHub 令牌 / 北科云盘·校园网）
-  const [target, setTarget] = useState<'github' | 'cloud'>('github');
+  // v1.1.6：发布目标列表（可同时推 GitHub + 北科云盘；默认两个都勾）
+  const [targets, setTargets] = useState<{ github: boolean; cloud: boolean }>({ github: true, cloud: true });
 
   const [error, setError] = useState('');
   const [published, setPublished] = useState<{
@@ -1456,7 +1456,7 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     try {
       const r = await window.taskAPI.homework.publish({
         publishCode: secretMode && publishCode ? publishCode : undefined,
-        target,
+        targets: (Object.entries(targets).filter(([, on]) => on).map(([k]) => k) as ('github' | 'cloud')[]),
         courseId: course.id,
         courseName: course.name,
         sessionDate,
@@ -1492,7 +1492,13 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
     return <>
       <button onClick={onClose} className="btn-ghost">取消</button>
       <button onClick={submit} disabled={busy || !course || !title.trim()} className="btn-neon btn-neon-yellow">
-        <CloudUpload size={14} /> {busy ? '上传中…' : target === 'cloud' ? '上传到北科云盘' : '上传到 GitHub'}
+        <CloudUpload size={14} /> {busy
+          ? '上传中…'
+          : (targets.cloud && targets.github
+            ? '上传到 GitHub + 云盘'
+            : targets.cloud
+            ? '上传到北科云盘'
+            : '上传到 GitHub')}
       </button>
     </>;
   })();
@@ -1531,18 +1537,22 @@ function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => void; onC
               每次为该课程首次发布时会自动生成一个 8 位同步作业码（持久化到本机），同学凭此码「接收作业」。
             </div>
 
-            {/* 发布目标（v1.1.4） */}
-            <div className="flex items-center gap-2">
+            {/* 发布目标（v1.1.6：可同时勾 GitHub + 北科云盘） */}
+            <div className="flex items-center gap-3">
               <span className="text-xs text-text-dim shrink-0">发布到</span>
-              {([['github', 'GitHub'], ['cloud', '北科云盘']] as const).map(([v, label]) => (
-                <button
+              {([['github', 'GitHub'], ['cloud', '北科云盘（需校园网）']] as const).map(([v, label]) => (
+                <label
                   key={v}
-                  type="button"
-                  onClick={() => setTarget(v)}
-                  className={`px-2.5 py-1 rounded text-[11px] font-mono border transition-colors ${target === v ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono border cursor-pointer transition-colors ${targets[v] ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
                 >
-                  {label}{v === 'cloud' ? '（需校园网）' : ''}
-                </button>
+                  <input
+                    type="checkbox"
+                    checked={targets[v]}
+                    onChange={(e) => setTargets({ ...targets, [v]: e.target.checked })}
+                    className="w-3 h-3 accent-neon-green"
+                  />
+                  {label}
+                </label>
               ))}
             </div>
 

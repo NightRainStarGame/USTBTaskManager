@@ -195,7 +195,10 @@ export interface PublishPayload {
   syncCode?: string;
   /** 可不传：仅在发布方想加一道「只有自己知道密钥」时输入；留空 = 任何人凭 syncCode + GitHub PAT 即可发布 */
   publishCode?: string;
-  /** v1.1.4：发布目标。github（默认，需令牌）| cloud（北科云盘，需校园网） */
+  /** v1.1.6：发布目标列表。['github', 'cloud'] 同时推两源；单源时传单元素数组。
+   *  v1.1.4/v1.1.5 的单值 target 字段已废弃（兼容保留）。 */
+  targets?: ('github' | 'cloud')[];
+  /** @deprecated v1.1.6 起改用 targets。保留兼容老调用方 */
   target?: 'github' | 'cloud';
   /** v1.1.6：发布课程本地 ID（主进程据此查/生成 guid 写进包里，接收端精确挂载） */
   courseId?: number;
@@ -424,6 +427,58 @@ function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): str
  * - syncCode 可选：填了直接用；空且 courseId 给了 → 用该课程持久化的（首次自动生成）；
  *   都没有 → 返回错误
  */
+
+/**
+ * v1.1.6：双源发布 wrapper。解析 payload.targets / payload.target（兼容）/ settings 持久化默认，
+ * 对每个目标分别调一次底层 publishHomework。任一目标失败不阻塞其他目标。
+ */
+export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Promise<{
+  ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string;
+  targets?: ('github' | 'cloud')[];
+  perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }>;
+}> {
+  const def = (getSetting(db, 'homework_default_targets') || '').trim();
+  let targets: ('github' | 'cloud')[] = [];
+  if (Array.isArray(payload.targets) && payload.targets.length) {
+    targets = payload.targets.filter((t) => t === 'github' || t === 'cloud');
+  } else if (payload.target === 'cloud' || payload.target === 'github') {
+    targets = [payload.target];
+  } else if (def === 'github' || def === 'cloud') {
+    targets = [def];
+  } else if (def && /^\[[^\]]+\]$/.test(def)) {
+    try {
+      const arr = JSON.parse(def);
+      if (Array.isArray(arr) && arr.length) targets = arr.filter((t: any) => t === 'github' || t === 'cloud');
+    } catch {}
+  }
+  if (!targets.length) targets = ['github'];
+
+  const perTarget: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }> = [];
+  let lastOk: any = null;
+  let firstErr: string | undefined;
+  let firstAny: string | undefined;
+  for (const t of targets) {
+    // 复用底层 publishHomework：单 target 调一次，副作用（设置 course syncCode 等）会按目标重复执行；
+    // 但因 syncCode 已经持久化在 db，第二次调用会拿到同一个 syncCode，结果幂等。
+    const r: any = await publishHomework(db, { ...payload, target: t, targets: undefined });
+    perTarget.push({ target: t, ok: !!r.ok, error: r.error, fileUrl: r.fileUrl, anyshareRaw: r.anyshareRaw });
+    if (r.ok) lastOk = r;
+    else { if (!firstErr) firstErr = r.error; if (!firstAny && r.anyshareRaw) firstAny = r.anyshareRaw; }
+  }
+  const ok = perTarget.some((p) => p.ok);
+  return {
+    ok,
+    error: firstErr,
+    entry: lastOk?.entry,
+    fileUrl: lastOk?.fileUrl,
+    syncCode: lastOk?.syncCode,
+    bundleCreated: lastOk?.bundleCreated,
+    anyshareRaw: firstAny,
+    targets,
+    perTarget,
+  };
+}
+
 export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string }> {
   // 1) 发布码验证（可选；填了就要通过 HMAC）
   let syncCode: string | undefined;
@@ -791,7 +846,9 @@ export function registerHomework(db: DB) {
 
   ipcMain.handle('homework:publish', async (_e, payload: PublishPayload) => {
     try {
-      return await publishHomework(db, payload);
+      // v1.1.6：targets / target 字段都支持。Multi 处理双源 + 单源两种情况
+      // （单 target 时退化成一次 publishHomework 调用）。
+      return await publishHomeworkMulti(db, payload);
     } catch (e: any) {
       return { ok: false, error: describeError(e) };
     }

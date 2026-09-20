@@ -276,9 +276,11 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       /** v1.1.3：取某课程对应的同步作业码（首次自动生成）。用作发布时定位远端 bundle */
       courseSyncCode: (courseId: number | null | undefined) => invoke('homework:courseSyncCode', courseId) as Promise<{ ok: boolean; syncCode: string; error?: string }>,
       /** 发布一条作业。publishCode 可选；如未填 syncCode 但传了 courseId，会用该课程持久化的 syncCode（首次自动生成）。
-       *  v1.1.4：target = 'cloud' 时发布到北科云盘（需校园网），默认 'github' */
+       *  v1.1.6：targets 可同时推 GitHub + 北科云盘；target 字段保留兼容老调用方 */
       publish: (payload: {
         publishCode?: string; syncCode?: string; courseId?: number | null;
+        targets?: ('github' | 'cloud')[];
+        /** @deprecated v1.1.6 起改用 targets */
         target?: 'github' | 'cloud';
         courseName: string; sessionDate: string;
         sessionTime?: string | null; title: string; content: string;
@@ -288,6 +290,8 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         entry?: { id: string; title: string; sessionDate: string; publisher: string; updatedAt: number };
         syncCode?: string; bundleCreated?: boolean;
         fileUrl?: string;
+        targets?: ('github' | 'cloud')[];
+        perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string }>;
       }>,
       /** 某个码包在远端已发布的作业 */
       remoteEntries: (syncCode: string) => invoke('homework:remoteEntries', syncCode) as Promise<{

@@ -121,7 +121,16 @@ async function upload(root, name, buf) {
 
   // latest.json：匿名不能覆盖，用时间戳版本名
   const ts = Date.now();
-  const jsonBuf = fs.readFileSync(jsonPath);
+// v1.1.6：anonymous 分享里安装包按 "<basename>-<ts>.exe" 命名（不能覆盖）。
+  // 同步给云盘的 latest.json 里 url 字段要写成 basename（不带 ts），App 端
+  // resolveDownloadUrl 按 base 前缀找最新一份换签名直链。
+  const jsonRaw = fs.readFileSync(jsonPath, 'utf8');
+  const jsonObj = JSON.parse(jsonRaw);
+  const baseExeName = path.basename(exePath).replace(/\.exe$/i, '') + '.exe';
+  jsonObj.url = baseExeName;
+  jsonObj.fileName = baseExeName;
+  if (!jsonObj.page) jsonObj.page = 'https://github.com/NightRainStarGame/USTBTaskManager/releases';
+  const jsonBuf = Buffer.from(JSON.stringify(jsonObj, null, 2) + '\n', 'utf8');
   await upload(root, `latest-${ts}.json`, jsonBuf);
   console.log(`[cloud] ✓ latest-${ts}.json (${jsonBuf.length} B)`);
 

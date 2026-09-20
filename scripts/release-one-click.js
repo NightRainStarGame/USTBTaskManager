@@ -39,6 +39,7 @@ const version = argv.find((a) => /^\d+\.\d+\.\d+$/.test(a));
 const EXECUTE = argv.includes('--execute');
 const SKIP_BUILD = argv.includes('--skip-build');
 const NO_RELEASE_PAGE = argv.includes('--no-release-page');
+const NO_CLOUD = argv.includes('--no-cloud');
 const notesFileIdx = argv.indexOf('--notes-file');
 const notesFile = notesFileIdx >= 0 ? argv[notesFileIdx + 1] : null;
 const notesInlineIdx = argv.indexOf('--notes');
@@ -281,6 +282,23 @@ if (!NO_RELEASE_PAGE) {
     console.log(`    [!] Release 页创建失败：${e.message}（leastversion 直链 + latest.json 已可用，不影响 App 更新）`);
   } finally {
     try { fs.rmSync(path.join(ROOT, '_rel-body.tmp.json'), { force: true }); } catch {}
+  }
+}
+
+// ---------- 9. 上传到北科云盘（AnyShare 校园网内最快；可选） ----------
+if (!NO_CLOUD) {
+  step('上传到北科云盘（AnyShare 校园网内最快；失败不影响主流程，校园网外会超时）');
+  try {
+    const uploader = path.join(ROOT, 'scripts', 'upload-release-to-ustbcloud.js');
+    const r = spawnSync(process.execPath, [uploader, exePath, latestPath], {
+      cwd: ROOT,
+      stdio: 'inherit',
+      env: { ...process.env },
+    });
+    if (r.status !== 0) throw new Error(`upload-release-to-ustbcloud.js exit ${r.status}`);
+    ok('北科云盘已上传 latest-<ts>.json + 安装包 <basename>-<ts>.exe');
+  } catch (e) {
+    console.log(`    [!] 云盘上传失败：${e.message}（GitHub + leastversion 主流程不受影响）`);
   }
 }
 

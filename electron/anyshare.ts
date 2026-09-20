@@ -309,12 +309,17 @@ export async function findLatestByPrefix(cfg: AnyShareConfig, prefix: string, su
 }
 
 /** 下载文本文件（latest.json / 作业包 json） */
-export async function downloadTextFile(cfg: AnyShareConfig, name: string, maxBytes = 1024 * 1024): Promise<string> {
-  const file = await findShareFile(cfg, name);
-  if (!file) throw new Error(`北科云盘分享里没有文件 ${name}`);
+/**
+ * v1.1.6 起：调用方可直接传 AnyShareFile（已由 findLatestByPrefix 等前缀查询得到），
+ * 也可传 name 走原精确查找。匿名云盘 uploader 会传成 "<base>-<ts>.<ext>" 前缀+时间戳，
+ * 直接按精确名匹配会找不到。
+ */
+export async function downloadTextFile(cfg: AnyShareConfig, nameOrFile: string | AnyShareFile, maxBytes = 1024 * 1024): Promise<string> {
+  const file = typeof nameOrFile === 'string' ? await findShareFile(cfg, nameOrFile) : nameOrFile;
+  if (!file) throw new Error(`北科云盘分享里没有文件 ${typeof nameOrFile === 'string' ? nameOrFile : nameOrFile.name}`);
   const url = await getFileDownloadUrl(cfg, file);
   const r = await asFetch(url, { timeoutMs: 30000 });
-  if (!r.ok) throw new Error(`下载 ${name} 失败（HTTP ${r.status}）`);
+  if (!r.ok) throw new Error(`下载 ${file.name} 失败（HTTP ${r.status}）`);
   return r.text.slice(0, maxBytes);
 }
 

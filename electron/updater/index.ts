@@ -33,7 +33,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { DB } from '../db/index';
 import {
-  parseAnyShareUrl, downloadTextFile, findShareFile, getFileDownloadUrl,
+  parseAnyShareUrl, downloadTextFile, findShareFile, findLatestByPrefix, getFileDownloadUrl,
   type AnyShareConfig,
 } from '../anyshare';
 
@@ -269,24 +269,57 @@ function normalizeSource(s: any, i: number): UpdateSource {
   };
 }
 
+/**
+ * v1.1.6 起：把用户的 update_sources 与 DEFAULT_UPDATE_SOURCES 合并
+ * - 用户已有源不动
+ * - 默认源里 (type, url, password) 三元组**没出现在用户列表里**的新源追加到末尾
+ * - 新版加了新默认源 / 改了某个默认源的 url 或 password 时，老用户会自动跟上
+ * - 合并后会写回 settings（首启动一次后下次不再写）
+ */
+function sourceKey(s: UpdateSource): string {
+  return `${s.type || 'http'}|${s.url}|${s.password || ''}`;
+}
+
 /** 把用户归并/补全的源：第一个 primary = 主源；至少保留 DEFAULT_UPDATE_SOURCES[0] */
 export function getSources(db: DB | null): UpdateSource[] {
+  let userSources: UpdateSource[] = [];
   const raw = getSetting(db, SETTING_SOURCES);
   if (raw) {
     try {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr) && arr.length) {
-        return arr
+        userSources = arr
           .filter((s: any) => s && typeof s.url === 'string' && s.url.trim())
           .map((s: any, i: number) => normalizeSource(s, i));
       }
     } catch { /* fallthrough */ }
   }
-  // 兼容旧库：把 update_source（单字符串）当成唯一的一个自定义源
-  const legacy = (getSetting(db, SETTING_SOURCES_LEGACY) || '').trim();
-  if (legacy) {
-    return [normalizeSource({ name: '自定义源（旧版设置）', url: legacy, enabled: true, primary: true }, 0)];
+
+  if (!userSources.length) {
+    // 兼容旧库：把 update_source（单字符串）当成唯一的一个自定义源
+    const legacy = (getSetting(db, SETTING_SOURCES_LEGACY) || '').trim();
+    if (legacy) {
+      userSources = [normalizeSource({ name: '自定义源（旧版设置）', url: legacy, enabled: true, primary: true }, 0)];
+    }
   }
+
+  // 合并：把默认源里新出现的三元组追加到用户列表末尾（用户手动加的源不动）
+  if (userSources.length) {
+    const userKeys = new Set(userSources.map(sourceKey));
+    const toAdd = DEFAULT_UPDATE_SOURCES.filter((s) => !userKeys.has(sourceKey(s)));
+    if (toAdd.length) {
+      const merged = [
+        ...userSources,
+        ...toAdd.map((s) => ({ ...s, primary: false })),
+      ];
+      // 至少有一个 primary
+      if (!merged.some((s) => s.primary)) merged[0] = { ...merged[0], primary: true };
+      if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(merged));
+      return merged;
+    }
+    return userSources;
+  }
+
   return DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s }));
 }
 
@@ -385,25 +418,42 @@ function anyshareCfgFromSource(src: UpdateSource | undefined | null): AnyShareCo
 }
 
 /** 拉取某源的清单文本：http 型直接 GET；anyshare 型从云盘里下载 latest.json */
+/**
+ * v1.1.6 起：匿名云盘不能覆盖，uploader 把 latest.json 上传成 "latest-<ts>.json"，
+ * 把安装包上传成 "<basename>-<ts>.exe"（末尾段随 ts 变）。App 端先按前缀找修改时间最新的一份，
+ * 找不到再回退精确名（兼容老格式 / 用户自己手动传的 latest.json）。
+ */
 async function fetchManifestText(src: UpdateSource): Promise<string> {
   const cfg = anyshareCfgFromSource(src);
-  if (cfg) return downloadTextFile(cfg, 'latest.json', MAX_MANIFEST_BYTES);
-  return fetchText(src.url);
+  if (!cfg) return fetchText(src.url);
+  const file =
+    (await findLatestByPrefix(cfg, 'latest', '.json')) ??
+    (await findShareFile(cfg, 'latest.json'));
+  if (!file) throw new Error('北科云盘分享里没有 latest.json（请确认发布者已上传）');
+  return downloadTextFile(cfg, file, MAX_MANIFEST_BYTES);
 }
 
 /**
  * 解析安装包下载地址。清单 url 是 http(s) 直链则原样返回；
- * 是文件名（anyshare 源：清单里 url 填云盘内的文件名）则换签名直链。
+ * 是文件名（anyshare 源：清单里 url 填云盘内的文件名）则按前缀找最新一份换签名直链。
  */
 async function resolveDownloadUrl(url: string, source?: UpdateSource | null): Promise<string> {
   if (/^https?:\/\//i.test(url)) return url;
   const cfg = anyshareCfgFromSource(source);
-  if (cfg) {
-    const f = await findShareFile(cfg, url);
-    if (!f) throw new Error(`北科云盘分享里没有安装包「${url}」，请等发布者上传后再试`);
-    return getFileDownloadUrl(cfg, f);
+  if (!cfg) throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
+  // 安装包：把 url 当 base，按 "<base>-<ts>.<ext>" 前缀找最新；找不到再回退精确名
+  const m = url.match(/^(.+?)(\.[^.]+)$/);
+  if (m) {
+    const base = m[1];
+    const ext = m[2];
+    const file = (await findLatestByPrefix(cfg, base, ext)) ?? (await findShareFile(cfg, url));
+    if (!file) throw new Error(`北科云盘分享里没有安装包「${url}」（也没找到 ${base}-<ts>${ext}），请等发布者上传后再试`);
+    return getFileDownloadUrl(cfg, file);
   }
-  throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
+  // 兜底：精确匹配
+  const f = await findShareFile(cfg, url);
+  if (!f) throw new Error(`北科云盘分享里没有「${url}」，请等发布者上传后再试`);
+  return getFileDownloadUrl(cfg, f);
 }
 
 // ===================== 检查更新（单源） =====================
