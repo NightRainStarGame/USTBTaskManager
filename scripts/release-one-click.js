@@ -67,7 +67,7 @@ const latestPath = path.join(ROOT, 'latest.json');
 const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
 const leastDir = path.join(ROOT, 'leastversion');
 const oldDir = path.join(ROOT, 'oldversion');
-const buildDir = path.join(ROOT, `release-v${version}`);
+const buildDir = path.join(ROOT, `release-v${version}` + (process.env.RELEASE_SUFFIX || ''));
 const artifact = path.join(buildDir, `TaskManager Setup ${version}.exe`);
 
 step(`计划：发布 v${version}${EXECUTE ? '（--execute）' : '（dry-run）'}`);
