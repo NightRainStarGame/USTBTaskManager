@@ -25,7 +25,8 @@
     "verify:update": "node scripts/verify-live-update.js",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "about:push": "node scripts/upload-release-to-ustbcloud.js --only-about"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.2",

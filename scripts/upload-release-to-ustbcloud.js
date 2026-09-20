@@ -107,13 +107,27 @@ async function upload(root, name, buf) {
 
 // ===== 主流程 =====
 (async () => {
-  const exePath = process.argv[2];
-  const jsonPath = process.argv[3] || path.join(projectRoot, 'latest.json');
-  if (!exePath || !fs.existsSync(exePath)) { console.error('用法: node upload-release-to-ustbcloud.js <exe路径> [latest.json]'); process.exit(1); }
+  // --only-about：单独推送 about.txt（不传 exe / latest.json / 补丁），用户改了关于文本后快速推
+  const args = process.argv.slice(2);
+  const ONLY_ABOUT = args.includes('--only-about');
+  const exePath = args.find((a) => !a.startsWith('--'));
+  const jsonPath = args.find((a) => a.endsWith('.json') && !a.startsWith('--')) || path.join(projectRoot, 'latest.json');
 
   console.log('[cloud] 登录北科云盘…');
   await getToken();
   const root = await getRoot();
+
+  if (ONLY_ABOUT) {
+    const aboutLocal = path.join(projectRoot, 'about.txt');
+    if (!fs.existsSync(aboutLocal)) { console.error('[cloud] about.txt 不存在:', aboutLocal); process.exit(1); }
+    const ts = Date.now();
+    const buf = fs.readFileSync(aboutLocal);
+    await upload(root, `about-${ts}.txt`, buf);
+    console.log(`[cloud] ✓ about-${ts}.txt (${buf.length} B)`);
+    process.exit(0);
+  }
+
+  if (!exePath || !fs.existsSync(exePath)) { console.error('用法: node upload-release-to-ustbcloud.js <exe路径> [latest.json] [--only-about]'); process.exit(1); }
   console.log('[cloud] 分享根 docid:', root.slice(0, 20) + '…');
 
   const before = await listFiles(root);
@@ -160,6 +174,18 @@ async function upload(root, name, buf) {
   console.log(`[cloud] 上传安装包 ${cloudExeName}（${(exeBuf.length / 1024 / 1024).toFixed(1)} MB）…`);
   await upload(root, cloudExeName, exeBuf);
   console.log(`[cloud] ✓ ${cloudExeName}`);
+
+  // about.txt（v1.1.7）：仓库根常驻，云盘也同步一份 about-<ts>.txt
+  const aboutLocal = path.join(projectRoot, 'about.txt');
+  if (fs.existsSync(aboutLocal)) {
+    const buf = fs.readFileSync(aboutLocal);
+    const cloudAboutName = `about-${ts}.txt`;
+    console.log(`[cloud] 上传关于文本 ${cloudAboutName}（${buf.length} B）…`);
+    await upload(root, cloudAboutName, buf);
+    console.log(`[cloud] ✓ ${cloudAboutName}`);
+  } else {
+    console.log('[cloud] about.txt 不存在，跳过');
+  }
 
   // 补丁包：<basename>-<时间戳>.zip（App 端 resolveDownloadUrl 按前缀取最新）
   for (const u of patchUploads) {

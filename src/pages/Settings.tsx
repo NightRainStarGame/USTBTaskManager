@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package } from 'lucide-react';
 import Modal from '@/components/Modal';
+import AboutPanel from '@/components/AboutPanel';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
 
@@ -1049,15 +1050,9 @@ export default function SettingsPage() {
         <DiagPanel />
       </Section>
 
-      {/* 关于 */}
+      {/* 关于：about.txt 多源聚合 + 本地缓存（v1.1.7+） */}
       <Section icon={<Info size={14} />} title="关于">
-        <div className="space-y-1 text-sm font-mono">
-          <div className="flex"><span className="w-28 text-text-dim">应用名称</span><span className="text-neon-green">TaskManager</span></div>
-          <div className="flex"><span className="w-28 text-text-dim">版本</span><span>v{appInfo?.version || '—'}</span></div>
-          <div className="flex"><span className="w-28 text-text-dim">技术栈</span><span>Electron · React · TS · better-sqlite3 · Tailwind</span></div>
-          <div className="flex"><span className="w-28 text-text-dim">UI 设计</span><span>Neon · OKX-inspired · Glassmorphism</span></div>
-          <div className="flex"><span className="w-28 text-text-dim">开发者</span><span>豆芽</span></div>
-        </div>
+        <AboutPanel appVersion={appInfo?.version || ''} />
       </Section>
 
       <div className="fixed bottom-0 right-0 left-60 bg-ink-base/80 backdrop-blur p-3 border-t border-neon-green/15 flex justify-end">

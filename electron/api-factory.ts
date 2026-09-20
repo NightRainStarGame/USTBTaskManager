@@ -370,6 +370,30 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         }>,
       lastImport: () => invoke('xls:lastImport') as Promise<{ lastSync: number; courseCount: number }>,
     },
+    // 关于文本（about.txt，多源聚合 + 本地缓存）
+    about: {
+      getCache: () => invoke('about:get-cache') as Promise<{
+        text: string;
+        source?: string;
+        sha256?: string;
+        pulledAt?: number;
+        pinned: boolean;
+        mtimeMs?: number;
+      }>,
+      refresh: () => invoke('about:refresh') as Promise<{
+        ok: boolean;
+        source?: string;
+        sha256?: string;
+        size?: number;
+        pulledAt?: number;
+        error?: string;
+        results: Array<{ source: string; ok: boolean; error?: string; sha256?: string; size?: number }>;
+      }>,
+      saveLocal: (text: string) => invoke('about:save-local', text) as Promise<{ ok: boolean; sha256?: string; size?: number; error?: string }>,
+      setPinned: (pinned: boolean) => invoke('about:set-pinned', pinned) as Promise<{ ok: boolean; pinned: boolean }>,
+      cachePath: () => invoke('about:cache-path') as Promise<string>,
+      openCache: () => invoke('about:open-cache') as Promise<{ ok: boolean }>,
+    },
   };
 
   return api;

@@ -475,3 +475,28 @@ node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
 - `patches[]`：每条 `{ fromVersion, url, sha256, size, baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize }`
   - `fromVersion` = 补丁适用于的**当前版本**；`baseAsarSha256` 用于校验用户当前 asar 是否匹配基线
 - 云盘版清单与 GitHub 版清单的差别**只有一处**：`url` / `patches[].url` 是云盘 basename 还是 http 直链
+
+## 10. v1.1.7 about.txt 多源分发
+
+「关于」页面文本同样从所有启用源拉取（**与补丁原理一致**），按 sha256 选最新一份缓存到本地。
+
+### 文件命名
+
+| 文件 | 命名 | App 端查找方式 |
+|---|---|---|
+| 关于文本 | `about.txt`（GitHub 仓库根，常驻） | 直接 GET |
+| 云盘版 | `about-<ts>.txt`（云盘匿名不能覆盖） | `findLatestByPrefix('about', '.txt')` 取最新 |
+
+App 启动时把源 url 的 `latest.json` 替换成 `about.txt` 作为拉取地址，云盘源则走云盘前缀解析。
+
+### 协议要点
+
+- App 启动 → 从所有启用源并行 GET `about.txt` → 写入 `%APPDATA%/task-manager/about.txt`
+- 关于页面提供「立即拉取最新」按钮 + 「本地编辑」 + 「锁定本地」开关
+- 锁定本地后，云端下次启动不再覆盖（本地编辑优先）
+
+### 发布时如何同时推 about.txt
+
+1. 编辑仓库根 `about.txt` → `git commit && git push`
+2. （可选）传到云盘：`about-<unix_ts>.txt`
+3. 用户启动 App → 关于页面拉到最新

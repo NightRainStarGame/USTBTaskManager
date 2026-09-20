@@ -5,6 +5,7 @@ import os from 'node:os';
 import { initDatabase, getDb, getStartupRecovery } from './db/index';
 import { registerAllIpc } from './ipc/index';
 import { autoCheckUpdate } from './updater/index';
+import { refreshAbout } from './about/index';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -290,7 +291,10 @@ app.whenReady().then(() => {
       let dbRef = null as ReturnType<typeof getDb> | null;
       try { dbRef = getDb(); } catch { /* DB 不可用时跳过 */ }
       autoCheckUpdate(dbRef, mainWindow).catch(() => { /* ignore */ });
-    }, 6000);
+      // v1.1.7：关于文本多源静默拉取（与补丁原理一致，启动后自动到云端拉最新 about.txt）
+      // 失败/锁定本地都不打扰用户；AboutPanel 启动时会主动 getCache 拿最新缓存
+      refreshAbout(dbRef).catch(() => { /* ignore */ });
+    }, 8000);
   } catch (e: any) {
     bootLog('WINDOW CREATE FAILED: ' + (e?.stack || String(e)));
     app.quit();
