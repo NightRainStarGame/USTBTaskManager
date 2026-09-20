@@ -1,9 +1,22 @@
 {
   "syncCode": "WBHXQSSW",
-  "courseName": "中国科技发展史",
+  "courseName": "基础外语I",
   "createdAt": 1789886375091,
-  "updatedAt": 1789886375091,
+  "updatedAt": 1789886389513,
   "entries": [
+    {
+      "id": "3b8a4371-0dab-4d2b-93c3-a71311a113ef",
+      "courseName": "基础外语I",
+      "sessionDate": "2026-09-15",
+      "sessionTime": null,
+      "title": "Test",
+      "content": "test1111",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789886389513,
+      "updatedAt": 1789886389513
+    },
     {
       "id": "3a5e2b74-0455-43ff-9920-3aabe8370cde",
       "courseName": "中国科技发展史",
@@ -18,5 +31,5 @@
       "updatedAt": 1789886375091
     }
   ],
-  "courseGuid": "C-8XAD4554"
+  "courseGuid": "C-UGCR3UES"
 }
