@@ -99,17 +99,25 @@ homework/<syncCode>.json     ← 作业包本体（一个码一个文件）
 - **读**：公开仓库匿名可读（GitHub Contents API `GET /repos/.../contents/homework/<syncCode>.json`，或 raw.githubusercontent.com 直链）。
 - **写**：需要 GitHub 令牌（fine-grained PAT，仅本仓库、仅 Contents 读写）。令牌只存在发布者本机，不经网站。
 
-### 3.2 云盘源（第二源，v1.1.4 起：AnyShare 外链）
+### 3.2 云盘源（第二源，v1.1.4 起：AnyShare 外链；v1.1.7 目录范式）
 
 v1.1.4 起内置「北科云盘」（爱数 AnyShare）作为第二同步源。仅在**北京科技大学校园网**内可达。
 
-**约定布局（App 与云盘共享）**：
+**v1.1.7 目录转接范式（当前）**：
 
 ```
-分享根目录/<syncCode>-<unix_ts>.json     ← 作业包本体
+分享根目录/
+└── homework/                        ← 固定名一级文件夹（匿名可自动创建）
+    └── <publishCode>/               ← 作业发布码（12 位）命名的文件夹 = 一个课程的整套作业包
+        └── <courseKey>-<unix_ts>.json   ← 作业包本体；课程通用 ID 命名 + 时间戳版本
 ```
 
-匿名分享的 AnyShare 外链**不能覆盖 / 不能删除**同名文件；为避免歧义，发布端每次写一个新文件，文件名为 `<syncCode>-<时间戳>.json`。接收端按前缀取修改时间最新的一份。
+- `publishCode = syncCode + 4 位校验`，接收端可由 syncCode **本地 HMAC 派生**（无需传输）。
+- `courseKey` = 课程通用固定 ID（`CK-` + 哈希(课程名|授课老师)），同名同授课老师在所有设备上一致；文件夹里一眼能看出作业属于哪门课。
+- 匿名分享**不能覆盖 / 不能删除**同名文件 → 每次发布写新时间戳文件；接收端按修改时间取最新。
+- **旧版兼容**：v1.1.4~1.1.6 的扁平结构 `分享根目录/<syncCode>-<ts>.json` 仍可读；新版本发布后包自动迁入新结构。
+
+**课程通用固定 ID（v1.1.7，配套）**：作业包 JSON 顶层新增 `courseKey` 字段；接收端挂载链：用户手选 > `courseKey` 精确命中（**命中的所有同名同老师课程一起挂**）> 旧 `courseGuid` > 同名唯一 > 同名多个弹窗手选。同步作业码也按 courseKey 共享（同名同老师的课程在发布方本地共用一个码一个包）。
 
 **App 端读取方式**：走 `electron/anyshare.ts` 客户端：
 1. POST `/link` 表单（id=外链ID, type=anonymous, password=提取码）→ 302 Set-Cookie `link_token:<id>=ory_at_xxx`

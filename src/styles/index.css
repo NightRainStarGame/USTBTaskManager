@@ -64,29 +64,30 @@
     --c-warn-dim-rgb: 204 186 0;
   }
 
-  /* 樱花粉主题：粉白萌系（v1.1.6 新增，需求 #5）
-     浅底 + 玫瑰粉强调 + 深梅文字；ink 层级翻转为粉白系，黄改琥珀保证可读 */
+  /* 樱花粉主题：粉白萌系（v1.1.6 引入，v1.1.7 重调：更粉底 + 高对比 + 柔光玻璃）
+     底色更饱和的粉；文字改深酒红/深梅，对比度大幅提升；
+     ink 层级翻转为粉白系，黄改琥珀保证可读 */
   [data-theme="sakura"] {
-    --c-primary-rgb: 236 110 166;
-    --c-primary-bright-rgb: 249 168 197;
-    --c-primary-dim-rgb: 205 92 146;
-    --c-primary-deep-rgb: 173 71 122;
-    --c-primary: #EC6EA6;
-    --c-primary-bright: #F9A8C5;
-    --c-bg-deep: #FFF5F8;
-    --c-bg-glow: rgba(236, 110, 166, 0.08);
-    --c-text: #5C2B40;
-    --c-text-secondary: #A3708A;
-    --c-text-dim: #C9A3B5;
-    --c-ink-base-rgb: 255 245 248;
-    --c-ink-900-rgb: 255 240 245;
-    --c-ink-800-rgb: 255 228 238;
-    --c-ink-700-rgb: 253 215 230;
-    --c-ink-600-rgb: 248 196 218;
-    --c-ink-500-rgb: 240 174 200;
-    --c-warn-rgb: 199 122 0;
-    --c-warn-bright-rgb: 224 150 30;
-    --c-warn-dim-rgb: 160 94 0;
+    --c-primary-rgb: 224 72 138;
+    --c-primary-bright-rgb: 247 143 188;
+    --c-primary-dim-rgb: 192 52 116;
+    --c-primary-deep-rgb: 148 38 88;
+    --c-primary: #E0488A;
+    --c-primary-bright: #F78FBC;
+    --c-bg-deep: #FFEDF3;
+    --c-bg-glow: rgba(224, 72, 138, 0.10);
+    --c-text: #45202F;
+    --c-text-secondary: #8A4562;
+    --c-text-dim: #B57E98;
+    --c-ink-base-rgb: 255 237 243;
+    --c-ink-900-rgb: 255 249 252;
+    --c-ink-800-rgb: 255 234 242;
+    --c-ink-700-rgb: 251 209 226;
+    --c-ink-600-rgb: 246 179 205;
+    --c-ink-500-rgb: 238 152 185;
+    --c-warn-rgb: 178 104 0;
+    --c-warn-bright-rgb: 210 138 24;
+    --c-warn-dim-rgb: 140 82 0;
   }
 
   html, body, #root {
@@ -109,11 +110,12 @@
       var(--c-bg-deep);
   }
 
-  /* 樱花粉主题：粉白底 + 柔和樱花渐变 + 可爱的漂浮光斑 */
+  /* 樱花粉主题：更浓的粉调渐变（v1.1.7：背景整体更粉、层次更多） */
   [data-theme="sakura"] body {
     background:
-      radial-gradient(ellipse at 20% 0%, rgba(249,168,197,0.28) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 100%, rgba(236,110,166,0.16) 0%, transparent 55%),
+      radial-gradient(ellipse at 18% 0%, rgba(247, 143, 188, 0.42) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 18%, rgba(255, 190, 218, 0.38) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 115%, rgba(224, 72, 138, 0.20) 0%, transparent 55%),
       var(--c-bg-deep);
   }
 
@@ -121,9 +123,31 @@
   [data-theme="sakura"] .btn-neon { border-radius: 999px; }
   [data-theme="sakura"] .btn-ghost { border-radius: 999px; }
   [data-theme="sakura"] .input-neon { border-radius: 12px; }
+  /* v1.1.7 柔光玻璃（frosted glass）：半透白 + 大半径模糊 + 饱和度提升，
+     内容对比靠深色文字 + 玻璃后更亮的粉底保证 */
   [data-theme="sakura"] .glass-panel {
-    border-radius: 16px;
-    box-shadow: 0 6px 24px rgba(205, 92, 146, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(22px) saturate(1.5);
+    -webkit-backdrop-filter: blur(22px) saturate(1.5);
+    border-color: rgba(224, 72, 138, 0.22);
+    box-shadow: 0 8px 32px rgba(192, 52, 116, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+  /* 侧栏 / 顶栏也换柔光玻璃质感 */
+  [data-theme="sakura"] aside,
+  [data-theme="sakura"] header {
+    background: rgba(255, 255, 255, 0.42) !important;
+    backdrop-filter: blur(20px) saturate(1.45);
+    -webkit-backdrop-filter: blur(20px) saturate(1.45);
+  }
+  /* 输入框：更实的白底，保证浅粉背景上的可读性 */
+  [data-theme="sakura"] .input-neon {
+    background: rgba(255, 255, 255, 0.78);
+    border-color: rgba(224, 72, 138, 0.32);
+    color: #45202F;
+  }
+  [data-theme="sakura"] .input-neon::placeholder {
+    color: #B57E98;
   }
   [data-theme="sakura"] .data-pill { border-radius: 999px; }
   /* 荧光文字光晕在浅底上会发灰，收敛为淡淡的粉晕 */

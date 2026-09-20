@@ -1,5 +1,5 @@
 import type { DB } from '../db/index';
-import { getDbPath } from '../db/index';
+import { getDbPath, refreshCourseKeys } from '../db/index';
 import { ipcMain } from 'electron';
 import { registerInputDiagIpc } from '../diag/inputDiag';
 
@@ -17,12 +17,16 @@ function registerCourses(db: DB) {
       data.semester ?? null, data.color ?? '#00FF88',
       data.description ?? null, JSON.stringify(data.tags || []), Date.now()
     );
+    // v1.1.7：建课后立刻刷新 course_key（通用固定 ID，作业同步挂载依据）
+    refreshCourseKeys(db);
     return db.prepare('SELECT * FROM courses WHERE id = ?').get(info.lastInsertRowid);
   });
   ipcMain.handle('db:courses:update', (_e, id, data) => {
     db.prepare(
       `UPDATE courses SET name=?, code=?, instructor=?, semester=?, color=?, description=?, tags=? WHERE id=?`
     ).run(data.name, data.code, data.instructor, data.semester, data.color, data.description, JSON.stringify(data.tags || []), id);
+    // v1.1.7：改名/换老师后 course_key 跟着变（确定性派生）
+    refreshCourseKeys(db);
     return db.prepare('SELECT * FROM courses WHERE id = ?').get(id);
   });
   ipcMain.handle('db:courses:delete', (_e, id) => {

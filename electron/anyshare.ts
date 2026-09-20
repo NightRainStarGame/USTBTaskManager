@@ -253,6 +253,55 @@ export async function getShareRoot(cfg: AnyShareConfig, token?: string): Promise
   return entry;
 }
 
+/**
+ * v1.1.7：在指定目录里列文件（homework/<publishCode>/ 子文件夹场景）。
+ * 返回该目录的 { dirs, files }。
+ */
+export async function listDir(cfg: AnyShareConfig, dirDocid: string): Promise<{ dirs: AnyShareFile[]; files: AnyShareFile[] }> {
+  const token = await getLinkToken(cfg);
+  const ls = async (t: string) => asFetch(`${cfg.baseUrl}/api/efast/v1/dir/list`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docid: dirDocid, by: 'time', sort: 'desc' }),
+  });
+  let r = await ls(token);
+  if (r.status === 401) {
+    tokenCache.delete(cfg.linkId);
+    const t2 = await getLinkToken(cfg, true);
+    r = await ls(t2);
+  }
+  if (!r.ok) throw new Error(`列北科云盘目录失败（HTTP ${r.status}）`);
+  const j = JSON.parse(r.text) || {};
+  return { dirs: (j.dirs || []) as AnyShareFile[], files: (j.files || []) as AnyShareFile[] };
+}
+
+/**
+ * v1.1.7：幂等建子目录（父 docid + 名字），返回 { docid, name }。
+ * 匿名权限实测可建目录（POST /api/efast/v1/dir/create，2026-09-20 验证）。
+ * 已存在时靠先列 dirs 找到再返回，避免依赖 create 的报错语义。
+ */
+export async function ensureShareDir(cfg: AnyShareConfig, parentDocid: string, name: string): Promise<{ docid: string; name: string }> {
+  const { dirs } = await listDir(cfg, parentDocid);
+  const hit = dirs.find((d) => d.name === name);
+  if (hit?.docid) return { docid: hit.docid, name: hit.name };
+  const token = await getLinkToken(cfg);
+  const create = async (t: string) => asFetch(`${cfg.baseUrl}/api/efast/v1/dir/create`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docid: parentDocid, name }),
+  });
+  let r = await create(token);
+  if (r.status === 401) {
+    tokenCache.delete(cfg.linkId);
+    const t2 = await getLinkToken(cfg, true);
+    r = await create(t2);
+  }
+  if (!r.ok) throw new Error(`北科云盘创建文件夹 ${name} 失败（HTTP ${r.status}）`);
+  const j = JSON.parse(r.text) || {};
+  if (!j.docid) throw new Error(`北科云盘创建文件夹 ${name} 未返回 docid：${r.text.slice(0, 120)}`);
+  return { docid: String(j.docid), name: String(j.name || name) };
+}
+
 /** 列目录（只列根分享目录一层，够用） */
 export async function listShareFiles(cfg: AnyShareConfig): Promise<AnyShareFile[]> {
   const token = await getLinkToken(cfg);
@@ -321,6 +370,78 @@ export async function downloadTextFile(cfg: AnyShareConfig, nameOrFile: string |
   const r = await asFetch(url, { timeoutMs: 30000 });
   if (!r.ok) throw new Error(`下载 ${file.name} 失败（HTTP ${r.status}）`);
   return r.text.slice(0, maxBytes);
+}
+
+/**
+ * v1.1.7：向指定目录（而非分享根）上传文本文件。命名与幂等语义同 uploadTextFile。
+ */
+export async function uploadTextFileToDir(cfg: AnyShareConfig, dirDocid: string, name: string, content: string): Promise<{ ok: boolean; name: string }> {
+  const token = await getLinkToken(cfg);
+  const buf = Buffer.from(content, 'utf8');
+
+  const begin = async (t: string) => asFetch(`${cfg.baseUrl}/api/efast/v1/file/osbeginupload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_mtime: Math.floor(Date.now() / 1000),
+      docid: dirDocid,
+      length: buf.length,
+      name,
+      ondup: 1,
+      reqmethod: 'POST',
+    }),
+  });
+
+  let r = await begin(token);
+  if (r.status === 401) {
+    tokenCache.delete(cfg.linkId);
+    const t2 = await getLinkToken(cfg, true);
+    r = await begin(t2);
+  }
+  if (!r.ok) throw new Error(`北科云盘申请上传失败（HTTP ${r.status}）：${r.text.slice(0, 200)}`);
+  const info = JSON.parse(r.text);
+  if (!info?.authrequest) throw new Error('北科云盘没有返回上传凭证（该分享可能不允许匿名上传）');
+
+  const [method, uploadUrl, ...pairs] = info.authrequest as string[];
+  const fields: Record<string, string> = {};
+  for (const p of pairs) {
+    const i = p.indexOf(':');
+    fields[p.slice(0, i)] = p.slice(i + 2);
+  }
+  const boundary = `----TaskManager${Date.now()}`;
+  const parts: Buffer[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  }
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/octet-stream\r\n\r\n`));
+  parts.push(buf);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  const body = Buffer.concat(parts);
+
+  const up = await asFetch(uploadUrl, {
+    method,
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body: new Uint8Array(body),
+    timeoutMs: 10 * 60 * 1000,
+  });
+  if (up.status !== 204 && !up.ok) throw new Error(`北科云盘直传失败（HTTP ${up.status}）`);
+
+  const end = await asFetch(`${cfg.baseUrl}/api/efast/v1/file/osendupload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docid: info.docid, rev: info.rev }),
+  });
+  if (!end.ok) throw new Error(`北科云盘上传收尾失败（HTTP ${end.status}）`);
+  return { ok: true, name };
+}
+
+/** v1.1.7：在指定目录里按前缀找修改时间最新的一份 */
+export async function findLatestByPrefixIn(cfg: AnyShareConfig, dirDocid: string, prefix: string, suffix = '.json'): Promise<AnyShareFile | null> {
+  const { files } = await listDir(cfg, dirDocid);
+  const cands = files.filter((f) => f.name.startsWith(prefix) && f.name.endsWith(suffix));
+  if (!cands.length) return null;
+  cands.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+  return cands[0];
 }
 
 /**

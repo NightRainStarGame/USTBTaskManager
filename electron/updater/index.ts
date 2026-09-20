@@ -831,9 +831,21 @@ export function registerUpdater(db: DB | null) {
 
   ipcMain.handle('update:patch:apply', async (_e, patch: any) => {
     if (!patch || typeof patch.url !== 'string') return { ok: false, error: '补丁参数缺失' };
+    // v1.1.7：补丁 url 兼容「云盘文件名」形态（命名范式 TaskManager-Patch-<from>-to-<to>.zip）
+    // 非 http(s) 开头 = 北科云盘内的概念名 → 按前缀找最新一份换签名直链
+    let patchUrl = patch.url;
+    if (!/^https?:\/\//i.test(patchUrl)) {
+      try {
+        const sources = getSources(db);
+        const src = sources[getActiveSourceIndex(db)];
+        patchUrl = await resolveDownloadUrl(patch.url, src);
+      } catch (e: any) {
+        return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
+      }
+    }
     const entry: import('./patchApply').PatchEntry = {
       fromVersion: patch.fromVersion,
-      url: patch.url,
+      url: patchUrl,
       sha256: (patch.sha256 || '').toLowerCase(),
       size: patch.size || 0,
       baseAsarSha256: (patch.baseAsarSha256 || '').toLowerCase(),

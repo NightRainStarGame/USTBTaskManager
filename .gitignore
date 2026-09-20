@@ -84,3 +84,4 @@ _ps_result.txt
 electron/anyshare/_*.ts
 electron/homework/_*.txt
 electron/updater/_*.ts
+scripts/_*.js

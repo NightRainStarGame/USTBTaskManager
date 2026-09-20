@@ -6,6 +6,8 @@
  */
 import type { Database } from 'better-sqlite3';
 import type { ByytPeriod, ParsedClassItem } from './api';
+import { refreshCourseKeys } from '../db/index';
+
 
 export interface ImportOptions {
   xn: string; // 学年，如 "2025-2026"
@@ -151,6 +153,8 @@ export function importCurriculum(db: Database, items: ParsedClassItem[], opts: I
     setSetting.run('semester', semester);
   });
   run();
+  // v1.1.7：导入完刷新课程通用固定 ID（courseKey，作业同步挂载依据）
+  refreshCourseKeys(db);
 
   return {
     courses: groups.size,

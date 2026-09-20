@@ -138,8 +138,8 @@ function buildPatchZip(opts) {
     };
     fs.writeFileSync(path.join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-    // 输出 zip
-    const zipPath = path.join(outDir, `${fromVersion}-to-${toVersion}.zip`);
+    // 输出 zip（v1.1.7 命名范式：TaskManager-Patch-<from>-to-<to>.zip）
+    const zipPath = path.join(outDir, `TaskManager-Patch-${fromVersion}-to-${toVersion}.zip`);
     // Windows 自带 PowerShell Compress-Archive（5.1 是只 zip 不能选等级，但够用）
     const psCmd = `Compress-Archive -Path '${asarInZip}','${path.join(tmpDir, 'manifest.json').replace(/'/g, "''")}' -DestinationPath '${zipPath}' -CompressionLevel Fastest -Force`;
     const r = spawnSync('powershell', ['-NoProfile', '-Command', psCmd], { encoding: 'utf8' });

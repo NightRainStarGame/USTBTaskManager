@@ -3,6 +3,7 @@ import type { Database } from 'better-sqlite3';
 import * as XLSX from 'xlsx';
 import { parseWeeksText, type ParsedClassItem } from '../ustb/api';
 import { safetyBackup } from '../backup';
+import { refreshCourseKeys } from '../db/index';
 
 const DAY = 86400000;
 
@@ -380,6 +381,8 @@ function importFromXls(db: Database, items: ParsedClassItem[], opts: ImportOptio
     setSetting.run('semester', semester);
   });
   run();
+  // v1.1.7：导入完刷新课程通用固定 ID（courseKey，作业同步挂载依据）
+  refreshCourseKeys(db);
 
   return { courses: groups.size, events: eventCount, items: items.length, courseIds, warnings: [...new Set(warnings)] };
 }

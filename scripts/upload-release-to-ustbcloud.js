@@ -130,9 +130,28 @@ async function upload(root, name, buf) {
   jsonObj.url = baseExeName;
   jsonObj.fileName = baseExeName;
   if (!jsonObj.page) jsonObj.page = 'https://github.com/NightRainStarGame/USTBTaskManager/releases';
-  const jsonBuf = Buffer.from(JSON.stringify(jsonObj, null, 2) + '\n', 'utf8');
-  await upload(root, `latest-${ts}.json`, jsonBuf);
-  console.log(`[cloud] ✓ latest-${ts}.json (${jsonBuf.length} B)`);
+
+  // v1.1.7：增量补丁同步上传（命名范式 TaskManager-Patch-<from>-to-<to>.zip）。
+  // patches[].url 在 GitHub 版 latest.json 里是 raw 绝对链；云盘版改写成云盘内
+  // 的 basename（App 端 resolveDownloadUrl 按前缀找最新一份换签名直链）。
+  const patchUploads = [];
+  if (Array.isArray(jsonObj.patches)) {
+    for (const p of jsonObj.patches) {
+      if (!p || typeof p.url !== 'string' || /^https?:\/\//i.test(p.url) !== true) continue;
+      const rel = p.url.split(`/${process.env.PATCH_REPO_BRANCH || 'main'}/`)[1];
+      if (!rel) continue;
+      const local = path.join(projectRoot, rel);
+      if (!fs.existsSync(local)) { console.log(`[cloud] 补丁本地不存在，跳过: ${rel}`); continue; }
+      const baseName = path.basename(local);
+      patchUploads.push({ local, baseName, entry: p });
+    }
+  }
+
+  // patches[].url 改写成云盘 basename 后再上传清单
+  for (const u of patchUploads) u.entry.url = u.baseName;
+  const jsonBuf2 = Buffer.from(JSON.stringify(jsonObj, null, 2) + '\n', 'utf8');
+  await upload(root, `latest-${ts}.json`, jsonBuf2);
+  console.log(`[cloud] ✓ latest-${ts}.json (${jsonBuf2.length} B, patches=${(jsonObj.patches || []).length})`);
 
   // 安装包：<版本>-<时间戳>.exe（App 端按文件名前缀取最新）
   const exeName = path.basename(exePath);
@@ -141,6 +160,15 @@ async function upload(root, name, buf) {
   console.log(`[cloud] 上传安装包 ${cloudExeName}（${(exeBuf.length / 1024 / 1024).toFixed(1)} MB）…`);
   await upload(root, cloudExeName, exeBuf);
   console.log(`[cloud] ✓ ${cloudExeName}`);
+
+  // 补丁包：<basename>-<时间戳>.zip（App 端 resolveDownloadUrl 按前缀取最新）
+  for (const u of patchUploads) {
+    const buf = fs.readFileSync(u.local);
+    const cloudName = u.baseName.replace(/\.zip$/i, '') + `-${ts}.zip`;
+    console.log(`[cloud] 上传补丁 ${cloudName}（${(buf.length / 1024 / 1024).toFixed(1)} MB）…`);
+    await upload(root, cloudName, buf);
+    console.log(`[cloud] ✓ ${cloudName}`);
+  }
 
   const after = await listFiles(root);
   console.log('[cloud] 上传后文件清单:');

@@ -446,3 +446,32 @@ node scripts/release.js --verify https://dl.example.com/taskmanager/latest.json
 - 发布后产物：`leastversion/{TaskManager-Setup-<v>.exe, patches/<prev>-to-<v>.zip}` + 同步的 `latest.json`
 - 历史 asar 缓存：`scripts/.asar-cache/<version>.{asar,json}` —— 不要提交到仓库，由脚本维护
 - 自检脚本：`scripts/verify-patch-build.js` —— 验证补丁链可生成 + 可解压，无须真正 build:exe
+
+## 9. v1.1.7 文件命名范式（全源统一）
+
+清单文件（latest.json）是「哪个需要更新」的**唯一指路文件**：App 只 GET 清单，
+按清单里的 `version` / `url` / `patches[]` 决定走全量还是增量。文件命名约定如下：
+
+### GitHub 源（仓库内，永久固定名）
+
+| 文件 | 命名 | 说明 |
+|---|---|---|
+| 最新清单 | `latest.json`（仓库根） | App 每次启动 GET 的入口 |
+| 整装包 | `leastversion/TaskManager-Setup-<v>.exe` | `<v>` 形如 1.1.7 |
+| 回退包 | `oldversion/TaskManager-Setup-<prev>.exe` | 保留上一版一个回退位 |
+| 增量补丁 | `leastversion/patches/TaskManager-Patch-<from>-to-<to>.zip` | v1.1.7 起统一 `TaskManager-Patch-` 前缀（旧 `1.1.5-to-1.1.6.zip` 保留不动，清单仍指路） |
+
+### 北科云盘源（匿名不能覆盖 → 一律 `<固定名>-<unix_ts>.<ext>` 时间戳版）
+
+| 文件 | 命名 | App 端查找方式 |
+|---|---|---|
+| 清单 | `latest-<ts>.json` | `findLatestByPrefix('latest', '.json')` 取最新 |
+| 整装包 | `TaskManager Setup <v>-<ts>.exe` | 清单 `url` 填 basename，`resolveDownloadUrl` 按前缀取最新 |
+| 增量补丁 | `TaskManager-Patch-<from>-to-<to>-<ts>.zip` | 清单 `patches[].url` 填 basename，补丁下载前同样按前缀解析 |
+
+### 清单字段速查（与命名范式配套）
+
+- `version`：最新版本号；`url`：整装包（http 直链或云盘 basename）；`sha256` / `size`：整装包校验
+- `patches[]`：每条 `{ fromVersion, url, sha256, size, baseAsarSha256, baseAsarSize, appAsarSha256, appAsarSize }`
+  - `fromVersion` = 补丁适用于的**当前版本**；`baseAsarSha256` 用于校验用户当前 asar 是否匹配基线
+- 云盘版清单与 GitHub 版清单的差别**只有一处**：`url` / `patches[].url` 是云盘 basename 还是 http 直链

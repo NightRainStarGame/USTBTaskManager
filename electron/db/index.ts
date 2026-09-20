@@ -2,7 +2,44 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { openWithRecovery, reopenFresh } from './recovery';
+
+/** 作业码同款字符表（31 字符，避开 0/O/1/I/L）——courseKey 也用它，风格统一 */
+const KEY_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+
+/**
+ * v1.1.7：课程通用固定 ID（courseKey）。
+ * 确定性派生：同名 + 同授课老师（忽略大小写/空白差异）在**任何设备**上算出同一个 ID。
+ * 老师未设置时用空串参与哈希（同名无老师的课程彼此视为同一门）。
+ * 格式：CK- + 10 位字母表编码，例 "CK-K7M3XA2QP9"。
+ */
+export function computeCourseKey(name: string, instructor?: string | null): string {
+  const norm = (s?: string | null) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const basis = `${norm(name)}|${norm(instructor)}`;
+  const digest = createHash('sha256').update(`staros-course-key-v1:${basis}`).digest();
+  let out = 'CK-';
+  for (let i = 0; i < 10; i++) out += KEY_ALPHABET[digest[i] % KEY_ALPHABET.length];
+  return out;
+}
+
+/**
+ * v1.1.7：全量重算 courses.course_key（幂等）。
+ * 在迁移时与每次课程增删改后调用，兜住所有建课路径（手建 / 教务导入 / 课表导入）。
+ * 返回本次实际更新的行数（多数时候为 0）。
+ */
+export function refreshCourseKeys(db: Database.Database): number {
+  const rows = db.prepare('SELECT id, name, instructor, course_key FROM courses').all() as Array<{
+    id: number; name: string; instructor?: string | null; course_key?: string | null;
+  }>;
+  const upd = db.prepare('UPDATE courses SET course_key = ? WHERE id = ?');
+  let n = 0;
+  for (const r of rows) {
+    const key = computeCourseKey(r.name, r.instructor);
+    if (r.course_key !== key) { upd.run(key, r.id); n++; }
+  }
+  return n;
+}
 
 let dbInstance: Database.Database | null = null;
 let dbPath = '';
@@ -225,6 +262,12 @@ function runMigrations(db: Database.Database) {
       }
     }
   }
+
+  // v1.1.7：课程通用固定 ID（courseKey）——同名同授课老师的课程在所有设备上算出
+  // 同一个确定性 ID，作业发布/接收凭它精确挂载，不再依赖每台设备随机生成的 guid。
+  addColumnIfMissing(db, 'courses', 'course_key', 'TEXT');
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_courses_course_key ON courses(course_key)`);
+  refreshCourseKeys(db);
 
   // 增量迁移：events 表新增字段（向后兼容老数据库）
   // 注意：SQLite ALTER TABLE ADD COLUMN 不支持外键约束，这里只做纯 INTEGER 字段

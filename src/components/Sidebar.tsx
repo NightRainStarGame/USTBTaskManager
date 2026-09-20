@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import clsx from '../utils/clsx';
 import { useStore } from '@/store';
+import serverIcon from '../assets/server-icon.png';
 
 const items = [
   { to: '/', label: '总览', icon: LayoutDashboard, key: 'dashboard' },
@@ -22,12 +23,15 @@ export default function Sidebar() {
   const hasUpdate = !!updateInfo?.hasUpdate;
   return (
     <aside className="relative z-20 w-60 shrink-0 flex flex-col bg-ink-900/80 backdrop-blur-md border-r border-neon-green/15">
-      {/* Logo */}
+      {/* Logo（v1.1.7：换成 StarMain server-icon） */}
       <div className="h-14 flex items-center gap-2.5 px-4 border-b border-neon-green/15">
-        <div className="relative w-8 h-8 rounded-md bg-gradient-to-br from-neon-green to-neon-green-deep flex items-center justify-center shadow-neon-green">
-          <span className="font-mono font-bold text-ink-base text-sm">TM</span>
-          <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-neon-yellow animate-pulse-glow" />
-        </div>
+        <img
+          src={serverIcon}
+          alt="StarOS"
+          className="w-9 h-9 rounded-lg shadow-neon-green shrink-0"
+          style={{ imageRendering: 'auto' }}
+          draggable={false}
+        />
         <div className="flex flex-col leading-tight">
           <span className="font-mono text-base font-bold text-neon-green text-glow-green">StarOS</span>
           <span className="font-mono text-[10px] text-text-dim uppercase tracking-widest mt-0.5">v{appInfo?.version || '—'}</span>
