@@ -1,8 +1,8 @@
 {
   "syncCode": "WBHXQSSW",
-  "courseName": "基础外语I",
+  "courseName": "程序设计基础（科创班）",
   "createdAt": 1789886375091,
-  "updatedAt": 1789886389513,
+  "updatedAt": 1789886409118,
   "entries": [
     {
       "id": "3b8a4371-0dab-4d2b-93c3-a71311a113ef",
@@ -18,6 +18,19 @@
       "updatedAt": 1789886389513
     },
     {
+      "id": "c44b5b13-47b0-4534-b66a-4e23c59d4485",
+      "courseName": "程序设计基础（科创班）",
+      "sessionDate": "2026-09-15",
+      "sessionTime": null,
+      "title": "etead",
+      "content": "TESjiwdiua",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789886409118,
+      "updatedAt": 1789886409118
+    },
+    {
       "id": "3a5e2b74-0455-43ff-9920-3aabe8370cde",
       "courseName": "中国科技发展史",
       "sessionDate": "2026-09-20",
@@ -31,5 +44,5 @@
       "updatedAt": 1789886375091
     }
   ],
-  "courseGuid": "C-UGCR3UES"
+  "courseGuid": "C-JGPXDYSB"
 }
