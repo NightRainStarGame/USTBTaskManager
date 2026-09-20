@@ -1,8 +1,8 @@
 {
   "syncCode": "FCWSK9G2",
-  "courseName": "程序设计基础（科创班）",
+  "courseName": "机械制图AI（科创班）",
   "createdAt": 1789890342384,
-  "updatedAt": 1789890342384,
+  "updatedAt": 1789890363925,
   "entries": [
     {
       "id": "e213cfae-546d-4aa6-b3eb-7daf7933e7be",
@@ -16,7 +16,20 @@
       "publisher": "佚名",
       "publishedAt": 1789890342384,
       "updatedAt": 1789890342384
+    },
+    {
+      "id": "83ea5a85-9b56-4e4a-8dd6-04a6732cbae3",
+      "courseName": "机械制图AI（科创班）",
+      "sessionDate": "2026-09-16",
+      "sessionTime": null,
+      "title": "!!!",
+      "content": "!dadWd",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789890363925,
+      "updatedAt": 1789890363925
     }
   ],
-  "courseGuid": "C-JGPXDYSB"
+  "courseGuid": "C-7ZXG2FE3"
 }
