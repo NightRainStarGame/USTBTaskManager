@@ -25,13 +25,24 @@
     {
       "fromVersion": "1.2.0",
       "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.0-to-1.2.1.zip",
-      "sha256": "aa82748871e6f1649edf839a7ad1ccae7ccf096e414dfa4588e12e71eaf999c8",
-      "size": 22824005,
+      "sha256": "6cfa11abf2ca8e0bb07bee1a4ceba3bb44efaff72bf92b025dab4a58cc16269c",
+      "size": 22831270,
       "baseAsarSha256": "b2b72ac304866ec0030443de60e55a73a06cb5cf9d6ca126ac4c112a3ade185d",
       "baseAsarSize": 72333872,
-      "appAsarSha256": "0664c7b49600fe99f8805a2b07583de55365472dd165c1cb40f0c6becdadcdb9",
-      "appAsarSize": 74750929,
-      "createdAt": "2026-09-21T05:47:49.885Z"
+      "appAsarSha256": "ac790a4d49907ec3b0fbdeff31dc6721e765cb631534da44aded1c07e6fcb42b",
+      "appAsarSize": 74781362,
+      "createdAt": "2026-09-21T14:47:41.193Z"
+    },
+    {
+      "fromVersion": "1.2.1",
+      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.1-to-1.2.1.zip",
+      "sha256": "b64681f07807d0918724d6c84a4866902164d1f3a49860d35281d283dfc81b36",
+      "size": 22831268,
+      "baseAsarSha256": "0664c7b49600fe99f8805a2b07583de55365472dd165c1cb40f0c6becdadcdb9",
+      "baseAsarSize": 74750929,
+      "appAsarSha256": "ac790a4d49907ec3b0fbdeff31dc6721e765cb631534da44aded1c07e6fcb42b",
+      "appAsarSize": 74781362,
+      "createdAt": "2026-09-21T14:47:46.285Z"
     }
   ]
 }
