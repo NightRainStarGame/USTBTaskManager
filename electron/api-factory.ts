@@ -93,6 +93,29 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         update: (id: number, data: any) => invoke('db:tasks:update', id, data),
         delete: (id: number) => invoke('db:tasks:delete', id),
       },
+      // v1.2.1 画布编辑器（与现有 projects/tasks 完全独立的新模块）
+      canvases: {
+        list: () => invoke('db:canvases:list'),
+        get: (id: number) => invoke('db:canvases:get', id),
+        create: (data: any) => invoke('db:canvases:create', data),
+        update: (id: number, data: any) => invoke('db:canvases:update', id, data),
+        delete: (id: number) => invoke('db:canvases:delete', id),
+      },
+      canvasNodes: {
+        listByCanvas: (canvasId: number) => invoke('db:canvasNodes:listByCanvas', canvasId),
+        create: (data: any) => invoke('db:canvasNodes:create', data),
+        update: (id: number, data: any) => invoke('db:canvasNodes:update', id, data),
+        /** 拖拽过程中批量更新坐标（一次 IPC 写多条） */
+        updatePositions: (batch: Array<{ id: number; pos_x: number; pos_y: number }>) =>
+          invoke('db:canvasNodes:updatePositions', batch),
+        delete: (id: number) => invoke('db:canvasNodes:delete', id),
+      },
+      canvasEdges: {
+        listByCanvas: (canvasId: number) => invoke('db:canvasEdges:listByCanvas', canvasId),
+        create: (data: any) => invoke('db:canvasEdges:create', data),
+        update: (id: number, data: any) => invoke('db:canvasEdges:update', id, data),
+        delete: (id: number) => invoke('db:canvasEdges:delete', id),
+      },
       settings: {
         getAll: () => invoke('db:settings:getAll'),
         set: (key: string, value: string) => invoke('db:settings:set', key, value),

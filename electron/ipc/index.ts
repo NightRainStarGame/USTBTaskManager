@@ -607,6 +607,114 @@ function registerUstb(db: DB) {
   });
 }
 
+// ====== v1.2.1 画布编辑器（达芬奇式节点连线） ======
+function registerCanvases(db: DB) {
+  ipcMain.handle('db:canvases:list', () =>
+    db.prepare('SELECT * FROM canvases ORDER BY updated_at DESC').all()
+  );
+  ipcMain.handle('db:canvases:get', (_e, id) =>
+    db.prepare('SELECT * FROM canvases WHERE id = ?').get(id)
+  );
+  ipcMain.handle('db:canvases:create', (_e, data) => {
+    const now = Date.now();
+    const info = db.prepare(
+      `INSERT INTO canvases (name, description, viewport_x, viewport_y, viewport_zoom, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.name, data.description ?? null,
+      data.viewport_x ?? 0, data.viewport_y ?? 0, data.viewport_zoom ?? 1,
+      now, now
+    );
+    return db.prepare('SELECT * FROM canvases WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:canvases:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE canvases SET name=?, description=?, viewport_x=?, viewport_y=?, viewport_zoom=?, updated_at=? WHERE id=?`
+    ).run(
+      data.name, data.description ?? null,
+      data.viewport_x ?? 0, data.viewport_y ?? 0, data.viewport_zoom ?? 1,
+      Date.now(), id
+    );
+    return db.prepare('SELECT * FROM canvases WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:canvases:delete', (_e, id) => {
+    db.prepare('DELETE FROM canvases WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
+function registerCanvasNodes(db: DB) {
+  ipcMain.handle('db:canvasNodes:listByCanvas', (_e, canvasId: number) =>
+    db.prepare('SELECT * FROM canvas_nodes WHERE canvas_id = ? ORDER BY id ASC').all(canvasId)
+  );
+  ipcMain.handle('db:canvasNodes:create', (_e, data) => {
+    const now = Date.now();
+    const info = db.prepare(
+      `INSERT INTO canvas_nodes (canvas_id, node_type, entity_id, pos_x, pos_y, width, height, title, data_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.canvas_id, data.node_type ?? 'custom', data.entity_id ?? null,
+      data.pos_x ?? 0, data.pos_y ?? 0, data.width ?? 220, data.height ?? 80,
+      data.title, JSON.stringify(data.data || {}), now, now
+    );
+    return db.prepare('SELECT * FROM canvas_nodes WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:canvasNodes:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE canvas_nodes SET node_type=?, entity_id=?, pos_x=?, pos_y=?, width=?, height=?, title=?, data_json=?, updated_at=? WHERE id=?`
+    ).run(
+      data.node_type ?? 'custom', data.entity_id ?? null,
+      data.pos_x ?? 0, data.pos_y ?? 0, data.width ?? 220, data.height ?? 80,
+      data.title, JSON.stringify(data.data || {}), Date.now(), id
+    );
+    return db.prepare('SELECT * FROM canvas_nodes WHERE id = ?').get(id);
+  });
+  // 批量更新坐标：拖拽过程中减少 IPC 次数；用事务保证原子性
+  ipcMain.handle('db:canvasNodes:updatePositions', (_e, batch: Array<{ id: number; pos_x: number; pos_y: number }>) => {
+    const upd = db.prepare('UPDATE canvas_nodes SET pos_x=?, pos_y=?, updated_at=? WHERE id=?');
+    const tx = db.transaction((rows: Array<{ id: number; pos_x: number; pos_y: number }>) => {
+      const now = Date.now();
+      for (const r of rows) upd.run(r.pos_x, r.pos_y, now, r.id);
+    });
+    tx(batch);
+    return { ok: true, count: batch.length };
+  });
+  ipcMain.handle('db:canvasNodes:delete', (_e, id) => {
+    db.prepare('DELETE FROM canvas_nodes WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
+function registerCanvasEdges(db: DB) {
+  ipcMain.handle('db:canvasEdges:listByCanvas', (_e, canvasId: number) =>
+    db.prepare('SELECT * FROM canvas_edges WHERE canvas_id = ? ORDER BY id ASC').all(canvasId)
+  );
+  ipcMain.handle('db:canvasEdges:create', (_e, data) => {
+    const info = db.prepare(
+      `INSERT INTO canvas_edges (canvas_id, source_node_id, target_node_id, edge_type, label, data_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.canvas_id, data.source_node_id, data.target_node_id,
+      data.edge_type ?? 'sequence', data.label ?? null,
+      JSON.stringify(data.data || {}), Date.now()
+    );
+    return db.prepare('SELECT * FROM canvas_edges WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:canvasEdges:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE canvas_edges SET edge_type=?, label=?, data_json=? WHERE id=?`
+    ).run(
+      data.edge_type ?? 'sequence', data.label ?? null,
+      JSON.stringify(data.data || {}), id
+    );
+    return db.prepare('SELECT * FROM canvas_edges WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:canvasEdges:delete', (_e, id) => {
+    db.prepare('DELETE FROM canvas_edges WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
 export function registerAllIpc(db: DB) {
   // 统一 IPC 错误包装：所有 handler 的异常都记入主进程日志后再抛回渲染进程。
   // 保持 rejection 语义（页面侧现有 .catch / try-catch 不受影响），但主进程可留痕排查。
@@ -652,4 +760,8 @@ export function registerAllIpc(db: DB) {
   registerInputDiagIpc();
   // v1.1.9：自动清理 & 回收站
   registerCleanup(db);
+  // v1.2.1 画布编辑器（达芬奇式节点连线）
+  registerCanvases(db);
+  registerCanvasNodes(db);
+  registerCanvasEdges(db);
 }

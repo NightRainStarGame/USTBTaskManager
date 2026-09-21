@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
-import { Plus, FolderKanban, ListChecks, LayoutGrid, GanttChart, Pencil, Trash2 } from 'lucide-react';
+import { Plus, FolderKanban, ListChecks, LayoutGrid, GanttChart, Pencil, Trash2, Workflow } from 'lucide-react';
 import Modal from '@/components/Modal';
 import dayjs from 'dayjs';
 import type { Project, ProjectTask } from '@/types';
@@ -11,6 +12,7 @@ export default function ProjectsPage() {
   const projects = useStore(s => s.projects);
   const tasks = useStore(s => s.tasks);
   const refreshAll = useStore(s => s.refreshAll);
+  const navigate = useNavigate();
   const [view, setView] = useState<ViewMode>('kanban');
   const [modalOpen, setModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -45,6 +47,10 @@ export default function ProjectsPage() {
           </div>
           <button onClick={() => { setEditing(null); setModalOpen(true); }} className="btn-neon">
             <Plus size={14} /> 新建项目
+          </button>
+          {/* v1.2.1 块 8：进入画布视图（与列表/看板/时间线并列的第 4 种视图） */}
+          <button onClick={() => navigate('/editor')} className="btn-ghost text-xs" title="打开画布编辑器（达芬奇式节点连线）">
+            <Workflow size={12} /> 画布视图
           </button>
         </div>
       </div>

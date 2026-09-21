@@ -64,9 +64,8 @@
     --c-warn-dim-rgb: 204 186 0;
   }
 
-  /* 樱花粉主题 v3：浓樱粉 + 液态玻璃（v1.1.6 引入，v1.1.7 柔光玻璃，v1.1.9 全面加粉）
-     底色饱和樱粉；ink 层级全部粉化；主色提浓；文字深酒红高对比；
-     面板/按钮/输入全面液态玻璃（半透明 + 高斯模糊 + 饱和度增益 + 顶部镜面高光） */
+  /* 樱花粉主题 v4（v1.2.1）：
+     浓樱粉 + 高透明液态玻璃 + 多点高对比 + 多层渐变 */
   [data-theme="sakura"] {
     --c-primary-rgb: 233 64 133;
     --c-primary-bright-rgb: 249 143 194;
@@ -88,6 +87,17 @@
     --c-warn-rgb: 178 104 0;
     --c-warn-bright-rgb: 210 138 24;
     --c-warn-dim-rgb: 140 82 0;
+
+    /* v1.2.1 新增：5+1 个渐变（卡片/按钮/按钮 hover/标题/状态条/分割线） */
+    --c-grad-card: linear-gradient(135deg, rgba(255,255,255,0.42) 0%, rgba(255,224,239,0.26) 50%, rgba(255,210,232,0.32) 100%);
+    --c-grad-button: linear-gradient(180deg, rgba(255,255,255,0.82) 0%, rgba(252,212,230,0.66) 100%);
+    --c-grad-button-hover: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(255,200,222,0.88) 100%);
+    --c-grad-title: linear-gradient(90deg, #C22B78 0%, #E94085 50%, #F98FC2 100%);
+    --c-grad-status: linear-gradient(180deg, rgba(233,64,133,0.85) 0%, rgba(233,64,133,0) 100%);
+    --c-grad-divider: linear-gradient(90deg, transparent 0%, rgba(233,64,133,0.42) 48%, rgba(249,143,194,0.42) 52%, transparent 100%);
+    /* 对比锚点色（hover/selected/emphasis） */
+    --c-text-strong: #2A0F1A;
+    --c-accent-glow: rgba(233, 64, 133, 0.45);
   }
 
   html, body, #root {
@@ -110,63 +120,70 @@
       var(--c-bg-deep);
   }
 
-  /* 樱花粉主题 v3：整屏樱粉渐变 + 左上柔粉光斑（粉色元素更多、更浓） */
+  /* 樱花粉 v4：背景光斑微降透明度（让浮起的玻璃面板有"前景感"） */
   [data-theme="sakura"] body {
     background:
-      radial-gradient(ellipse at 15% 0%, rgba(249, 143, 194, 0.55) 0%, transparent 52%),
-      radial-gradient(ellipse at 88% 14%, rgba(255, 178, 214, 0.50) 0%, transparent 48%),
-      radial-gradient(ellipse at 50% 118%, rgba(233, 64, 133, 0.30) 0%, transparent 58%),
-      radial-gradient(ellipse at 0% 85%, rgba(241, 155, 192, 0.28) 0%, transparent 45%),
+      radial-gradient(ellipse at 15% 0%, rgba(249, 143, 194, 0.42) 0%, transparent 52%),
+      radial-gradient(ellipse at 88% 14%, rgba(255, 178, 214, 0.38) 0%, transparent 48%),
+      radial-gradient(ellipse at 50% 118%, rgba(233, 64, 133, 0.22) 0%, transparent 58%),
+      radial-gradient(ellipse at 0% 85%, rgba(241, 155, 192, 0.20) 0%, transparent 45%),
       var(--c-bg-deep);
   }
 
-  /* ================= 樱花粉 v3：液态玻璃（liquid glass）=================
-     通用配方：半透明粉白渐变底 + 大半径模糊 + 饱和度增益 +
-     白色顶部镜面高光内描边 + 底部粉投影 + 淡粉外描边 */
+  /* ================= 樱花粉 v4：液态玻璃 v2（v1.2.1 增强透明度 + 高光）=================
+     v3 → v4 调整：
+     - panel 背景透明度 0.74→0.42（更通透，背景樱粉光斑能透出来）
+     - backdrop-filter blur 26→32px（更模糊）
+     - 顶部镜面高光 1.5px→2px，颜色 0.95→0.99（更亮）
+     - 外阴影 0.16→0.24（面板"漂浮"感更强）
+     - 全部接入 --c-grad-card 变量（方便后续微调） */
   [data-theme="sakura"] .btn-neon { border-radius: 999px; }
   [data-theme="sakura"] .btn-ghost { border-radius: 999px; }
   [data-theme="sakura"] .input-neon { border-radius: 14px; }
   [data-theme="sakura"] .glass-panel {
     border-radius: 20px;
-    background:
-      linear-gradient(135deg,
-        rgba(255, 255, 255, 0.74) 0%,
-        rgba(255, 238, 246, 0.55) 46%,
-        rgba(255, 224, 239, 0.64) 100%);
-    backdrop-filter: blur(26px) saturate(1.8) brightness(1.04);
-    -webkit-backdrop-filter: blur(26px) saturate(1.8) brightness(1.04);
-    border: 1px solid rgba(255, 255, 255, 0.60);
-    border-top-color: rgba(255, 255, 255, 0.92);
+    background: var(--c-grad-card);
+    backdrop-filter: blur(32px) saturate(1.9) brightness(1.06);
+    -webkit-backdrop-filter: blur(32px) saturate(1.9) brightness(1.06);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-top-color: rgba(255, 255, 255, 0.98);
     box-shadow:
-      0 12px 40px rgba(205, 45, 120, 0.16),
-      0 2px 10px rgba(233, 64, 133, 0.10),
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
-      inset 0 -1px 0 rgba(233, 64, 133, 0.08);
+      0 14px 44px rgba(156, 34, 90, 0.24),
+      0 3px 12px rgba(233, 64, 133, 0.16),
+      inset 0 2px 0 rgba(255, 255, 255, 0.99),
+      inset 0 -1px 0 rgba(233, 64, 133, 0.10);
   }
-  /* 侧栏 / 顶栏：整块液态玻璃 */
+  /* 侧栏 / 顶栏 v4：提高透明度（0.62→0.44）+ 加深高光 + 加底投影 */
   [data-theme="sakura"] aside,
   [data-theme="sakura"] header {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 236, 244, 0.48)) !important;
-    backdrop-filter: blur(24px) saturate(1.7);
-    -webkit-backdrop-filter: blur(24px) saturate(1.7);
-    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(255, 236, 244, 0.34)) !important;
+    backdrop-filter: blur(28px) saturate(1.8);
+    -webkit-backdrop-filter: blur(28px) saturate(1.8);
+    box-shadow:
+      inset -1px 0 0 rgba(255, 255, 255, 0.65),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 4px 18px rgba(156, 34, 90, 0.12);
   }
-  /* 按钮：粉玻璃 + 悬浮上浮 + 光泽扫过 */
+  /* 按钮 v4：用渐变变量 + 加深边框 + 强化悬浮反馈 */
   [data-theme="sakura"] .btn-neon {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 231, 242, 0.58));
-    border: 1px solid rgba(233, 64, 133, 0.35);
+    background: var(--c-grad-button);
+    border: 1px solid rgba(233, 64, 133, 0.42);
     color: #C22B78;
     font-weight: 600;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 3px 12px rgba(233, 64, 133, 0.14);
+    box-shadow:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.98),
+      0 4px 14px rgba(233, 64, 133, 0.16);
     overflow: hidden;
     transition: all 0.22s cubic-bezier(0.33, 1, 0.68, 1);
   }
   [data-theme="sakura"] .btn-neon:hover {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 214, 231, 0.80));
-    border-color: rgba(233, 64, 133, 0.65);
-    color: #A81F62;
+    background: var(--c-grad-button-hover);
+    border-color: rgba(233, 64, 133, 0.72);
+    color: var(--c-text-strong);
     transform: translateY(-1.5px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 8px 22px rgba(233, 64, 133, 0.26);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 1),
+      0 10px 26px rgba(233, 64, 133, 0.32);
   }
   /* 液态光泽带：hover 时斜扫而过 */
   [data-theme="sakura"] .btn-neon::after {
@@ -199,22 +216,29 @@
   [data-theme="sakura"] .input-neon::placeholder {
     color: #B57E98;
   }
-  /* 数据胶囊：小粉玻璃 */
+  /* 数据胶囊 v4：边框 0.34→0.52 + 字重提到 600（多点对比锚点） */
   [data-theme="sakura"] .data-pill {
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.66);
-    border-color: rgba(233, 64, 133, 0.34);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 8px rgba(233, 64, 133, 0.10);
+    background: rgba(255, 255, 255, 0.74);
+    border-color: rgba(233, 64, 133, 0.52);
+    font-weight: 600;
+    box-shadow:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.98),
+      0 3px 10px rgba(233, 64, 133, 0.18);
   }
-  /* 侧栏导航选中项：粉玻璃块 + 粉光条 */
+  /* 侧栏导航选中项 v4：加深 + 左侧 3px 粉条锚点（强对比信号） */
   [data-theme="sakura"] aside nav a {
     border-radius: 12px;
   }
   [data-theme="sakura"] aside nav a.bg-ink-900\/80,
   [data-theme="sakura"] aside nav a[class*="bg-neon-green"] {
-    background: rgba(255, 255, 255, 0.68) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(233, 64, 133, 0.18);
-    border: 1px solid rgba(233, 64, 133, 0.30);
+    background: rgba(255, 255, 255, 0.84) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      inset 3px 0 0 #E94085,
+      0 6px 18px rgba(233, 64, 133, 0.28);
+    border: 1px solid rgba(233, 64, 133, 0.42);
+    color: var(--c-text-strong);
   }
   /* 全局 focus 光环换粉 */
   [data-theme="sakura"] *:focus-visible {
@@ -353,5 +377,36 @@
   .progress-bar > div {
     @apply h-full bg-gradient-to-r from-neon-green to-neon-green-bright
            shadow-neon-green transition-all duration-500;
+  }
+
+  /* v1.2.1 樱花粉主题：标题渐变文字（变量在 [data-theme="sakura"] 下；其他主题用 fallback 降级） */
+  .text-grad-sakura {
+    background: var(--c-grad-title, linear-gradient(90deg, #C22B78, #E94085, #F98FC2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  /* 分割线渐变 */
+  .divider-grad-sakura {
+    height: 1px;
+    background: var(--c-grad-divider, linear-gradient(90deg, transparent, rgba(233,64,133,0.42), transparent));
+    border: 0;
+    margin: 0.75rem 0;
+  }
+  /* 状态条：左侧粉条锚点 */
+  .status-bar-sakura {
+    position: relative;
+    padding-left: 0.75rem;
+  }
+  .status-bar-sakura::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6%;
+    bottom: 6%;
+    width: 3px;
+    background: var(--c-grad-status, linear-gradient(180deg, #E94085, rgba(233,64,133,0)));
+    border-radius: 2px;
   }
 }

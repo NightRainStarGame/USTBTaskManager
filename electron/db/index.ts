@@ -339,6 +339,50 @@ function runMigrations(db: Database.Database) {
     }
   }
 
+  // v1.2.1 画布编辑器（达芬奇式节点连线）：3 表（与项目看板的 projects/project_tasks 完全独立的新模块）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS canvases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      viewport_x REAL DEFAULT 0,
+      viewport_y REAL DEFAULT 0,
+      viewport_zoom REAL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS canvas_nodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      canvas_id INTEGER NOT NULL,
+      node_type TEXT NOT NULL CHECK(node_type IN ('task','course','homework','event','note','group','custom')) DEFAULT 'custom',
+      entity_id INTEGER,
+      pos_x REAL NOT NULL DEFAULT 0,
+      pos_y REAL NOT NULL DEFAULT 0,
+      width REAL DEFAULT 220,
+      height REAL DEFAULT 80,
+      title TEXT NOT NULL,
+      data_json TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (canvas_id) REFERENCES canvases(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS canvas_edges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      canvas_id INTEGER NOT NULL,
+      source_node_id INTEGER NOT NULL,
+      target_node_id INTEGER NOT NULL,
+      edge_type TEXT NOT NULL DEFAULT 'sequence' CHECK(edge_type IN ('sequence','dependency','relation','critical')),
+      label TEXT,
+      data_json TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (canvas_id) REFERENCES canvases(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_node_id) REFERENCES canvas_nodes(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_node_id) REFERENCES canvas_nodes(id) ON DELETE CASCADE
+    );
+  `);
+
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_req_course ON course_requirements(course_id);
     CREATE INDEX IF NOT EXISTS idx_req_due ON course_requirements(due_date);
@@ -347,6 +391,10 @@ function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_pt_project ON project_tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_note_course ON course_notes(course_id);
     CREATE INDEX IF NOT EXISTS idx_profile_openid ON user_profiles(wx_openid);
+    CREATE INDEX IF NOT EXISTS idx_canvas_nodes_canvas ON canvas_nodes(canvas_id);
+    CREATE INDEX IF NOT EXISTS idx_canvas_edges_canvas ON canvas_edges(canvas_id);
+    CREATE INDEX IF NOT EXISTS idx_canvas_edges_source ON canvas_edges(source_node_id);
+    CREATE INDEX IF NOT EXISTS idx_canvas_edges_target ON canvas_edges(target_node_id);
   `);
 
   // 迁移：若 settings 里已有 profile_* 键但 user_profiles 为空，则生成一条默认资料

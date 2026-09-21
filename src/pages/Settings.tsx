@@ -744,11 +744,39 @@ export default function SettingsPage() {
       {/* 主题 */}
       <Section icon={<Palette size={14} />} title="外观">
         <Row label="主题预设">
-          <select value={theme} onChange={(e) => setTheme(e.target.value)} className="input-neon w-48">
-            <option value="neon-green">霓虹绿（默认）</option>
-            <option value="starry">星辉（青蓝荧光）</option>
-            <option value="sakura">🌸 樱花粉（萌系）</option>
-          </select>
+          <div className="space-y-3 w-full">
+            <select value={theme} onChange={(e) => setTheme(e.target.value)} className="input-neon w-48">
+              <option value="neon-green">霓虹绿（默认）</option>
+              <option value="starry">星辉（青蓝荧光）</option>
+              <option value="sakura">🌸 樱花粉（萌系）</option>
+            </select>
+            {/* v1.2.1 主题预览卡片：实时反映当前主题的渐变 / 玻璃 / 对比 */}
+            <div className="mt-1 p-3 rounded-lg border border-neon-green/15 bg-ink-base/40 max-w-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="label-tag">PREVIEW · {theme}</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-neon-green/30 to-transparent" />
+              </div>
+              <div className="glass-panel p-3">
+                <div className="text-grad-sakura font-mono text-base font-bold mb-2">
+                  {theme === 'sakura' ? '🌸 樱花粉主题' : theme === 'starry' ? '✦ 星辉主题' : '◇ 霓虹绿主题'}
+                </div>
+                <div className="text-xs text-text-secondary mb-2">
+                  渐变标题 + 玻璃面板 + <span className="data-pill">数据胶囊</span>
+                </div>
+                <div className="flex gap-2 mb-2">
+                  <button type="button" className="btn-neon text-xs">主要按钮</button>
+                  <button type="button" className="btn-ghost text-xs">次要</button>
+                </div>
+                <div className="status-bar-sakura text-xs text-text-primary">
+                  📌 状态条：左侧高光锚点
+                </div>
+              </div>
+              <hr className="divider-grad-sakura" />
+              <div className="text-[10px] text-text-dim font-mono">
+                预览随主题切换实时刷新 · 樱花粉下透明度 / 高光 / 对比最强
+              </div>
+            </div>
+          </div>
         </Row>
         <Row label="当前学期">
           <input value={semester} onChange={(e) => setSemester(e.target.value)} className="input-neon w-48" />

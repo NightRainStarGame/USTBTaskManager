@@ -226,3 +226,50 @@ export interface XlsImportSummary {
   courseIds: number[];
   warnings: string[];
 }
+
+// ===== v1.2.1 画布编辑器（达芬奇式节点连线） =====
+export type CanvasNodeType = 'task' | 'course' | 'homework' | 'event' | 'note' | 'group' | 'custom';
+export type CanvasEdgeType = 'sequence' | 'dependency' | 'relation' | 'critical';
+
+export interface Canvas {
+  id: number;
+  name: string;
+  description?: string | null;
+  /** 视口 X（pan） */
+  viewport_x: number;
+  /** 视口 Y（pan） */
+  viewport_y: number;
+  /** 视口缩放 */
+  viewport_zoom: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CanvasNode {
+  id: number;
+  canvas_id: number;
+  node_type: CanvasNodeType;
+  /** 关联业务实体 id（如 course_id / requirement_id；custom 节点为 null） */
+  entity_id?: number | null;
+  pos_x: number;
+  pos_y: number;
+  width: number;
+  height: number;
+  title: string;
+  /** JSON 字符串：节点额外数据（icon/color/tags/fields 等） */
+  data_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CanvasEdge {
+  id: number;
+  canvas_id: number;
+  source_node_id: number;
+  target_node_id: number;
+  edge_type: CanvasEdgeType;
+  label?: string | null;
+  /** JSON 字符串：sourceHandle/targetHandle 等端点数据 */
+  data_json: string;
+  created_at: number;
+}
