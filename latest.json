@@ -1,15 +1,15 @@
 {
-  "version": "1.2.1",
-  "notes": "# v1.2.1 主题焕新 + 画布并入项目 + 补丁式更新\r\n\r\n发布日期：2026-09-21\r\n\r\n> v1.2.1 是 v1.2.0 的功能增补版本。本应发布为 v1.3.0，但为了保持版本号与桌面端用户感知一致，仍以 1.2.1 命名发布。所有新增功能自动通过补丁升级（1.1.9 / 1.2.0 / 旧 1.2.1 用户均可平滑升级）。\r\n\r\n---\r\n\r\n## 🌟 新增功能\r\n\r\n### 🎨 主题焕新\r\n\r\n- **🌌 极光主题（aurora）** —— v1.2.1 新默认主题：深空蓝黑底 + 极光青主色 + 青/紫/粉三色极光光斑动画\r\n- **🪟 玻璃 · 浅色（glass-light）** —— Windows 11 Fluent/Mica 云母浅灰底 + 系统蓝主色 + 白色亚克力面板（backdrop-filter blur 30px + saturate 150%）\r\n- **🪟 玻璃 · 深色（glass-dark）** —— Windows 11 Fluent/Mica 云母石墨底 + 浅蓝主色 + 深色亚克力面板\r\n- 主题白名单从 3 个扩展到 6 个：aurora（默认）/ starry / neon-green / sakura / glass-light / glass-dark\r\n- 玻璃主题下徽章光晕收敛为柔和小阴影，符合 Fluent 设计语言\r\n\r\n### 🗂️ 画布并入 Projects（核心改动）\r\n\r\n- **移除独立画布编辑器路由**（`/editor` 入口已下线）\r\n- **Projects 页四视图切换**：📋 看板 / 📝 列表 / 📅 时间线 / 🎨 画布\r\n- **画布与项目一对一**：每个项目独立画布（`canvases.project_id`），不再用 `window.prompt`（Electron 渲染层不支持）\r\n- **画布自动创建**：首次进入画布视图自动创建（命名遵循 \"项目名 · 画布\"）\r\n- 保留全部画布能力：7 种节点 / 4 种连线 / 撤销重做 / 导入导出 / 循环依赖检测 / 拖拽节流落库\r\n\r\n### ✨ todolist 增强\r\n\r\n- **4 级优先级旗标**：🔴 高 / 🟠 中 / 🟡 低 / ⚪ 普通\r\n- **任务描述字段**：每条任务可写富文本描述（看板 / 列表 / 时间线三视图统一展示）\r\n- **状态分组统计条**：待办 / 进行中 / 已完成 / 总数一目了然\r\n- **过滤器**：按优先级 + 状态 + 关键词快速过滤\r\n- **行内快速添加**：列表视图顶部输入框，回车即可新增任务（带优先级选择）\r\n- **点击行编辑**：列表视图行点击直接进入编辑模式（无需打开弹窗）\r\n\r\n### 🔄 补丁式更新 UI\r\n\r\n- **UpdateNotification 自动预览补丁**：发现新版本时优先尝试 `patchPreview`，命中则显示 \"增量更新 N MB\" 按钮\r\n- **下载到本地缓存**：补丁 zip 持久化到 `%APPDATA%\\task-manager\\patch-cache\\`，可断网后应用\r\n- **一键应用并重启**：缓存就绪后显示 \"应用补丁并重启\" 按钮，进度条独立（青色=补丁 / 黄色=整包）\r\n- **失败自动回退**：基线 asar 哈希不匹配时回退下载整包\r\n\r\n### 🛠️ 数据库迁移（无感知）\r\n\r\nv1.2.0 → v1.2.1 自动应用：\r\n- `canvases` 表新增 `project_id` 列（画布与项目一对一）\r\n- `project_tasks` 表新增 `priority` + `description` 列（默认 `normal` / `null`）\r\n- v1.2.0 旧画布数据自动迁移到首个项目名下\r\n\r\n---\r\n\r\n## 🐛 修复\r\n\r\n- **画布失灵 bug 根因**：`createCanvas` 调 `window.prompt()`，Electron 渲染进程不支持 → 永远返回 null → 静默失败。新版画布自动创建，无需对话框。\r\n- **更新永远下整包根因**：`UpdateCheckResult` 不透传 `patches` 字段，UI 也从未调用 `patchPreview/Download/Apply`。新版主进程透传 + UI 全套自动。\r\n- 修复 Settings 页面主题预览标题缺失 glass 系列分支\r\n\r\n---\r\n\r\n## 📦 升级说明\r\n\r\n- **无破坏性变更**\r\n- **自动增量更新支持**：\r\n  - 1.1.9 → 1.2.1（应用两步补丁）\r\n  - 1.2.0 → 1.2.1（应用 1.2.0→1.2.1 补丁，重生成）\r\n  - 旧 1.2.1 → 新 1.2.1（应用 1.2.1→1.2.1 补丁，新增）\r\n- 首次安装用户走 92 MB 整包\r\n\r\n---\r\n\r\n## 已知遗留\r\n\r\n- 输入框偶发失灵需重启（IME/composition 相关，沿用 `src/diag/inputRepair.ts` 诊断与 pointerdown 复查机制，v1.1.6 起埋点）\r\n- 画布数据仍为用户级 JSON，未设计跨设备同步（沿用 v1.2.0 设计）",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.1.exe",
+  "version": "1.2.2",
+  "notes": "# v1.2.2 更新说明\r\n\r\n> v1.2.1 重发时部分用户未收到更新推送（同版本号重发的已知限制），本版改用 **v1.2.2** 正常递增版本号，确保所有用户都能收到。未收到 v1.2.1 更新的用户，本次将一并获得其全部功能。\r\n\r\n## ✨ 界面主题焕新\r\n\r\n- 新默认主题 **aurora**（极光）：深空底色 + 极光青主色调 + 三色极光光斑流动\r\n- 新增 **glass-light / glass-dark**：Windows 11 Fluent / Mica 亚克力质感主题\r\n- 主题家族扩展到 **6 套**：aurora / neon（经典荧光绿）/ starry（星空）/ sakura（樱花粉）/ glass × 2，设置 → 外观一键切换\r\n\r\n## 🎨 画布并入项目页\r\n\r\n- 原「编辑器 / 画布」独立页面并入 **项目** 页，右上角四种视图切换：看板 / 列表 / 时间线 / **画布**\r\n- 画布与项目**一对一**绑定（每个项目自带一张白板），首次进入自动创建\r\n- 自由节点 + 连线，适合梳理思路、画流程图、头脑风暴\r\n- 修复 `window.prompt` 在 Electron 渲染层失效导致画布建节点失败的问题\r\n\r\n## ✅ 任务列表（todolist）增强\r\n\r\n- **4 级优先级旗标**：高 / 中 / 低 / 普通，看板卡片直接显示\r\n- 任务支持**描述**字段（看板 / 列表 / 时间线三视图统一编辑与展示）\r\n- 列表视图：状态分组统计条 + 按优先级 / 状态 / 关键词**过滤**\r\n- 列表视图支持行内快速添加、点击行直接编辑\r\n\r\n## 🔑 回看已生成的作业码（新）\r\n\r\n- 「作业同步 → 生成作业码」弹窗下方新增**「回看已生成的作业码」**列表\r\n- 汇总本机所有码对：手动生成过的 + 各课程绑定的（自动标注课程名）\r\n- 每条可分别**复制发布码 / 同步码**，关掉弹窗再也不怕找不到码\r\n- 发布作业时系统自动为课程生成的同步码，同样会收录，忘记抄码也没关系\r\n\r\n## 🔄 更新体验\r\n\r\n- 更新通知组件支持**补丁式更新**全流程：预览补丁体积 → 下载（青色进度条）→ 退出时自动应用\r\n- 整包下载走黄色进度条，两种模式一眼可辨\r\n- 补丁缓存于 `%APPDATA%\\task-manager\\patch-cache\\`，典型更新仅需约 12% 体积\r\n- 修复：同版本号但程序文件哈希不同（重发场景）时无法提示更新的问题\r\n\r\n## 📄 其他\r\n\r\n- README 全面更新：主题家族、画布、优先级、回看码使用指南，下载链接指向最新版\r\n- 数据库迁移：`canvases.project_id`（画布挂载到项目）+ `project_tasks.priority / description`（优先级与描述），老版本数据自动升级无损保留",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.2.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.1",
-  "sha256": "7705711d1db7aceb82f3f3e998762dcbdb516ddd72f969e05da7fa8c2c5b1823",
-  "size": 97119216,
-  "fileName": "TaskManager-Setup-1.2.1.exe",
+  "sha256": "7f80bfc3eaf74a388a31f886f0c1b4dde45844096e9762728eac08557dfee759",
+  "size": 97120252,
+  "fileName": "TaskManager-Setup-1.2.2.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-21T14:46:26.247Z",
-  "asarSha256": "ac790a4d49907ec3b0fbdeff31dc6721e765cb631534da44aded1c07e6fcb42b",
-  "asarSize": 74781362,
+  "releaseDate": "2026-09-21T15:34:06.377Z",
+  "asarSha256": "a1d0afd4a4c931f4faa701445184348e713e2361de690f65985a70b2793d9e79",
+  "asarSize": 74787825,
   "patches": [
     {
       "fromVersion": "1.1.9",
@@ -35,14 +35,14 @@
     },
     {
       "fromVersion": "1.2.1",
-      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.1-to-1.2.1.zip",
-      "sha256": "b64681f07807d0918724d6c84a4866902164d1f3a49860d35281d283dfc81b36",
-      "size": 22831268,
-      "baseAsarSha256": "0664c7b49600fe99f8805a2b07583de55365472dd165c1cb40f0c6becdadcdb9",
-      "baseAsarSize": 74750929,
-      "appAsarSha256": "ac790a4d49907ec3b0fbdeff31dc6721e765cb631534da44aded1c07e6fcb42b",
-      "appAsarSize": 74781362,
-      "createdAt": "2026-09-21T14:47:46.285Z"
+      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.1-to-1.2.2.zip",
+      "sha256": "0b866204615ce229d4722f6a51388c00a99f507c9d96c509dd0fed0b3708797f",
+      "size": 22833051,
+      "baseAsarSha256": "ac790a4d49907ec3b0fbdeff31dc6721e765cb631534da44aded1c07e6fcb42b",
+      "baseAsarSize": 74781362,
+      "appAsarSha256": "a1d0afd4a4c931f4faa701445184348e713e2361de690f65985a70b2793d9e79",
+      "appAsarSize": 74787825,
+      "createdAt": "2026-09-21T15:34:02.298Z"
     }
   ]
 }

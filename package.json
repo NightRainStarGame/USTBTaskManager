@@ -1,6 +1,6 @@
 {
   "name": "task-manager",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "课程 / 项目 / 日历一体化可视化工作流（霓虹荧光科技风）",
   "main": "dist-electron/main.js",
   "author": "豆芽",
