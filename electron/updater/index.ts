@@ -67,6 +67,8 @@ export interface UpdateManifest {
   /** v1.3.0：全量包体积（字节） */
   asarSize?: number | null;
   size?: number | null;
+  /** v1.2.1 重发场景：app.asar sha256，用于比对当前 asar 哈希判断是否需要重新部署 */
+  asarSha256?: string | null;
 }
 
 export interface UpdateCheckResult {
@@ -94,6 +96,8 @@ export interface UpdateCheckResult {
   /** v1.3.0：全量安装包体积（字节） */
   asarSize?: number | null;
   size?: number | null;
+  /** v1.2.1 重发场景：透传 app.asar sha256，便于 UI 展示诊断信息 */
+  asarSha256?: string | null;
 }
 
 export interface UpdateAggregate {
@@ -414,7 +418,15 @@ export async function checkForUpdate(
   }
 
   const skipped = getSetting(db, SETTING_SKIPPED).trim() === manifest.version && !opts?.force;
-  const hasUpdate = compareVersions(manifest.version, currentVersion) > 0;
+  let hasUpdate = compareVersions(manifest.version, currentVersion) > 0;
+  // v1.2.1 重发场景：同版本号但 asar 内容不同 → 视为有更新（走 1.2.1→1.2.1 补丁）
+  if (!hasUpdate && manifest.version === currentVersion && manifest.asarSha256 && !skipped) {
+    const patchApply = require('./patchApply') as typeof import('./patchApply');
+    const cur = await patchApply.currentAsarSha256();
+    if (cur && cur !== manifest.asarSha256.toLowerCase()) {
+      hasUpdate = true;
+    }
+  }
 
   return {
     ...base,
@@ -427,10 +439,11 @@ export async function checkForUpdate(
     downloadUrl: manifest.url,
     pageUrl: manifest.page || src.url,
     sha256: manifest.sha256,
-    forced: hasUpdate && !!manifest.force,
+    forced: hasUpdate && (!!manifest.force || (manifest.version === currentVersion && !!manifest.asarSha256)),
     latencyMs,
     patches: manifest.patches ?? null,
     asarSize: manifest.asarSize ?? null,
+    asarSha256: manifest.asarSha256 ?? null,
     size: manifest.size ?? null,
   };
 }
