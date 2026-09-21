@@ -1,9 +1,22 @@
 {
   "syncCode": "6V5JTW5P",
-  "courseName": "中国科技发展史",
+  "courseName": "基础外语I",
   "createdAt": 1789970584234,
-  "updatedAt": 1789970584234,
+  "updatedAt": 1789970732807,
   "entries": [
+    {
+      "id": "48d40b1a-e55b-4bb0-8b3a-4fee0674a619",
+      "courseName": "基础外语I",
+      "sessionDate": "2026-09-15",
+      "sessionTime": null,
+      "title": "文章预习",
+      "content": "教材上文章",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789970732807,
+      "updatedAt": 1789970732807
+    },
     {
       "id": "8b798ee7-23a1-4581-9ea1-b8b61aac37df",
       "courseName": "中国科技发展史",
@@ -18,5 +31,6 @@
       "updatedAt": 1789970584234
     }
   ],
-  "courseGuid": "C-8XAD4554"
+  "courseGuid": "C-UGCR3UES",
+  "courseKey": "CK-RN2BXUTBD3"
 }
