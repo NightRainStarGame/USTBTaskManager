@@ -43,6 +43,8 @@ const SETTING_PUBLISHER = 'homework_publisher';
 const SETTING_LAST_SYNC = 'homework_last_sync';
 const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
 const SETTING_CLOUD = 'homework_anyshare';
+/** v1.2.2：手动生成过的码对历史（JSON 数组，仅记 syncCode + 时间，publishCode 可 HMAC 派生） */
+const SETTING_MY_CODES = 'homework_my_codes';
 
 /** 北科云盘默认外链。仅在北京科技大学校园网内可达；用户可在设置里改/关 */
 export const DEFAULT_ANYSHARE_CONFIG: AnyShareConfig & { enabled: boolean } = {
@@ -1088,7 +1090,55 @@ export function registerHomework(db: DB) {
 
   ipcMain.handle('homework:generateCodes', () => {
     const pair = generateCodePair();
+    // v1.2.2：生成历史落盘（上限 100 条），供「回看已生成的作业码」
+    try {
+      let arr: Array<{ syncCode: string; createdAt: number }> = [];
+      try { const raw = getSetting(db, SETTING_MY_CODES); if (raw) arr = JSON.parse(raw); } catch {}
+      if (!Array.isArray(arr)) arr = [];
+      arr.unshift({ syncCode: pair.syncCode, createdAt: Date.now() });
+      setSetting(db, SETTING_MY_CODES, JSON.stringify(arr.slice(0, 100)));
+    } catch {}
     return { ok: true, ...pair };
+  });
+
+  // v1.2.2：回看已生成的作业码 = 手动生成历史 + 课程绑定码（homework_sync_ck_* 新格式 / homework_sync_<id> 旧格式），同码去重
+  ipcMain.handle('homework:listMyCodes', () => {
+    try {
+      const map = new Map<string, { syncCode: string; createdAt: number; courseName?: string }>();
+      try {
+        const raw = getSetting(db, SETTING_MY_CODES);
+        if (raw) for (const it of JSON.parse(raw) || []) {
+          if (it?.syncCode && !map.has(it.syncCode)) map.set(it.syncCode, { syncCode: it.syncCode, createdAt: Number(it.createdAt) || 0 });
+        }
+      } catch {}
+      const rows = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'homework_sync_%'`).all() as Array<{ key: string; value: string }>;
+      const courseByKey = db.prepare('SELECT name FROM courses WHERE course_key = ?');
+      const courseById = db.prepare('SELECT name FROM courses WHERE id = ?');
+      for (const r of rows) {
+        const sc = normalizeSyncCode(r.value);
+        if (!sc) continue;
+        let courseName: string | undefined;
+        if (r.key.startsWith('homework_sync_ck_')) {
+          const c = courseByKey.get(r.key.slice('homework_sync_ck_'.length)) as { name?: string } | undefined;
+          courseName = c?.name;
+        } else {
+          const id = Number(r.key.slice('homework_sync_'.length));
+          if (Number.isFinite(id) && id > 0) {
+            const c = courseById.get(id) as { name?: string } | undefined;
+            courseName = c?.name;
+          }
+        }
+        const existing = map.get(sc);
+        if (existing) { if (courseName && !existing.courseName) existing.courseName = courseName; }
+        else map.set(sc, { syncCode: sc, createdAt: 0, courseName });
+      }
+      const codes = Array.from(map.values())
+        .map((m) => ({ ...m, publishCode: derivePublishCode(m.syncCode), source: m.courseName ? ('course' as const) : ('generated' as const) }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+      return { ok: true, codes };
+    } catch (e: any) {
+      return { ok: false, codes: [], error: describeError(e) };
+    }
   });
 
   ipcMain.handle('homework:verifyCodes', (_e, publishCode: string) => {

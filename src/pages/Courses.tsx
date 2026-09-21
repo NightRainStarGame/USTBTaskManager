@@ -1307,11 +1307,28 @@ async function copyText(t: string) {
   try { await navigator.clipboard.writeText(t); } catch { /* ignore */ }
 }
 
-/** 生成作业码弹窗：一键生成一对码（发布码 = 密钥，同步码 = 分享码），抄存/复制 */
+/** 一条可回看的作业码记录（v1.2.2） */
+type MyHomeworkCode = { syncCode: string; publishCode: string; createdAt: number; source: 'generated' | 'course'; courseName?: string };
+
+/** 生成作业码弹窗：一键生成一对码（发布码 = 密钥，同步码 = 分享码），抄存/复制；下方回看已生成的码 */
 function GenerateCodesModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [generated, setGenerated] = useState<{ syncCode: string; publishCode: string } | null>(null);
-  const [copied, setCopied] = useState<'sync' | 'publish' | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [history, setHistory] = useState<MyHomeworkCode[]>([]);
+  const [histLoading, setHistLoading] = useState(true);
+
+  const loadHistory = async () => {
+    setHistLoading(true);
+    try {
+      const r = await window.taskAPI.homework.listMyCodes();
+      if (r.ok) setHistory(r.codes || []);
+    } finally {
+      setHistLoading(false);
+    }
+  };
+
+  useEffect(() => { loadHistory(); }, []);
 
   const generatePair = async () => {
     if (busy) return;
@@ -1320,16 +1337,16 @@ function GenerateCodesModal({ onClose }: { onClose: () => void }) {
       const r = await window.taskAPI.homework.generateCodes();
       setGenerated({ syncCode: r.syncCode, publishCode: r.publishCode });
       setCopied(null);
+      loadHistory();
     } finally {
       setBusy(false);
     }
   };
 
-  const doCopy = async (which: 'sync' | 'publish') => {
-    if (!generated) return;
-    await copyText(which === 'sync' ? generated.syncCode : generated.publishCode);
-    setCopied(which);
-    setTimeout(() => setCopied(null), 1500);
+  const doCopy = async (key: string, text: string) => {
+    await copyText(text);
+    setCopied(key);
+    setTimeout(() => setCopied((cur) => (cur === key ? null : cur)), 1500);
   };
 
   return (
@@ -1361,14 +1378,14 @@ function GenerateCodesModal({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-2">
                 <span className="text-text-dim w-20 shrink-0">作业发布码</span>
                 <span className="text-neon-yellow font-bold tracking-widest">{generated.publishCode}</span>
-                <button onClick={() => doCopy('publish')} className="btn-ghost p-1 text-[9px]">
+                <button onClick={() => doCopy('publish', generated.publishCode)} className="btn-ghost p-1 text-[9px]">
                   {copied === 'publish' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
                 </button>
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-text-dim w-20 shrink-0">同步作业码</span>
                 <span className="text-neon-green font-bold tracking-widest">{generated.syncCode}</span>
-                <button onClick={() => doCopy('sync')} className="btn-ghost p-1 text-[9px]">
+                <button onClick={() => doCopy('sync', generated.syncCode)} className="btn-ghost p-1 text-[9px]">
                   {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
                 </button>
               </div>
@@ -1379,6 +1396,48 @@ function GenerateCodesModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
+
+        {/* v1.2.2：回看已生成的作业码（手动生成历史 + 课程绑定码） */}
+        <div className="rounded-md border border-white/10">
+          <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10">
+            <span className="font-mono text-[10px] text-text-dim tracking-widest">回看已生成的作业码（{history.length}）</span>
+            <button onClick={loadHistory} className="btn-ghost p-1 text-[9px]">
+              <RefreshCw size={11} className={histLoading ? 'animate-spin' : ''} /> 刷新
+            </button>
+          </div>
+          <div className="max-h-44 overflow-y-auto divide-y divide-white/5">
+            {histLoading && !history.length && (
+              <div className="py-4 text-center font-mono text-[10px] text-text-dim">读取中…</div>
+            )}
+            {!histLoading && !history.length && (
+              <div className="py-4 text-center font-mono text-[10px] text-text-dim leading-relaxed">
+                [ ∅ ] 还没有生成记录<br />点「生成新码对」，或在发布作业时自动为课程绑定同步码
+              </div>
+            )}
+            {history.map((c) => (
+              <div key={c.syncCode} className="px-2.5 py-2 space-y-1">
+                <div className="flex items-center gap-2 font-mono text-[11px]">
+                  <span className="text-text-dim w-14 shrink-0">发布码</span>
+                  <span className="text-neon-yellow font-bold tracking-widest">{c.publishCode}</span>
+                  <button onClick={() => doCopy(`pub:${c.syncCode}`, c.publishCode)} className="btn-ghost p-1 text-[9px]">
+                    {copied === `pub:${c.syncCode}` ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 font-mono text-[11px]">
+                  <span className="text-text-dim w-14 shrink-0">同步码</span>
+                  <span className="text-neon-green font-bold tracking-widest">{c.syncCode}</span>
+                  <button onClick={() => doCopy(`sync:${c.syncCode}`, c.syncCode)} className="btn-ghost p-1 text-[9px]">
+                    {copied === `sync:${c.syncCode}` ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
+                  </button>
+                </div>
+                <div className="font-mono text-[9px] text-text-dim">
+                  {c.courseName ? `课程绑定 · ${c.courseName}` : '手动生成'}
+                  {c.createdAt ? ` · ${dayjs(c.createdAt).format('YYYY-MM-DD HH:mm')}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </Modal>
   );

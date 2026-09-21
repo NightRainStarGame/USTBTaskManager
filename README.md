@@ -4,12 +4,12 @@
 
 ## 下载安装
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.1.7.exe`
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.2.exe`
 
 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
 > 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.1.7.exe`
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.2.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
@@ -89,6 +89,12 @@ App 自带默认两个源：
 > **双源发布** —— 一次填写会同时推到 GitHub 仓库和北科云盘（任一失败不影响另一个）。
 > 设置 → 作业同步里也能改默认发布目标，持久化到本机。
 
+**回看已生成的作业码**（v1.2.2 新增）：
+
+1. 点「生成作业码」→ 弹窗下方就是「回看已生成的作业码」列表
+2. 列出本机所有码对：手动生成过的 + 各课程绑定的（自动标注课程名），点「复制」即可重新拿走发布码 / 同步码
+3. 发布作业时若让系统自动为课程生成同步码，那个码也会出现在这里，不怕忘记
+
 **同步作业**（全班都能用，无需密码）：
 
 1. 点「同步作业」→「立即同步」
@@ -105,8 +111,9 @@ App 自带默认两个源：
 
 适合管理大作业、比赛、科研等周期较长的工作：
 
-- **看板 / 列表 / 时间线**三种视图，卡片可直接**拖拽**切换状态
-- 任务支持多级拆分和进度统计
+- **看板 / 列表 / 时间线 / 画布**四种视图，卡片可直接**拖拽**切换状态
+- 任务支持多级拆分和进度统计；**4 级优先级旗标**（高/中/低/普通）+ 任务描述 + 按优先级 / 状态 / 关键词过滤
+- **画布**：自由节点 + 连线白板，与项目一对一，适合梳理思路、画流程图
 
 ### 7. 数据安全
 
@@ -133,8 +140,8 @@ App 自带默认两个源：
 - 📅 **日历** 月/周/日三视图 · 课程时段可视化 · 农历与节假日 · 新建事件
 - 📚 **课程** 课程卡片网格 · 课表日历视图 · 作业（课程要求）管理与完成度追踪
 - 🏫 **教务导入** 北京科技大学课表导入（按周展开为具名事件）
-- 📡 **班级作业同步** 密码发布作业到 GitHub 公告板，全班一键同步（按上课日期区分每节课）
-- 📂 **项目** 看板 / 列表 / 时间线三种视图 · 拖拽切换状态
+- 📡 **班级作业同步** 密码发布作业到 GitHub 公告板，全班一键同步（按上课日期区分每节课）· 回看已生成的码对
+- 📂 **项目** 看板 / 列表 / 时间线 / 画布四种视图 · 拖拽切换状态 · 优先级旗标与过滤
 - 💾 **数据安全** 一键备份 / 恢复 · 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
 - 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装；增量补丁协议（典型更新 12% 体积）；输入框失灵自检与补焦
@@ -164,7 +171,7 @@ npm run build:exe
 改完 `package.json` 里的 `version` 后：
 
 ```bash
-npm run release:one -- 1.1.7 --notes-file RELEASE-NOTES.md        # 一键：build + 双源分发 + commit + push + Release 附件
+npm run release:one -- 1.2.2 --notes-file RELEASE-NOTES.md        # 一键：build + 双源分发 + commit + push + Release 附件
 # 或手动分步：
 npm run build:exe          # 打包
 npm run publish:github     # ① 同步一份到 GitHub（含 Release 附件）
@@ -216,11 +223,11 @@ node scripts/clean-release.js --keep release-0.2.3,release-0.3.0   # 执行清�
 
 ## UI 设计
 
-- 主色：霓虹绿 `#00FF88` + 霓虹黄 `#FFEA00`
-- 背景：纯黑 + Canvas 粒子动态背景 + 网格 + 鼠标光晕
+- 主题：**6 套可选** —— 默认 `aurora`（深空底 + 极光青 + 三色光斑）；`neon`（霓虹绿经典）；`starry`（星空）；`sakura`（樱花粉）；`glass-light` / `glass-dark`（Win11 亚克力 Mica 风）
+- 背景：Canvas 粒子动态背景 + 网格 + 鼠标光晕
 - 字体：JetBrains Mono（数据感）+ Inter（正文）
 - 元素：玻璃拟态 · 荧光边框 · 扫描线 · 状态指示灯
-- 灵感：OKX 行情面板 · 区块链终端
+- 灵感：OKX 行情面板 · 区块链终端 · Fluent Design
 
 ## 数据存储
 

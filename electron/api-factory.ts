@@ -336,6 +336,12 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         invoke('homework:saveCloud', cfg) as Promise<{ ok: boolean; error?: string; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean } }>,
       /** 生成一对新码（同步作业码 + 作业发布码） */
       generateCodes: () => invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
+      /** v1.2.2：回看已生成的作业码（手动生成历史 + 课程绑定码，同码去重） */
+      listMyCodes: () => invoke('homework:listMyCodes') as Promise<{
+        ok: boolean;
+        codes: Array<{ syncCode: string; publishCode: string; createdAt: number; source: 'generated' | 'course'; courseName?: string }>;
+        error?: string;
+      }>,
       /** 校验作业发布码（本地 HMAC，无需联网）；通过则返回解析出的同步码 */
       verifyCodes: (publishCode: string) => invoke('homework:verifyCodes', publishCode) as Promise<{ ok: boolean; syncCode?: string }>,
       /** v1.1.3：取某课程对应的同步作业码（首次自动生成）。用作发布时定位远端 bundle */
