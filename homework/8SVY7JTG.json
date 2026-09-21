@@ -1,8 +1,8 @@
 {
   "syncCode": "8SVY7JTG",
-  "courseName": "大学生心理健康I",
+  "courseName": "习近平新时代中国特色社会主义思想概论",
   "createdAt": 1789971062235,
-  "updatedAt": 1789971344311,
+  "updatedAt": 1789971363125,
   "entries": [
     {
       "id": "562a11ba-dc06-4e47-b792-6153e67e1990",
@@ -68,8 +68,21 @@
       "publisher": "佚名",
       "publishedAt": 1789971255354,
       "updatedAt": 1789971255354
+    },
+    {
+      "id": "5e442af1-360d-4556-9b5e-58e8eddb9def",
+      "courseName": "习近平新时代中国特色社会主义思想概论",
+      "sessionDate": "2026-12-01",
+      "sessionTime": null,
+      "title": "学习通",
+      "content": "",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789971363125,
+      "updatedAt": 1789971363125
     }
   ],
-  "courseGuid": "C-MJY69MDQ",
+  "courseGuid": "C-K2XPSC9G",
   "courseKey": "CK-V924U3V2XW"
 }
