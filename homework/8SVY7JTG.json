@@ -1,0 +1,22 @@
+{
+  "syncCode": "8SVY7JTG",
+  "courseName": "微积分I（科创班）",
+  "createdAt": 1789971062235,
+  "updatedAt": 1789971062235,
+  "entries": [
+    {
+      "id": "4a488faf-a802-48e7-b120-64286a13dfb8",
+      "courseName": "微积分I（科创班）",
+      "sessionDate": "2026-10-07",
+      "sessionTime": null,
+      "title": "MOOC(点击详情查看链接)",
+      "content": "https://www.icourse163.org/learn/USTB-1206699821?tid=1488056453#/learn/announce",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789971062235,
+      "updatedAt": 1789971062235
+    }
+  ],
+  "courseGuid": "C-MVYKEHTP"
+}
