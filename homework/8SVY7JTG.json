@@ -2,7 +2,7 @@
   "syncCode": "8SVY7JTG",
   "courseName": "基础外语I",
   "createdAt": 1789971062235,
-  "updatedAt": 1789971133660,
+  "updatedAt": 1789971255354,
   "entries": [
     {
       "id": "4a488faf-a802-48e7-b120-64286a13dfb8",
@@ -42,6 +42,19 @@
       "publisher": "佚名",
       "publishedAt": 1789971133660,
       "updatedAt": 1789971133660
+    },
+    {
+      "id": "fa89309c-26ab-437c-a256-c902ead9dd58",
+      "courseName": "基础外语I",
+      "sessionDate": "2026-11-24",
+      "sessionTime": null,
+      "title": "iSmart",
+      "content": "视听说软件",
+      "type": "homework",
+      "dueDate": null,
+      "publisher": "佚名",
+      "publishedAt": 1789971255354,
+      "updatedAt": 1789971255354
     }
   ],
   "courseGuid": "C-UGCR3UES",
