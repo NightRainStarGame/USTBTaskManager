@@ -62,6 +62,11 @@ export interface UpdateManifest {
   sha256?: string | null;
   force?: boolean;
   minVersion?: string | null;
+  /** v1.3.0：latest.json 的增量补丁清单原样透传 */
+  patches?: any[] | null;
+  /** v1.3.0：全量包体积（字节） */
+  asarSize?: number | null;
+  size?: number | null;
 }
 
 export interface UpdateCheckResult {
@@ -84,6 +89,11 @@ export interface UpdateCheckResult {
   checkedAt?: number;
   /** 拉取该源清单的耗时（毫秒），用于测速展示与同版本择优 */
   latencyMs?: number;
+  /** v1.3.0：增量补丁清单透传（UI 据此优先走补丁更新） */
+  patches?: any[] | null;
+  /** v1.3.0：全量安装包体积（字节） */
+  asarSize?: number | null;
+  size?: number | null;
 }
 
 export interface UpdateAggregate {
@@ -139,6 +149,9 @@ export function parseManifest(text: string, sourceUrl: string): UpdateManifest |
             sha256: pick(obj, ['sha256', 'hash', 'checksum']),
             force: obj.force === true || obj.force === 1 || obj.force === 'true',
             minVersion: pick(obj, ['minVersion', 'min_version']),
+            patches: Array.isArray(obj.patches) ? obj.patches : null,
+            asarSize: typeof obj.asarSize === 'number' ? obj.asarSize : null,
+            size: typeof obj.size === 'number' ? obj.size : null,
           };
         }
       }
@@ -416,6 +429,9 @@ export async function checkForUpdate(
     sha256: manifest.sha256,
     forced: hasUpdate && !!manifest.force,
     latencyMs,
+    patches: manifest.patches ?? null,
+    asarSize: manifest.asarSize ?? null,
+    size: manifest.size ?? null,
   };
 }
 
@@ -758,6 +774,61 @@ export function registerUpdater(db: DB | null) {
     }, 600);
     return { ok: true, helperPid: spawned.pid };
   });
+
+  /* ===== v1.3.0 缓存式补丁更新（zip+json 落 userData/update-cache，设置内一键应用） ===== */
+
+  // 只下载补丁到持久缓存，不退出应用
+  ipcMain.handle('update:patch:download', async (_e, patch: any) => {
+    if (!patch || typeof patch.url !== 'string') return { ok: false, error: '补丁参数缺失' };
+    let patchUrl = patch.url;
+    if (!/^https?:\/\//i.test(patchUrl)) {
+      try {
+        const sources = getSources(db);
+        const src = sources[getActiveSourceIndex(db)];
+        patchUrl = await resolveDownloadUrl(patch.url, src);
+      } catch (e: any) {
+        return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
+      }
+    }
+    const entry: import('./patchApply').PatchEntry = {
+      fromVersion: patch.fromVersion,
+      url: patchUrl,
+      sha256: (patch.sha256 || '').toLowerCase(),
+      size: patch.size || 0,
+      baseAsarSha256: (patch.baseAsarSha256 || '').toLowerCase(),
+      appAsarSha256: (patch.appAsarSha256 || '').toLowerCase(),
+      createdAt: new Date().toISOString(),
+    };
+    const r = await patchApply.downloadPatchToCache({ ...entry, toVersion: patch.toVersion || '' }, (p) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'progress', fileName: `patch-${entry.fromVersion}-to-${patch.toVersion || 'next'}.zip`, ...p });
+      }
+    });
+    if (!r.ok) return { ok: false, error: r.error || '下载失败' };
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'done', fileName: `patch-${entry.fromVersion}-to-${patch.toVersion || 'next'}.zip`, percent: 100, note: '补丁已下载到本地缓存，可在 设置 → 软件更新 中应用' });
+    }
+    return { ok: true, state: r.state };
+  });
+
+  // 查询补丁缓存状态（设置页展示"已下载的更新"）
+  ipcMain.handle('update:patch:cacheState', () => patchApply.readPatchCache());
+
+  // 应用缓存补丁：校验 → helper → relaunch
+  ipcMain.handle('update:patch:applyCached', async () => {
+    const r = await patchApply.applyCachedPatch();
+    if (!r.ok) return r;
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'done', fileName: 'patch-cache', percent: 100, note: '补丁已就绪，应用并重启…' });
+    }
+    setTimeout(() => {
+      try { app.exit(0); } catch {}
+    }, 600);
+    return { ok: true, helperPid: r.helperPid };
+  });
+
+  // 清空补丁缓存
+  ipcMain.handle('update:patch:clearCache', () => patchApply.clearPatchCache());
 
   ipcMain.handle('update:patch:state', () => {
     const r = patchApply.checkPatchStateOnBoot();

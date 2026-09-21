@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, Download, X, ExternalLink, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { Sparkles, Download, X, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Zap } from 'lucide-react';
 
 interface UpdatePayload {
   ok?: boolean;
@@ -17,6 +17,10 @@ interface UpdatePayload {
   source?: string;
   sourceIndex?: number;
   sourceName?: string;
+  /** v1.3.0：增量补丁清单（主进程透传，UI 优先走补丁更新） */
+  patches?: any[] | null;
+  asarSize?: number | null;
+  size?: number | null;
   /** 多源聚合结果：每个源的独立结果（type/password 供北科云盘源换签名直链） */
   perSource?: Array<{
     name: string; url: string; ok: boolean; latestVersion: string | null;
@@ -64,6 +68,14 @@ export default function UpdateNotification({ externalTrigger }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installingStarted, setInstallingStarted] = useState(false);
+  /** v1.3.0：补丁式更新状态（preview 结果 / 下载进度 / 已缓存待应用 / 应用中） */
+  const [patchInfo, setPatchInfo] = useState<{
+    available: boolean; reason?: string; sizeMB?: number; fullSizeMB?: number;
+    patch?: { fromVersion: string; toVersion: string; url: string; sha256: string; size: number; baseAsarSha256: string; appAsarSha256: string };
+  } | null>(null);
+  const [patchDl, setPatchDl] = useState<DownloadState | null>(null);
+  const [patchCached, setPatchCached] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   // 监听主进程推送（启动自动检查）
   useEffect(() => {
@@ -80,16 +92,54 @@ export default function UpdateNotification({ externalTrigger }: Props) {
     }
   }, [externalTrigger]);
 
-  // 监听下载进度
+  // v1.3.0：发现新版本时自动探测增量补丁（zip+json 缓存式，主进程校验基线）
+  useEffect(() => {
+    if (!payload?.hasUpdate || !payload.latestVersion) return;
+    setPatchInfo(null);
+    setPatchCached(false);
+    (async () => {
+      try {
+        const r = await window.taskAPI.updater.patchPreview(
+          {
+            version: payload.latestVersion,
+            patches: payload.patches || [],
+            size: payload.size || payload.asarSize || 90000000,
+          },
+          payload.currentVersion || '',
+        );
+        setPatchInfo(r);
+      } catch {
+        setPatchInfo(null);
+      }
+    })();
+  }, [payload?.latestVersion, payload?.hasUpdate]);
+
+  // v1.3.0：检查是否已有缓存补丁待应用（设置里下载过、重启后仍可应用）
+  useEffect(() => {
+    (async () => {
+      try {
+        const st = await window.taskAPI.updater.patchCacheState();
+        if (st?.exists && st?.info && st.info.toVersion === payload?.latestVersion) {
+          setPatchCached(true);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [payload?.latestVersion]);
+
+  // 监听下载进度（v1.3.0：fileName 以 patch- 开头的分流到补丁下载状态）
   useEffect(() => {
     const off = window.taskAPI.updater.onProgress((p: any) => {
+      const isPatch = typeof p.fileName === 'string' && p.fileName.startsWith('patch-');
       if (p.phase === 'start') {
+        if (isPatch) { setPatchDl({ running: true, percent: 0, received: 0, total: p.total || 0 }); return; }
         setDl({ running: true, percent: 0, received: 0, total: p.total || 0 });
         setErr(null);
         setDlPath(null);
       } else if (p.phase === 'progress') {
+        if (isPatch) { setPatchDl({ running: true, percent: p.percent || 0, received: p.received || 0, total: p.total || 0 }); return; }
         setDl({ running: true, percent: p.percent || 0, received: p.received || 0, total: p.total || 0 });
       } else if (p.phase === 'done') {
+        if (isPatch) { setPatchDl(null); setPatchCached(true); return; }
         setDl({ running: false, percent: 100, received: p.received || 0, total: p.total || 0 });
         setDlPath(p.path || null);
       }
@@ -137,6 +187,31 @@ export default function UpdateNotification({ externalTrigger }: Props) {
     }
     // 静默安装已启动，主进程会退出，NSIS 完成后自动拉起新版
     setInstallingStarted(true);
+  };
+
+  /* v1.3.0：补丁式更新 —— zip+json 下载到本地缓存（不退出），应用时 helper 进程替换 asar 并重启 */
+  const startPatchDownload = async () => {
+    if (!patchInfo?.available || !patchInfo.patch) return;
+    setErr(null);
+    setPatchDl({ running: true, percent: 0, received: 0, total: patchInfo.patch.size || 0 });
+    const r = await window.taskAPI.updater.patchDownload(patchInfo.patch);
+    if (!r.ok) {
+      setErr(r.error || '补丁下载失败');
+      setPatchDl(null);
+      return;
+    }
+    setPatchDl(null);
+    setPatchCached(true);
+  };
+  const applyPatch = async () => {
+    setApplying(true);
+    setErr(null);
+    const r = await window.taskAPI.updater.patchApplyCached();
+    if (!r.ok) {
+      setErr(r.error || '应用补丁失败');
+      setApplying(false);
+    }
+    // 成功：主进程 600ms 后退出，由 patch-helper 完成替换并重启
   };
   const openPage = async () => {
     const url = payload.pageUrl || payload.source || '';
@@ -249,7 +324,21 @@ export default function UpdateNotification({ externalTrigger }: Props) {
           </div>
         )}
 
-        {/* 下载进度 */}
+        {/* 下载进度（v1.3.0：补丁下载单独一条青色进度） */}
+        {patchDl && (
+          <div className="space-y-1">
+            <div className="flex justify-between font-mono text-[10px] text-neon-green">
+              <span>⚡ 增量补丁下载中</span>
+              <span>
+                {patchDl.percent}%
+                {patchDl.total ? ` · ${(patchDl.received / 1048576).toFixed(1)}/${(patchDl.total / 1048576).toFixed(1)} MB` : ''}
+              </span>
+            </div>
+            <div className="progress-bar">
+              <div style={{ width: `${patchDl.percent}%`, background: '#4DFFF3', boxShadow: '0 0 6px #4DFFF3' }} />
+            </div>
+          </div>
+        )}
         {dl && (
           <div className="space-y-1">
             <div className="progress-bar">
@@ -276,11 +365,33 @@ export default function UpdateNotification({ externalTrigger }: Props) {
             ✓ 已下载到 {dlPath}
           </div>
         )}
+
+        {patchCached && !applying && (
+          <div className="font-mono text-[10px] text-neon-green bg-neon-green/5 border border-neon-green/30 rounded px-2 py-1">
+            ✓ 增量补丁已就绪（zip + manifest 已缓存），点击「应用补丁」立即升级
+          </div>
+        )}
       </div>
 
       {/* 底部按钮 */}
       <div className="flex flex-wrap gap-2 px-3 py-2 border-t border-neon-green/15 bg-ink-base/60 pointer-events-auto">
-        {dlPath && !installingStarted && (
+        {/* v1.3.0：补丁优先 —— 下载增量 / 应用增量 */}
+        {patchInfo?.available && !patchCached && !patchDl && (
+          <button onClick={startPatchDownload} className="btn-neon text-xs py-1">
+            <Zap size={12} /> 增量更新 {patchInfo.sizeMB?.toFixed(1)} MB
+          </button>
+        )}
+        {patchCached && !applying && (
+          <button onClick={applyPatch} className="btn-neon text-xs py-1">
+            <Sparkles size={12} /> 应用补丁并重启
+          </button>
+        )}
+        {applying && (
+          <div className="font-mono text-[10px] text-neon-green bg-neon-green/5 border border-neon-green/30 rounded px-2 py-1">
+            补丁应用中…App 将自动重启，请勿断电。
+          </div>
+        )}
+        {!patchInfo?.available && !patchCached && dlPath && !installingStarted && (
           <button onClick={install} disabled={installing} className="btn-neon btn-neon-yellow text-xs py-1">
             <Sparkles size={12} /> {installing ? '启动安装…' : '重启并静默安装'}
           </button>
@@ -290,9 +401,9 @@ export default function UpdateNotification({ externalTrigger }: Props) {
             安装中…App 退出后新版会自动打开，请勿手动启动。
           </div>
         )}
-        {!dlPath && !dl && payload.downloadUrl && (
+        {!dlPath && !dl && payload.downloadUrl && !patchCached && (
           <button onClick={startDownload} className="btn-neon btn-neon-yellow text-xs py-1">
-            <Download size={12} /> 下载更新
+            <Download size={12} /> 完整安装 {(patchInfo?.fullSizeMB ?? 90).toFixed(0)} MB
           </button>
         )}
         {dl && (

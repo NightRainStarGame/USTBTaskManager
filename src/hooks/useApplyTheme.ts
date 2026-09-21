@@ -6,7 +6,10 @@ export function useApplyTheme() {
   const theme = useStore((s) => s.settings.theme);
 
   useEffect(() => {
-    const valid = theme === 'starry' || theme === 'neon-green' || theme === 'sakura' ? theme : 'neon-green';
+    // v1.3.0：新默认主题 aurora（极光）；新增玻璃明暗（Windows Fluent/Mica）
+    const valid = ['aurora', 'starry', 'neon-green', 'sakura', 'glass-light', 'glass-dark'].includes(theme)
+      ? theme
+      : 'aurora';
     document.documentElement.dataset.theme = valid;
   }, [theme]);
 }

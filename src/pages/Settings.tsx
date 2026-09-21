@@ -83,7 +83,7 @@ export default function SettingsPage() {
   const categories = useStore(s => s.categories);
   const userProfile = useStore(s => s.userProfile);
   const refreshAll = useStore(s => s.refreshAll);
-  const [theme, setTheme] = useState('neon-green');
+  const [theme, setTheme] = useState('aurora');
   const [semester, setSemester] = useState('2026-Fall');
   const [semesterStart, setSemesterStart] = useState('');
 
@@ -746,9 +746,12 @@ export default function SettingsPage() {
         <Row label="主题预设">
           <div className="space-y-3 w-full">
             <select value={theme} onChange={(e) => setTheme(e.target.value)} className="input-neon w-48">
-              <option value="neon-green">霓虹绿（默认）</option>
-              <option value="starry">星辉（青蓝荧光）</option>
+              <option value="aurora">🌌 极光（默认 · 新）</option>
+              <option value="starry">✦ 星辉（青蓝荧光）</option>
+              <option value="neon-green">◇ 霓虹绿（经典）</option>
               <option value="sakura">🌸 樱花粉（萌系）</option>
+              <option value="glass-light">🪟 玻璃 · 浅色（Win11 液态玻璃）</option>
+              <option value="glass-dark">🪟 玻璃 · 深色（Win11 液态玻璃）</option>
             </select>
             {/* v1.2.1 主题预览卡片：实时反映当前主题的渐变 / 玻璃 / 对比 */}
             <div className="mt-1 p-3 rounded-lg border border-neon-green/15 bg-ink-base/40 max-w-lg">
@@ -758,7 +761,7 @@ export default function SettingsPage() {
               </div>
               <div className="glass-panel p-3">
                 <div className="text-grad-sakura font-mono text-base font-bold mb-2">
-                  {theme === 'sakura' ? '🌸 樱花粉主题' : theme === 'starry' ? '✦ 星辉主题' : '◇ 霓虹绿主题'}
+                  {theme === 'aurora' ? '🌌 极光主题' : theme === 'sakura' ? '🌸 樱花粉主题' : theme === 'starry' ? '✦ 星辉主题' : theme === 'glass-light' ? '🪟 玻璃 · 浅色主题' : theme === 'glass-dark' ? '🪟 玻璃 · 深色主题' : '◇ 霓虹绿主题'}
                 </div>
                 <div className="text-xs text-text-secondary mb-2">
                   渐变标题 + 玻璃面板 + <span className="data-pill">数据胶囊</span>
@@ -1112,7 +1115,7 @@ export default function SettingsPage() {
           <button onClick={checkUpdate} disabled={updateChecking} className="btn-neon">
             <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查更新'}
           </button>
-          <PatchUpdateButton aggregate={aggregate} appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} onProgress={setDl} onExit={() => setDlPath(null)} />
+          <PatchUpdateButton aggregate={aggregate} appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} onProgress={setDl} />
           {aggregate?.winner?.hasUpdate && aggregate.winner.downloadUrl && !dlPath && (
             <button onClick={startDownload} disabled={!!dl?.running} className="btn-neon btn-neon-yellow">
               <Download size={14} /> {dl?.running ? '下载中…' : `下载 v${aggregate.winner.latestVersion}`}
@@ -1135,6 +1138,9 @@ export default function SettingsPage() {
             <ExternalLink size={14} /> GitHub 源打不开？点这
           </button>
         </div>
+
+        {/* v1.3.0：已下载的增量补丁（zip + manifest 缓存，随时应用） */}
+        <PatchCacheCard appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} />
 
         {/* 下载进度 */}
         {dl && (
@@ -1632,19 +1638,18 @@ function Field({ label, children }: any) {
   );
 }
 
-/** v1.1.6 块 4b：增量更新按钮。
- *  - 检查 winner.patches 是否有匹配 fromVersion = 当前 appVersion 的补丁
- *  - 有则显示「下载补丁 X MB」按钮（旁注 vs 全量大小）
- *  - 点 → 二次确认弹窗 → 调 patchApply → 退出当前应用让 helper 落盘
+/** v1.3.0 缓存式增量更新按钮：
+ *  - winner 现在直接携带 patches（主进程透传）
+ *  - preview 可用 →「下载增量补丁」→ zip+json 落 userData/update-cache（不退出应用）
+ *  - 应用动作统一走 PatchCacheCard（独立于检查更新，随时可应用已缓存补丁）
  */
 function PatchUpdateButton({
-  aggregate, appVersion, onMessage, onProgress, onExit,
+  aggregate, appVersion, onMessage, onProgress,
 }: {
   aggregate: any;
   appVersion: string;
   onMessage: (m: string) => void;
   onProgress: (p: any) => void;
-  onExit: () => void;
 }) {
   const [preview, setPreview] = useState<{
     available: boolean;
@@ -1654,77 +1659,133 @@ function PatchUpdateButton({
     fullSizeMB?: number;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cached, setCached] = useState(false);
 
   useEffect(() => {
     if (!aggregate?.winner) { setPreview(null); return; }
     const winner = aggregate.winner;
     if (!winner.hasUpdate) { setPreview(null); return; }
-    const manifest = {
-      version: winner.latestVersion,
-      size: winner.sha256 ? winner.size : undefined, // 主进程没传 size 就从 winner 取
-      sha256: winner.sha256,
-      url: winner.downloadUrl,
-      page: winner.pageUrl,
-      notes: winner.notes,
-      patches: [], // 真实补丁列表当前没塞进 winner；这里走 IPC 直查
-    };
     void (async () => {
       try {
-        // 用最新查到的 manifest 调一次 preview —— 实际补丁列表可以从扩展 winner 里读
-        // 当前简化：直接以 winner 当 manifest，patches 由 preview 接口读全部（前端已经能拿到）
-        // v1.1.6 协议：patches 列表在 winner 里以扩展属性传递
-        const extended = (aggregate.perSource || []).find((p: any) => p?.result?.latestVersion === winner.latestVersion)?.result || {};
         const r = await window.taskAPI.updater.patchPreview({
           version: winner.latestVersion,
-          patches: extended.patches || winner.patches || [],
-          size: winner.size || 90_000_000,
+          patches: winner.patches || [],
+          size: winner.size || winner.asarSize || 90_000_000,
         }, appVersion);
         setPreview(r as any);
+        // 该补丁是否已在缓存中（上次下载过）
+        const st = await window.taskAPI.updater.patchCacheState();
+        setCached(!!(st?.exists && st?.info && st.info.toVersion === winner.latestVersion));
       } catch { /* ignore */ }
     })();
   }, [aggregate?.winner?.latestVersion, aggregate?.checkedAt, appVersion]);
 
   if (!preview || preview.available === false) return null;
+  if (cached) return null; // 已在缓存 → 由 PatchCacheCard 接管
+
+  const download = async () => {
+    if (!preview.patch) return;
+    setBusy(true);
+    try {
+      onProgress({ running: true, percent: 0, received: 0, total: preview.patch.size || 0 });
+      const off = window.taskAPI.updater.onProgress((p: any) => {
+        if (p.phase === 'progress' && String(p.fileName || '').startsWith('patch-')) {
+          onProgress({ running: true, percent: p.percent || 0, received: p.received || 0, total: p.total || 0 });
+        }
+      });
+      const r = await window.taskAPI.updater.patchDownload(preview.patch);
+      off?.();
+      onProgress(null);
+      if (!r.ok) {
+        onMessage('补丁下载失败：' + (r.error || 'unknown'));
+        return;
+      }
+      setCached(true);
+      onMessage(`✓ 增量补丁 v${preview.patch.fromVersion} → v${r.state?.info?.toVersion || ''} 已下载到本地缓存（zip + manifest）。点击下方「应用补丁」立即升级。`);
+    } catch (e: any) {
+      onMessage(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button onClick={download} disabled={busy} className="btn-neon" title={`下载补丁 ${preview.sizeMB?.toFixed(1)} MB（整装 ${preview.fullSizeMB?.toFixed(0)} MB）`}>
+      <Package size={14} /> {busy ? '下载补丁中…' : `增量补丁 ${preview.sizeMB?.toFixed(1)} MB`}
+    </button>
+  );
+}
+
+/** v1.3.0 补丁缓存卡片：独立于「检查更新」，只要 update-cache 里有 zip+json 就能一键应用/清除 */
+function PatchCacheCard({ appVersion, onMessage }: { appVersion: string; onMessage: (m: string) => void }) {
+  const [state, setState] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    try { setState(await window.taskAPI.updater.patchCacheState()); } catch { /* ignore */ }
+  };
+  useEffect(() => { void refresh(); }, []);
+
+  if (!state?.exists || !state?.info) return null;
+  const info = state.info;
+  const fromMe = info.fromVersion === appVersion;
 
   const apply = async () => {
-    if (!preview.patch) return;
     if (!confirm(
-      `即将下载增量补丁 ${preview.sizeMB?.toFixed(1)} MB 并自动重启应用。\n\n` +
-      `⚠ 应用开始后 App 会自动退出，所有未保存的数据会丢失。\n\n` +
-      `确定继续？`
+      `应用增量补丁 v${info.fromVersion} → v${info.toVersion}（${(info.size / 1048576).toFixed(1)} MB）？\n\n` +
+      `⚠ 应用时 App 会自动退出并重启，未保存的数据会丢失。`
     )) return;
     setBusy(true);
     try {
-      onProgress({ running: true, percent: 0, received: 0, total: 0 });
-      // 通过 update:progress 订阅补丁下载进度
-      const off = window.taskAPI.updater.onProgress((p: any) => {
-        if (p.phase === 'progress' && p.fileName && /patch\.zip$/.test(String(p.fileName))) {
-          onProgress({ running: true, percent: p.percent || 0, received: p.received || 0, total: p.total || 0 });
-        } else if (p.phase === 'done' && p.note) {
-          onProgress({ running: false, percent: 100, received: p.received || 0, total: p.total || 0 });
-        }
-      });
-      const r = await window.taskAPI.updater.patchApply(preview.patch);
-      off?.();
+      const r = await window.taskAPI.updater.patchApplyCached();
       if (!r.ok) {
-        onMessage('补丁应用失败：' + (r.error || 'unknown') + '——自动回退到整装下载');
-        onProgress(null);
+        onMessage('应用失败：' + (r.error || 'unknown'));
         setBusy(false);
         return;
       }
-      // 等待 1.5s 让 helper 准备充分，主进程在 600ms 后退出
-      onMessage(`补丁已启动（helper pid=${r.helperPid || '?'}），主进程将在 <1 秒内退出…`);
-      setTimeout(() => { onExit(); }, 1500);
+      onMessage('补丁已启动（helper 进程接管），App 即将退出并重启…');
     } catch (e: any) {
       onMessage(String(e?.message || e));
       setBusy(false);
     }
   };
 
+  const clear = async () => {
+    if (!confirm('删除已缓存的补丁（zip + manifest）？')) return;
+    await window.taskAPI.updater.patchClearCache();
+    onMessage('已清除补丁缓存');
+    void refresh();
+  };
+
   return (
-    <button onClick={apply} disabled={busy} className="btn-neon" title={`下载补丁 ${preview.sizeMB?.toFixed(1)} MB（整装 ${preview.fullSizeMB?.toFixed(0)} MB）`}>
-      <Package size={14} /> {busy ? '应用补丁中…' : `增量补丁 ${preview.sizeMB?.toFixed(1)} MB`}
-    </button>
+    <div className="mt-3 p-3 rounded-lg border border-neon-green/30 bg-neon-green/5 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 font-mono text-xs">
+          <Package size={14} className="text-neon-green" />
+          <span className="text-neon-green">已下载的增量更新</span>
+          <span className="text-text-dim">v{info.fromVersion} → v{info.toVersion} · {(info.size / 1048576).toFixed(1)} MB</span>
+        </div>
+        <span className="font-mono text-[10px] text-text-dim">{new Date(info.downloadedAt).toLocaleString()}</span>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {state.zipOk === false && (
+          <span className="font-mono text-[10px] text-neon-danger bg-neon-danger/5 border border-neon-danger/30 rounded px-2 py-1">
+            ✗ zip 校验失败，请清除后重新下载
+          </span>
+        )}
+        {state.zipOk !== false && !fromMe && (
+          <span className="font-mono text-[10px] text-neon-yellow bg-neon-yellow/5 border border-neon-yellow/30 rounded px-2 py-1">
+            当前 v{appVersion} 与补丁起点 v{info.fromVersion} 不一致，应用会被拒绝
+          </span>
+        )}
+        <div className="flex-1" />
+        <button onClick={apply} disabled={busy || state.zipOk === false || !fromMe} className="btn-neon text-xs py-1">
+          {busy ? '应用中…' : '应用补丁并重启'}
+        </button>
+        <button onClick={clear} className="btn-ghost text-xs py-1 text-text-dim">
+          <Trash2 size={12} /> 清除缓存
+        </button>
+      </div>
+    </div>
   );
 }
 

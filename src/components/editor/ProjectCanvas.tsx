@@ -1,22 +1,22 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, Panel,
   applyNodeChanges, applyEdgeChanges, addEdge,
   type Node, type Edge, type NodeChange, type EdgeChange, type Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2, Workflow as WorkflowIcon, ArrowLeft, Undo2, Redo2, Upload } from 'lucide-react';
-import type { Canvas, CanvasNode as DbCanvasNode, CanvasEdge as DbCanvasEdge, CanvasNodeType, CanvasEdgeType } from '@/types';
-import NodeToolbox from '@/components/editor/NodeToolbox';
-import PropertiesPanel from '@/components/editor/PropertiesPanel';
-import EdgeContextMenu from '@/components/editor/EdgeContextMenu';
-import { nodeTypes } from '@/components/editor/nodes';
-import { edgeTypes } from '@/components/editor/edges';
-import { detectCycle } from '@/components/editor/cycleDetect';
-import { getEntityOpenPath } from '@/components/editor/nodeRegistry';
-import { History, reconcileToSnapshot, type ExportPayload } from '@/components/editor/history';
-import { ExportButton, ImportModal } from '@/components/editor/ImportExport';
+import { Undo2, Redo2, Upload, Workflow as WorkflowIcon } from 'lucide-react';
+import type { Project, Canvas, CanvasNode as DbCanvasNode, CanvasEdge as DbCanvasEdge, CanvasNodeType, CanvasEdgeType } from '@/types';
+import NodeToolbox from './NodeToolbox';
+import PropertiesPanel from './PropertiesPanel';
+import EdgeContextMenu from './EdgeContextMenu';
+import { nodeTypes } from './nodes';
+import { edgeTypes } from './edges';
+import { detectCycle } from './cycleDetect';
+import { getEntityOpenPath } from './nodeRegistry';
+import { History, reconcileToSnapshot, type ExportPayload } from './history';
+import { ExportButton, ImportModal } from './ImportExport';
 
 const TYPE_META: Record<CanvasNodeType, { label: string; color: string }> = {
   task:     { label: '任务',   color: '#00FF88' },
@@ -45,7 +45,6 @@ function dbToFlowNodes(dbNodes: DbCanvasNode[]): Node[] {
         nodeType: n.node_type,
         color: extra.color || meta.color,
         notes: extra.notes || '',
-        /** v1.2.1 块 6：关联业务实体 */
         entity_id: n.entity_id ?? null,
       },
     };
@@ -57,7 +56,6 @@ function dbToFlowEdges(dbEdges: DbCanvasEdge[]): Edge[] {
     id: String(e.id),
     source: String(e.source_node_id),
     target: String(e.target_node_id),
-    /** xyflow edge.type === edge.edge_type（让 ReactFlow 选对应的自定义 edge 组件） */
     type: e.edge_type,
     label: e.label || undefined,
     data: { edgeType: e.edge_type, dbId: e.id, hovered: false },
@@ -68,10 +66,8 @@ type Selection =
   | { kind: 'node'; node: Node }
   | { kind: 'edge'; edge: Edge };
 
-function EditorInner() {
-  const { canvasId: canvasIdParam } = useParams();
+function ProjectCanvasInner({ project }: { project: Project }) {
   const navigate = useNavigate();
-  const [canvases, setCanvases] = useState<Canvas[]>([]);
   const [currentCanvas, setCurrentCanvas] = useState<Canvas | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -79,64 +75,47 @@ function EditorInner() {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const [loading, setLoading] = useState(false);
-  /** 用于拖拽节流：拖动中只更内存坐标，松手时落库 */
   const dragRef = useRef<Array<{ id: number; pos_x: number; pos_y: number }>>([]);
-  /** v1.2.1 块 7：撤销重做栈 */
   const historyRef = useRef(new History());
-  /** 强制刷新，让 Undo/Redo 按钮 enabled 状态正确 */
   const [, forceUpdate] = useState({});
   const [importOpen, setImportOpen] = useState(false);
   const bumpHistory = () => forceUpdate({});
 
-  // 加载画布列表
+  // v1.3.0：一项目一画布 —— 取该项目的画布，没有则自动创建（自动命名，不走 window.prompt —— Electron 下 prompt 不可用）
   useEffect(() => {
+    let alive = true;
     (async () => {
-      try {
-        const list = (await window.taskAPI.db.canvases.list()) || [];
-        setCanvases(list);
-        if (canvasIdParam) {
-          const c = list.find((x: Canvas) => String(x.id) === canvasIdParam);
-          if (c) setCurrentCanvas(c);
-        } else if (list.length > 0) {
-          setCurrentCanvas(list[0]);
-          navigate(`/editor/${list[0].id}`, { replace: true });
-        }
-      } catch (e) {
-        console.error('canvases.list failed:', e);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 加载节点 + 边
-  useEffect(() => {
-    if (!currentCanvas) {
+      setCurrentCanvas(null);
       setNodes([]);
       setEdges([]);
-      return;
-    }
-    (async () => {
-      setLoading(true);
+      setSelection(null);
+      historyRef.current.clear();
       try {
+        let c = (await window.taskAPI.db.canvases.getByProject(project.id)) as Canvas | null;
+        if (!alive) return;
+        if (!c) {
+          c = (await window.taskAPI.db.canvases.create({
+            name: `${project.name} · 画布`,
+            project_id: project.id,
+          })) as Canvas;
+        }
+        if (!alive) return;
+        setCurrentCanvas(c);
         const [ns, es] = await Promise.all([
-          window.taskAPI.db.canvasNodes.listByCanvas(currentCanvas.id),
-          window.taskAPI.db.canvasEdges.listByCanvas(currentCanvas.id),
+          window.taskAPI.db.canvasNodes.listByCanvas(c.id),
+          window.taskAPI.db.canvasEdges.listByCanvas(c.id),
         ]);
+        if (!alive) return;
         setNodes(dbToFlowNodes(ns || []));
         setEdges(dbToFlowEdges(es || []));
-        // v1.2.1 块 7：切换画布清空历史
-        historyRef.current.clear();
-        bumpHistory();
       } catch (e) {
-        console.error('load nodes/edges failed:', e);
-      } finally {
-        setLoading(false);
+        console.error('project canvas load failed:', e);
       }
     })();
-  }, [currentCanvas?.id]);
+    return () => { alive = false; };
+  }, [project.id]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    // v1.2.1 块 7：删除节点是可撤销操作，删除前记录快照
     const isRemove = changes.some((c) => c.type === 'remove');
     if (isRemove) {
       historyRef.current.push({ nodes, edges });
@@ -146,7 +125,6 @@ function EditorInner() {
     for (const c of changes) {
       if (c.type === 'position' && c.position) {
         if (c.dragging) {
-          // 拖动中：缓存，松手时批量落库（一次 IPC 多条）
           const existing = dragRef.current.find((x) => x.id === Number(c.id));
           if (existing) {
             existing.pos_x = c.position.x;
@@ -155,7 +133,6 @@ function EditorInner() {
             dragRef.current.push({ id: Number(c.id), pos_x: c.position.x, pos_y: c.position.y });
           }
         } else {
-          // 拖完：立即落库 + 清缓存
           window.taskAPI.db.canvasNodes.updatePositions([{ id: Number(c.id), pos_x: c.position.x, pos_y: c.position.y }]);
           dragRef.current = dragRef.current.filter((x) => x.id !== Number(c.id));
         }
@@ -167,7 +144,6 @@ function EditorInner() {
   }, [nodes, edges]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    // v1.2.1 块 7：删除连线是可撤销操作
     const isRemove = changes.some((c) => c.type === 'remove');
     if (isRemove) {
       historyRef.current.push({ nodes, edges });
@@ -184,7 +160,6 @@ function EditorInner() {
   const onConnect = useCallback(
     async (conn: Connection) => {
       if (!currentCanvas || !conn.source || !conn.target) return;
-      // v1.2.1 块 6：保存前检测循环依赖（DFS 3-coloring）
       const cycle = detectCycle(
         nodes.map((n) => ({ id: n.id })),
         edges.map((e) => ({ source: e.source, target: e.target })),
@@ -195,7 +170,6 @@ function EditorInner() {
         window.alert(`该连线会形成循环依赖：\n${path}\n\n请先断开环路中的一条连线。`);
         return;
       }
-      // v1.2.1 块 7：创建连线前记录快照
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       try {
@@ -236,7 +210,6 @@ function EditorInner() {
         x: event.clientX - rect.left - 100,
         y: event.clientY - rect.top - 40,
       };
-      // v1.2.1 块 7：新建节点前记录快照
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       try {
@@ -269,7 +242,7 @@ function EditorInner() {
         console.error('drop create failed:', e);
       }
     },
-    [currentCanvas],
+    [currentCanvas, nodes, edges],
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -277,16 +250,12 @@ function EditorInner() {
     event.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  /* === 选中态 === */
   const onNodeClick = useCallback((_: any, node: Node) => setSelection({ kind: 'node', node }), []);
   const onEdgeClick = useCallback((_: any, edge: Edge) => setSelection({ kind: 'edge', edge }), []);
   const onPaneClick = useCallback(() => setSelection(null), []);
-
-  /* === hover 高亮相关连线 === */
   const onNodeMouseEnter = useCallback((_: any, node: Node) => setHoveredNodeId(node.id), []);
   const onNodeMouseLeave = useCallback(() => setHoveredNodeId(null), []);
 
-  /** 给每条边注入 hovered 标记：hover 节点 / 选中节点关联的边为 true */
   const decoratedEdges = useMemo(() => {
     const targetId = hoveredNodeId ?? (selection?.kind === 'node' ? selection.node.id : null);
     if (!targetId) return edges;
@@ -296,7 +265,6 @@ function EditorInner() {
     }));
   }, [edges, hoveredNodeId, selection]);
 
-  /* === 右键菜单 === */
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault();
     setSelection({ kind: 'edge', edge });
@@ -306,12 +274,10 @@ function EditorInner() {
   const changeEdgeType = useCallback(
     async (edgeId: string, newType: CanvasEdgeType) => {
       if (!currentCanvas) return;
-      // v1.2.1 块 7：改线型前记录快照
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       const edge = edges.find((e) => e.id === edgeId);
       if (!edge) return;
-      // 乐观更新内存 + 落库
       setEdges((prev) =>
         prev.map((e) => (e.id === edgeId ? { ...e, type: newType, data: { ...e.data, edgeType: newType } } : e)),
       );
@@ -332,7 +298,6 @@ function EditorInner() {
 
   const deleteEdge = useCallback(
     async (edgeId: string) => {
-      // v1.2.1 块 7：删连线前记录快照
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       setEdges((prev) => prev.filter((e) => e.id !== edgeId));
@@ -347,7 +312,7 @@ function EditorInner() {
     [nodes, edges],
   );
 
-  /* v1.2.1 块 6：节点右上角 ExternalLink → 跳转到 Courses/Calendar/Projects 详情 */
+  /* 节点右上角 ExternalLink → 跳转业务实体页 */
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail as { nodeType: CanvasNodeType; entity_id: number };
@@ -359,7 +324,6 @@ function EditorInner() {
     return () => window.removeEventListener('canvas:openEntity', handler);
   }, [navigate]);
 
-  /* v1.2.1 块 7：Ctrl+Z / Ctrl+Y 全局快捷键 */
   const performUndo = useCallback(async () => {
     if (!currentCanvas) return;
     const snap = historyRef.current.undo({ nodes, edges });
@@ -367,7 +331,6 @@ function EditorInner() {
     setNodes(snap.nodes);
     setEdges(snap.edges);
     bumpHistory();
-    // 同步 DB：删除当前所有 → 按快照重新插入
     setLoading(true);
     try {
       await reconcileToSnapshot(currentCanvas.id, snap);
@@ -397,7 +360,6 @@ function EditorInner() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // 在输入框内不拦截
       const t = e.target as HTMLElement | null;
       const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
       if (inField) return;
@@ -414,13 +376,11 @@ function EditorInner() {
     return () => window.removeEventListener('keydown', handler);
   }, [performUndo, performRedo]);
 
-  /** v1.2.1 块 7：导入 JSON — replace=true 则清空当前画布重建 */
   const handleImport = useCallback(
     async (payload: ExportPayload, replace: boolean) => {
       if (!currentCanvas) return;
       try {
         if (replace) {
-          // 清空现有节点/边
           const [curN, curE] = await Promise.all([
             window.taskAPI.db.canvasNodes.listByCanvas(currentCanvas.id),
             window.taskAPI.db.canvasEdges.listByCanvas(currentCanvas.id),
@@ -428,10 +388,8 @@ function EditorInner() {
           for (const n of curN) await window.taskAPI.db.canvasNodes.delete(n.id);
           for (const e of curE) await window.taskAPI.db.canvasEdges.delete(e.id);
         }
-        // 记录快照（导入前）
         historyRef.current.push({ nodes, edges });
         bumpHistory();
-        // 按顺序插入
         for (const n of payload.nodes) {
           await window.taskAPI.db.canvasNodes.create({
             canvas_id: currentCanvas.id,
@@ -453,7 +411,6 @@ function EditorInner() {
             data: e.data || {},
           });
         }
-        // 重新拉取
         const [ns, es] = await Promise.all([
           window.taskAPI.db.canvasNodes.listByCanvas(currentCanvas.id),
           window.taskAPI.db.canvasEdges.listByCanvas(currentCanvas.id),
@@ -468,38 +425,11 @@ function EditorInner() {
     [currentCanvas, nodes, edges],
   );
 
-  const createCanvas = async () => {
-    const name = window.prompt('新画布名称', '未命名画布');
-    if (!name || !name.trim()) return;
-    try {
-      const c = await window.taskAPI.db.canvases.create({ name: name.trim() });
-      setCanvases((prev) => [c, ...prev]);
-      setCurrentCanvas(c);
-      navigate(`/editor/${c.id}`, { replace: true });
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const deleteCanvas = async () => {
-    if (!currentCanvas) return;
-    if (!window.confirm(`删除画布「${currentCanvas.name}」？所有节点和连线将一并删除。`)) return;
-    try {
-      await window.taskAPI.db.canvases.delete(currentCanvas.id);
-      setCanvases((prev) => prev.filter((x) => x.id !== currentCanvas.id));
-      setCurrentCanvas(null);
-      navigate('/editor', { replace: true });
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   const updateNode = useCallback(
     async (
       id: number,
       patch: { title?: string; color?: string; notes?: string; node_type?: CanvasNodeType; entity_id?: number | null },
     ) => {
-      // v1.2.1 块 7：属性修改前记录快照（注意：频繁输入框 onChange 也会触发；UI 层 PropertiesPanel 已 onBlur 节流）
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       setNodes((prev) =>
@@ -536,12 +466,10 @@ function EditorInner() {
       id: number,
       patch: { edge_type?: CanvasEdgeType; label?: string | null },
     ) => {
-      // v1.2.1 块 7：属性修改前记录快照
       historyRef.current.push({ nodes, edges });
       bumpHistory();
       const edge = edges.find((e) => e.id === String(id));
       if (!edge || !currentCanvas) return;
-      // 乐观更新
       const nextType = patch.edge_type ?? (edge.type as CanvasEdgeType) ?? 'sequence';
       const nextLabel = patch.label === undefined ? edge.label : patch.label;
       setEdges((prev) =>
@@ -566,7 +494,6 @@ function EditorInner() {
   );
 
   const deleteNode = useCallback(async (id: number) => {
-    // v1.2.1 块 7：删除节点前记录快照
     historyRef.current.push({ nodes, edges });
     bumpHistory();
     try {
@@ -581,82 +508,40 @@ function EditorInner() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="h-12 px-3 flex items-center gap-2 border-b border-neon-green/15 bg-ink-900/60 backdrop-blur shrink-0">
-        <button
-          onClick={() => navigate('/projects')}
-          className="btn-ghost text-xs"
-          title="返回项目"
-        >
-          <ArrowLeft size={14} />
+      {/* 轻量顶栏：项目画布标识 + 撤销/重做 + 导入导出 + 统计 */}
+      <div className="h-10 px-3 flex items-center gap-2 border-b border-neon-green/15 bg-ink-900/60 backdrop-blur shrink-0">
+        <WorkflowIcon size={14} className="text-neon-green" />
+        <span className="text-xs font-mono uppercase tracking-wider text-text-secondary truncate max-w-[200px]" title={project.name}>
+          {project.name} · 画布
+        </span>
+        <div className="flex bg-ink-base/60 rounded border border-neon-green/20 overflow-hidden ml-1">
+          <button
+            onClick={performUndo}
+            disabled={!historyRef.current.canUndo()}
+            className="px-2 py-1 font-mono text-xs text-text-secondary hover:text-neon-green hover:bg-neon-green/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo2 size={11} />
+          </button>
+          <button
+            onClick={performRedo}
+            disabled={!historyRef.current.canRedo()}
+            className="px-2 py-1 font-mono text-xs text-text-secondary hover:text-neon-green hover:bg-neon-green/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors border-l border-neon-green/20"
+            title="重做 (Ctrl+Y)"
+          >
+            <Redo2 size={11} />
+          </button>
+        </div>
+        <button onClick={() => setImportOpen(true)} className="btn-ghost text-xs" title="从 JSON 导入">
+          <Upload size={12} />
         </button>
-        <WorkflowIcon size={16} className="text-neon-green" />
-        <span className="text-xs font-mono uppercase tracking-wider text-text-secondary">画布编辑器</span>
-        <select
-          value={currentCanvas?.id ? String(currentCanvas.id) : ''}
-          onChange={(e) => {
-            const id = e.target.value;
-            if (!id) {
-              setCurrentCanvas(null);
-              navigate('/editor', { replace: true });
-              return;
-            }
-            const c = canvases.find((x) => String(x.id) === id);
-            setCurrentCanvas(c || null);
-            navigate(`/editor/${id}`, { replace: true });
-          }}
-          className="input-neon w-64 text-xs"
-        >
-          <option value="">— 选择画布 —</option>
-          {canvases.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <button onClick={createCanvas} className="btn-neon text-xs">
-          <Plus size={12} /> 新建画布
-        </button>
-        {currentCanvas && (
-          <>
-            {/* v1.2.1 块 7：撤销 / 重做 */}
-            <div className="flex bg-ink-base/60 rounded border border-neon-green/20 overflow-hidden ml-1">
-              <button
-                onClick={performUndo}
-                disabled={!historyRef.current.canUndo()}
-                className="px-2 py-1 font-mono text-xs text-text-secondary hover:text-neon-green hover:bg-neon-green/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="撤销 (Ctrl+Z)"
-              >
-                <Undo2 size={11} />
-              </button>
-              <button
-                onClick={performRedo}
-                disabled={!historyRef.current.canRedo()}
-                className="px-2 py-1 font-mono text-xs text-text-secondary hover:text-neon-green hover:bg-neon-green/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors border-l border-neon-green/20"
-                title="重做 (Ctrl+Y)"
-              >
-                <Redo2 size={11} />
-              </button>
-            </div>
-            <button onClick={() => setImportOpen(true)} className="btn-ghost text-xs" title="从 JSON 导入">
-              <Upload size={12} />
-            </button>
-            <ExportButton
-              canvasName={currentCanvas.name}
-              canvasDescription={currentCanvas.description}
-              viewport={{ x: currentCanvas.viewport_x, y: currentCanvas.viewport_y, zoom: currentCanvas.viewport_zoom }}
-              nodes={nodes}
-              edges={edges}
-            />
-            <button
-              onClick={deleteCanvas}
-              className="btn-ghost text-xs"
-              style={{ color: '#FF3366' }}
-              title="删除当前画布"
-            >
-              <Trash2 size={12} />
-            </button>
-          </>
-        )}
+        <ExportButton
+          canvasName={currentCanvas?.name || `${project.name} · 画布`}
+          canvasDescription={currentCanvas?.description}
+          viewport={currentCanvas ? { x: currentCanvas.viewport_x, y: currentCanvas.viewport_y, zoom: currentCanvas.viewport_zoom } : { x: 0, y: 0, zoom: 1 }}
+          nodes={nodes}
+          edges={edges}
+        />
         <div className="flex-1" />
         <span className="text-[10px] text-text-dim font-mono">
           {nodes.length} 节点 · {edges.length} 连线
@@ -703,11 +588,8 @@ function EditorInner() {
             </ReactFlow>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-text-dim gap-3">
-              <WorkflowIcon size={56} className="opacity-30" />
-              <div className="text-sm font-mono">还没有画布</div>
-              <button onClick={createCanvas} className="btn-neon text-xs">
-                <Plus size={12} /> 新建画布
-              </button>
+              <WorkflowIcon size={48} className="opacity-30" />
+              <div className="text-sm font-mono">画布加载中…</div>
             </div>
           )}
         </div>
@@ -746,11 +628,11 @@ function EditorInner() {
   );
 }
 
-/** v1.2.1 画布编辑器：ReactFlowProvider 包外层，避免 hooks 在 Router context 外 */
-export default function EditorPage() {
+/** v1.3.0 项目画布：每个项目自带一张画布（canvases.project_id 绑定），嵌入 Projects 页 */
+export default function ProjectCanvas(props: { project: Project }) {
   return (
     <ReactFlowProvider>
-      <EditorInner />
+      <ProjectCanvasInner {...props} />
     </ReactFlowProvider>
   );
 }

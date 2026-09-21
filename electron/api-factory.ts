@@ -16,6 +16,22 @@ export type UpdateSourceDTO = {
   password?: string;
 };
 
+/** v1.3.0：补丁持久缓存状态（zip + patch-info.json） */
+export type PatchCacheStateDTO = {
+  exists: boolean;
+  info?: {
+    fromVersion: string;
+    toVersion: string;
+    sha256: string;
+    size: number;
+    baseAsarSha256: string;
+    appAsarSha256: string;
+    downloadedAt: number;
+    zipPath: string;
+  };
+  zipOk?: boolean | null;
+};
+
 export type Invoke = (channel: string, ...args: any[]) => Promise<any>;
 export type Send = (channel: string, ...args: any[]) => void;
 /** 订阅主进程 → 渲染层事件；返回取消订阅函数 */
@@ -97,6 +113,8 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       canvases: {
         list: () => invoke('db:canvases:list'),
         get: (id: number) => invoke('db:canvases:get', id),
+        /** v1.3.0：画布并入项目 —— 按项目取画布 */
+        getByProject: (projectId: number) => invoke('db:canvases:getByProject', projectId),
         create: (data: any) => invoke('db:canvases:create', data),
         update: (id: number, data: any) => invoke('db:canvases:update', id, data),
         delete: (id: number) => invoke('db:canvases:delete', id),
@@ -195,6 +213,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
           sourceName?: string;
           checkedAt?: number;
           latencyMs?: number;
+          /** v1.3.0：增量补丁清单（优先走补丁更新） */
+          patches?: any[] | null;
+          asarSize?: number | null;
+          size?: number | null;
         } | null;
         perSource: Array<{
           source: UpdateSourceDTO;
@@ -259,6 +281,24 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         baseline?: { expected: string; actual: string };
         message?: string;
       }>,
+      /** v1.3.0：缓存式补丁更新 —— 只下载 zip+json 到 userData/update-cache，不退出 */
+      patchDownload: (patch: any) =>
+        invoke('update:patch:download', patch) as Promise<{
+          ok: boolean;
+          error?: string;
+          state?: PatchCacheStateDTO;
+        }>,
+      /** v1.3.0：查询补丁缓存（设置页"已下载的更新"卡片） */
+      patchCacheState: () => invoke('update:patch:cacheState') as Promise<PatchCacheStateDTO>,
+      /** v1.3.0：应用缓存补丁（校验 → helper → 重启） */
+      patchApplyCached: () => invoke('update:patch:applyCached') as Promise<{
+        ok: boolean;
+        error?: string;
+        state?: PatchCacheStateDTO;
+        helperPid?: number;
+      }>,
+      /** v1.3.0：清空补丁缓存 */
+      patchClearCache: () => invoke('update:patch:clearCache') as Promise<{ ok: boolean }>,
       /** 兼容旧 API：用单源替换（保留旧行为） */
       setSource: (source: string) => invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: UpdateSourceDTO[] }>,
       /** 新 API：整体保存多源 + 切换主源 */

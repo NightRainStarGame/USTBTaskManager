@@ -6,20 +6,52 @@
    主题系统（v1.1.5 引入）
    - 用 CSS 变量定义主题色，Tailwind 通过 rgb(var(--xxx) / <alpha-value>)
      实现 opacity 修饰符（bg-neon-green/40 等）正常工作
-   - 默认 neon-green；[data-theme="starry"] 切换为青蓝荧光
+   - 默认 aurora（v1.3.0）；可选：starry / neon-green / sakura / glass-light / glass-dark
    - 切换方法：document.documentElement.dataset.theme = 'starry'
    ============================================================ */
 
 @layer base {
-  /* 默认主题：霓虹绿 */
+  /* v1.3.0 默认主题：aurora 极光 —— 深空蓝黑底 + 极光青主色 + 青/紫/粉三色极光光斑 */
   :root,
+  [data-theme="aurora"] {
+    --c-primary-rgb: 77 255 243;
+    --c-primary-bright-rgb: 159 252 255;
+    --c-primary-dim-rgb: 43 217 204;
+    --c-primary-deep-rgb: 14 156 146;
+    --c-primary: #4DFFF3;
+    --c-primary-bright: #9FFCFF;
+    --c-bg-deep: #05070F;
+    --c-bg-glow: rgba(77, 255, 243, 0.07);
+    --c-text: #E4F6F6;
+    --c-text-secondary: #7F9FB3;
+    --c-text-dim: #3F5B6E;
+    --c-ink-base-rgb: 4 7 15;
+    --c-ink-900-rgb: 8 14 26;
+    --c-ink-800-rgb: 13 21 38;
+    --c-ink-700-rgb: 19 30 52;
+    --c-ink-600-rgb: 27 41 68;
+    --c-ink-500-rgb: 36 54 87;
+    --c-warn-rgb: 255 234 0;
+    --c-warn-bright-rgb: 255 255 102;
+    --c-warn-dim-rgb: 204 186 0;
+
+    /* 深色版渐变组（极光三色：青 → 紫 → 粉） */
+    --c-grad-card: linear-gradient(135deg, rgba(77,255,243,0.055) 0%, rgba(139,124,255,0.05) 50%, rgba(255,118,203,0.04) 100%);
+    --c-grad-button: linear-gradient(180deg, rgba(77,255,243,0.16) 0%, rgba(43,217,204,0.07) 100%);
+    --c-grad-button-hover: linear-gradient(180deg, rgba(77,255,243,0.28) 0%, rgba(43,217,204,0.14) 100%);
+    --c-grad-title: linear-gradient(90deg, #4DFFF3 0%, #8B7CFF 55%, #FF76CB 100%);
+    --c-grad-status: linear-gradient(180deg, rgba(77,255,243,0.8) 0%, rgba(77,255,243,0) 100%);
+    --c-grad-divider: linear-gradient(90deg, transparent 0%, rgba(77,255,243,0.36) 42%, rgba(139,124,255,0.36) 58%, transparent 100%);
+    --c-text-strong: #F2FFFE;
+    --c-accent-glow: rgba(77, 255, 243, 0.4);
+  }
+
+  /* 霓虹绿（原默认，v1.3.0 起改为可选主题） */
   [data-theme="neon-green"] {
-    /* 主色 RGB 三元组（供 Tailwind rgb(var() / <alpha-value>) 用） */
     --c-primary-rgb: 0 255 136;
     --c-primary-bright-rgb: 0 255 200;
     --c-primary-dim-rgb: 0 184 107;
     --c-primary-deep-rgb: 0 143 77;
-    /* 兼容老用法：完整 hex */
     --c-primary: #00FF88;
     --c-primary-bright: #00FFC8;
     --c-bg-deep: #000000;
@@ -27,14 +59,12 @@
     --c-text: #E8FFEE;
     --c-text-secondary: #8FA89B;
     --c-text-dim: #4A5C52;
-    /* v1.1.6：背景层级变量（原 tailwind 硬编码墨色，现随主题走） */
     --c-ink-base-rgb: 0 0 0;
     --c-ink-900-rgb: 10 15 13;
     --c-ink-800-rgb: 16 24 21;
     --c-ink-700-rgb: 26 36 32;
     --c-ink-600-rgb: 36 48 41;
     --c-ink-500-rgb: 47 61 54;
-    /* v1.1.6：警示黄变量（更新提示；sakura 浅底换琥珀） */
     --c-warn-rgb: 255 234 0;
     --c-warn-bright-rgb: 255 255 102;
     --c-warn-dim-rgb: 204 186 0;
@@ -100,6 +130,72 @@
     --c-accent-glow: rgba(233, 64, 133, 0.45);
   }
 
+  /* v1.3.0 玻璃 · 浅色（Windows 11 Fluent/Mica 风）：云母浅灰底 + Windows 蓝主色 + 白色亚克力 */
+  [data-theme="glass-light"] {
+    --c-primary-rgb: 0 103 192;
+    --c-primary-bright-rgb: 36 146 236;
+    --c-primary-dim-rgb: 0 91 161;
+    --c-primary-deep-rgb: 0 78 140;
+    --c-primary: #0067C0;
+    --c-primary-bright: #2492EC;
+    --c-bg-deep: #F3F3F3;
+    --c-bg-glow: rgba(0, 103, 192, 0.06);
+    --c-text: #1B1B1B;
+    --c-text-secondary: #5D5D5D;
+    --c-text-dim: #8A8A8A;
+    --c-ink-base-rgb: 243 243 243;
+    --c-ink-900-rgb: 238 238 238;
+    --c-ink-800-rgb: 233 233 233;
+    --c-ink-700-rgb: 226 226 226;
+    --c-ink-600-rgb: 217 217 217;
+    --c-ink-500-rgb: 204 204 204;
+    --c-warn-rgb: 178 104 0;
+    --c-warn-bright-rgb: 210 138 24;
+    --c-warn-dim-rgb: 140 82 0;
+
+    --c-grad-card: linear-gradient(135deg, rgba(255,255,255,0.60) 0%, rgba(243,243,243,0.44) 100%);
+    --c-grad-button: linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(228,228,228,0.78) 100%);
+    --c-grad-button-hover: linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(214,235,252,0.92) 100%);
+    --c-grad-title: linear-gradient(90deg, #004E8C 0%, #0067C0 50%, #2492EC 100%);
+    --c-grad-status: linear-gradient(180deg, rgba(0,103,192,0.85) 0%, rgba(0,103,192,0) 100%);
+    --c-grad-divider: linear-gradient(90deg, transparent 0%, rgba(0,103,192,0.30) 48%, rgba(36,146,236,0.30) 52%, transparent 100%);
+    --c-text-strong: #003E76;
+    --c-accent-glow: rgba(0, 103, 192, 0.30);
+  }
+
+  /* v1.3.0 玻璃 · 深色（Windows 11 Fluent/Mica 风）：云母石墨底 + 浅蓝主色 + 深色亚克力 */
+  [data-theme="glass-dark"] {
+    --c-primary-rgb: 76 194 255;
+    --c-primary-bright-rgb: 153 235 255;
+    --c-primary-dim-rgb: 41 168 222;
+    --c-primary-deep-rgb: 0 120 200;
+    --c-primary: #4CC2FF;
+    --c-primary-bright: #99EBFF;
+    --c-bg-deep: #202020;
+    --c-bg-glow: rgba(76, 194, 255, 0.05);
+    --c-text: #FFFFFF;
+    --c-text-secondary: #C8C8C8;
+    --c-text-dim: #8D8D8D;
+    --c-ink-base-rgb: 32 32 32;
+    --c-ink-900-rgb: 43 43 43;
+    --c-ink-800-rgb: 54 54 54;
+    --c-ink-700-rgb: 66 66 66;
+    --c-ink-600-rgb: 78 78 78;
+    --c-ink-500-rgb: 92 92 92;
+    --c-warn-rgb: 255 220 0;
+    --c-warn-bright-rgb: 255 236 102;
+    --c-warn-dim-rgb: 204 176 0;
+
+    --c-grad-card: linear-gradient(135deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.018) 100%);
+    --c-grad-button: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.028) 100%);
+    --c-grad-button-hover: linear-gradient(180deg, rgba(76,194,255,0.17) 0%, rgba(76,194,255,0.06) 100%);
+    --c-grad-title: linear-gradient(90deg, #2492EC 0%, #4CC2FF 50%, #99EBFF 100%);
+    --c-grad-status: linear-gradient(180deg, rgba(76,194,255,0.85) 0%, rgba(76,194,255,0) 100%);
+    --c-grad-divider: linear-gradient(90deg, transparent 0%, rgba(76,194,255,0.32) 48%, rgba(153,235,255,0.32) 52%, transparent 100%);
+    --c-text-strong: #FFFFFF;
+    --c-accent-glow: rgba(76, 194, 255, 0.35);
+  }
+
   html, body, #root {
     height: 100vh;
     margin: 0;
@@ -118,6 +214,153 @@
       radial-gradient(ellipse at 30% 0%, rgba(0,212,255,0.10) 0%, transparent 55%),
       radial-gradient(ellipse at 70% 100%, rgba(0,80,153,0.12) 0%, transparent 50%),
       var(--c-bg-deep);
+  }
+
+  /* v1.3.0 aurora：三色极光光斑背景（青 → 紫 → 粉，自左上向右下流动） */
+  [data-theme="aurora"] body {
+    background:
+      radial-gradient(ellipse at 12% -5%, rgba(77, 255, 243, 0.13) 0%, transparent 50%),
+      radial-gradient(ellipse at 85% 8%, rgba(139, 124, 255, 0.11) 0%, transparent 46%),
+      radial-gradient(ellipse at 55% 105%, rgba(255, 118, 203, 0.08) 0%, transparent 52%),
+      var(--c-bg-deep);
+  }
+
+  /* aurora：深色液态玻璃（柔和圆角 + 微渐变底 + 青色描边光） */
+  [data-theme="aurora"] .glass-panel {
+    background: var(--c-grad-card);
+    border: 1px solid rgba(77, 255, 243, 0.16);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(159, 252, 255, 0.08);
+  }
+  [data-theme="aurora"] .btn-neon {
+    background: var(--c-grad-button);
+    border: 1px solid rgba(77, 255, 243, 0.32);
+    overflow: hidden;
+    position: relative;
+  }
+  [data-theme="aurora"] .btn-neon:hover {
+    background: var(--c-grad-button-hover);
+    border-color: rgba(77, 255, 243, 0.6);
+    box-shadow: 0 0 18px rgba(77, 255, 243, 0.18);
+  }
+  [data-theme="aurora"] .btn-neon::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -60%;
+    width: 40%; height: 100%;
+    background: linear-gradient(105deg, transparent, rgba(159, 252, 255, 0.22), transparent);
+    transform: translateX(-60%);
+    transition: transform 0.5s ease;
+  }
+  [data-theme="aurora"] .btn-neon:hover::after { transform: translateX(280%); }
+  [data-theme="aurora"] .input-neon {
+    background: rgba(8, 14, 26, 0.72);
+    border: 1.5px solid rgba(77, 255, 243, 0.18);
+  }
+  [data-theme="aurora"] .input-neon:focus {
+    border-color: rgba(77, 255, 243, 0.66);
+    box-shadow: 0 0 0 3px rgba(77, 255, 243, 0.12), 0 0 16px rgba(77, 255, 243, 0.1);
+  }
+  [data-theme="aurora"] ::selection { background: rgb(var(--c-primary-rgb) / 0.28); }
+  [data-theme="aurora"] *::-webkit-scrollbar-thumb { background: rgba(77, 255, 243, 0.28); border-radius: 6px; }
+  [data-theme="aurora"] *::-webkit-scrollbar-thumb:hover { background: rgba(77, 255, 243, 0.5); }
+
+  /* ================= v1.3.0 玻璃主题（Windows 11 Fluent/Mica）=================
+     - body：云母质感底（大范围柔和径向光，不动、不闪，模拟 Mica 材质）
+     - .glass-panel：亚克力（Acrylic）——半透明 + blur + saturate + 顶部高光描边
+     - .btn-neon/.input-neon：Fluent 控件风（方角 6px、无霓虹光晕、hover 提亮） */
+  [data-theme="glass-light"] body {
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(255,255,255,0.85) 0%, transparent 48%),
+      radial-gradient(ellipse at 90% 100%, rgba(0,103,192,0.07) 0%, transparent 45%),
+      var(--c-bg-deep);
+  }
+  [data-theme="glass-dark"] body {
+    background:
+      radial-gradient(ellipse at 22% 0%, rgba(76,194,255,0.055) 0%, transparent 50%),
+      radial-gradient(ellipse at 85% 100%, rgba(255,255,255,0.03) 0%, transparent 45%),
+      var(--c-bg-deep);
+  }
+
+  [data-theme="glass-light"] .glass-panel {
+    background: var(--c-grad-card);
+    backdrop-filter: blur(30px) saturate(150%);
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.13),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  [data-theme="glass-dark"] .glass-panel {
+    background: var(--c-grad-card);
+    backdrop-filter: blur(30px) saturate(140%);
+    -webkit-backdrop-filter: blur(30px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.38),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  [data-theme="glass-light"] .btn-neon {
+    background: var(--c-grad-button);
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+  [data-theme="glass-light"] .btn-neon:hover {
+    background: var(--c-grad-button-hover);
+    border-color: rgba(0, 103, 192, 0.65);
+    box-shadow: 0 2px 8px rgba(0, 103, 192, 0.18);
+  }
+  [data-theme="glass-light"] .btn-neon:active { transform: translateY(0) scale(0.98); }
+  [data-theme="glass-dark"] .btn-neon {
+    background: var(--c-grad-button);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+  [data-theme="glass-dark"] .btn-neon:hover {
+    background: var(--c-grad-button-hover);
+    border-color: rgba(76, 194, 255, 0.65);
+    box-shadow: 0 2px 8px rgba(76, 194, 255, 0.15);
+  }
+  [data-theme="glass-dark"] .btn-neon:active { transform: translateY(0) scale(0.98); }
+
+  [data-theme="glass-light"] .input-neon {
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(0, 0, 0, 0.14);
+  }
+  [data-theme="glass-light"] .input-neon:focus {
+    border-color: #0067C0;
+    box-shadow: 0 0 0 1px #0067C0, 0 2px 6px rgba(0, 103, 192, 0.16);
+  }
+  [data-theme="glass-dark"] .input-neon {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  [data-theme="glass-dark"] .input-neon:focus {
+    border-color: #4CC2FF;
+    box-shadow: 0 0 0 1px #4CC2FF, 0 2px 6px rgba(76, 194, 255, 0.14);
+  }
+
+  [data-theme="glass-light"] ::selection { background: rgb(var(--c-primary-rgb) / 0.24); color: #103F68; }
+  [data-theme="glass-dark"] ::selection { background: rgb(var(--c-primary-rgb) / 0.30); color: #06283C; }
+
+  /* Fluent 风：滚动条更收敛（细 + 半透明灰） */
+  [data-theme="glass-light"] *::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.22); border-radius: 6px; }
+  [data-theme="glass-light"] *::-webkit-scrollbar-thumb:hover { background: rgba(0, 103, 192, 0.55); }
+  [data-theme="glass-dark"] *::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 6px; }
+  [data-theme="glass-dark"] *::-webkit-scrollbar-thumb:hover { background: rgba(76, 194, 255, 0.55); }
+
+  /* 荧光光晕在 Fluent 风下收敛为柔和小阴影 */
+  [data-theme="glass-light"] .text-glow,
+  [data-theme="glass-light"] .text-glow-green,
+  [data-theme="glass-light"] .text-glow-yellow {
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  }
+  [data-theme="glass-dark"] .text-glow,
+  [data-theme="glass-dark"] .text-glow-green,
+  [data-theme="glass-dark"] .text-glow-yellow {
+    text-shadow: 0 1px 6px rgba(76, 194, 255, 0.28);
   }
 
   /* 樱花粉 v4：背景光斑微降透明度（让浮起的玻璃面板有"前景感"） */

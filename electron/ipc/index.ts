@@ -286,21 +286,26 @@ function registerTasks(db: DB) {
   });
   ipcMain.handle('db:tasks:create', (_e, data) => {
     const stmt = db.prepare(
-      `INSERT INTO project_tasks (project_id, course_id, title, status, assignee, due_date, order_index, done_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO project_tasks (project_id, course_id, title, status, assignee, due_date, order_index, priority, description, done_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       data.project_id, data.course_id ?? null, data.title,
       data.status ?? 'todo', data.assignee ?? null,
       data.due_date ?? null, data.order_index ?? 0,
+      data.priority ?? 1, data.description ?? null,
       data.status === 'done' ? Date.now() : null
     );
     return db.prepare('SELECT * FROM project_tasks WHERE id = ?').get(info.lastInsertRowid);
   });
   ipcMain.handle('db:tasks:update', (_e, id, data) => {
     db.prepare(
-      `UPDATE project_tasks SET title=?, status=?, assignee=?, due_date=?, order_index=?, course_id=? WHERE id=?`
-    ).run(data.title, data.status, data.assignee, data.due_date, data.order_index, data.course_id, id);
+      `UPDATE project_tasks SET title=?, status=?, assignee=?, due_date=?, order_index=?, course_id=?, priority=COALESCE(?, priority), description=COALESCE(?, description) WHERE id=?`
+    ).run(
+      data.title, data.status, data.assignee, data.due_date,
+      data.order_index ?? 0, data.course_id,
+      data.priority ?? null, data.description ?? null, id
+    );
     // v1.1.9 自动清理：完成时间戳
     db.prepare(
       `UPDATE project_tasks SET done_at = CASE WHEN status = 'done' THEN COALESCE(done_at, ?) ELSE NULL END WHERE id = ?`
@@ -615,13 +620,17 @@ function registerCanvases(db: DB) {
   ipcMain.handle('db:canvases:get', (_e, id) =>
     db.prepare('SELECT * FROM canvases WHERE id = ?').get(id)
   );
+  // v1.3.0：画布并入项目 —— 按项目取画布（一项目一画布，取最新一条）
+  ipcMain.handle('db:canvases:getByProject', (_e, projectId: number) =>
+    db.prepare('SELECT * FROM canvases WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1').get(projectId)
+  );
   ipcMain.handle('db:canvases:create', (_e, data) => {
     const now = Date.now();
     const info = db.prepare(
-      `INSERT INTO canvases (name, description, viewport_x, viewport_y, viewport_zoom, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO canvases (name, description, project_id, viewport_x, viewport_y, viewport_zoom, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      data.name, data.description ?? null,
+      data.name, data.description ?? null, data.project_id ?? null,
       data.viewport_x ?? 0, data.viewport_y ?? 0, data.viewport_zoom ?? 1,
       now, now
     );
@@ -629,9 +638,9 @@ function registerCanvases(db: DB) {
   });
   ipcMain.handle('db:canvases:update', (_e, id, data) => {
     db.prepare(
-      `UPDATE canvases SET name=?, description=?, viewport_x=?, viewport_y=?, viewport_zoom=?, updated_at=? WHERE id=?`
+      `UPDATE canvases SET name=?, description=?, project_id=?, viewport_x=?, viewport_y=?, viewport_zoom=?, updated_at=? WHERE id=?`
     ).run(
-      data.name, data.description ?? null,
+      data.name, data.description ?? null, data.project_id ?? null,
       data.viewport_x ?? 0, data.viewport_y ?? 0, data.viewport_zoom ?? 1,
       Date.now(), id
     );

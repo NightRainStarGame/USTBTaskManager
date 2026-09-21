@@ -40,6 +40,10 @@ let events: any[] = [];
 let categories: Category[] = [];
 let projects: Project[] = [];
 let tasks: ProjectTask[] = [];
+// v1.3.0 画布内存存根
+let canvases: any[] = [];
+let canvasNodes: any[] = [];
+let canvasEdges: any[] = [];
 
 let settings: Record<string, any> = {
   theme: 'green',
@@ -193,6 +197,28 @@ export function createBrowserApi() {
         create: async (data: any) => { await delay(); const p: Project = { id: nextId(), created_at: Date.now(), status: 'active', progress: 0, ...data }; projects = [...projects, p]; return p; },
         update: async (id: number, data: any) => { await delay(); projects = projects.map((p) => (p.id === id ? { ...p, ...data } : p)); return projects.find((p) => p.id === id); },
         delete: async (id: number) => { await delay(); projects = projects.filter((p) => p.id !== id); tasks = tasks.filter((t) => t.project_id !== id); return { ok: true }; },
+      },
+      // v1.3.0 画布预览：内存存根（v1.3.0 一项目一画布）
+      canvases: {
+        list: async () => { await delay(); return [...canvases]; },
+        get: async (id: number) => { await delay(); return canvases.find((c) => c.id === id) ?? null; },
+        getByProject: async (projectId: number) => { await delay(); return canvases.find((c) => c.project_id === projectId) ?? null; },
+        create: async (data: any) => { await delay(); const c = { id: nextId(), created_at: Date.now(), updated_at: Date.now(), name: '画布', description: null, viewport_x: 0, viewport_y: 0, viewport_zoom: 1, ...data }; canvases = [...canvases, c]; return c; },
+        update: async (id: number, data: any) => { await delay(); canvases = canvases.map((c) => (c.id === id ? { ...c, ...data, updated_at: Date.now() } : c)); return canvases.find((c) => c.id === id) ?? null; },
+        delete: async (id: number) => { await delay(); canvases = canvases.filter((c) => c.id !== id); canvasNodes = canvasNodes.filter((n) => n.canvas_id !== id); canvasEdges = canvasEdges.filter((e) => e.canvas_id !== id); return { ok: true }; },
+      },
+      canvasNodes: {
+        listByCanvas: async (canvasId: number) => { await delay(); return canvasNodes.filter((n) => n.canvas_id === canvasId); },
+        create: async (data: any) => { await delay(); const n = { id: nextId(), ...data }; canvasNodes = [...canvasNodes, n]; return n; },
+        update: async (id: number, data: any) => { await delay(); canvasNodes = canvasNodes.map((n) => (n.id === id ? { ...n, ...data } : n)); return canvasNodes.find((n) => n.id === id) ?? null; },
+        updatePositions: async (rows: any[]) => { await delay(); for (const r of rows || []) { canvasNodes = canvasNodes.map((n) => (n.id === r.id ? { ...n, pos_x: r.pos_x, pos_y: r.pos_y } : n)); } return { ok: true }; },
+        delete: async (id: number) => { await delay(); canvasNodes = canvasNodes.filter((n) => n.id !== id); canvasEdges = canvasEdges.filter((e) => e.source_node_id !== id && e.target_node_id !== id); return { ok: true }; },
+      },
+      canvasEdges: {
+        listByCanvas: async (canvasId: number) => { await delay(); return canvasEdges.filter((e) => e.canvas_id === canvasId); },
+        create: async (data: any) => { await delay(); const e = { id: nextId(), ...data }; canvasEdges = [...canvasEdges, e]; return e; },
+        update: async (id: number, data: any) => { await delay(); canvasEdges = canvasEdges.map((e) => (e.id === id ? { ...e, ...data } : e)); return canvasEdges.find((e) => e.id === id) ?? null; },
+        delete: async (id: number) => { await delay(); canvasEdges = canvasEdges.filter((e) => e.id !== id); return { ok: true }; },
       },
       tasks: {
         list: async (filter?: any) => {
@@ -567,6 +593,12 @@ export function createBrowserApi() {
       download: async () => ({ ok: false, error: '(浏览器预览模式不支持下载安装包，请在桌面应用中使用)' }),
       cancel: async () => ({ ok: true }),
       install: async () => ({ ok: false, error: '(浏览器预览模式不支持安装，请在桌面应用中使用)' }),
+      // v1.3.0 补丁式更新预览存根：浏览器下都返回"不可用"，避免误触发
+      patchPreview: async () => ({ available: false, reason: 'browser_mock' }),
+      patchDownload: async () => ({ ok: false, error: '(浏览器预览模式不支持下载补丁)' }),
+      patchCacheState: async () => ({ exists: false, info: null, zipOk: false }),
+      patchApplyCached: async () => ({ ok: false, error: '(浏览器预览模式不支持应用补丁)' }),
+      patchClearCache: async () => ({ ok: true }),
       openExternal: async (url: string) => { window.open(url, '_blank', 'noopener'); return { ok: true }; },
       skipVersion: async (v: string) => { settings.update_skipped_version = v; return { ok: true }; },
       setSource: async (s: string) => {

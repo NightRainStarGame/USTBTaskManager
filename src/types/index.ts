@@ -129,6 +129,10 @@ export interface ProjectTask {
   due_date?: number | null;
   order_index: number;
   project_name?: string;
+  /** v1.3.0：优先级 0=低 1=中 2=高 3=紧急 */
+  priority?: number;
+  /** v1.3.0：任务描述/备注 */
+  description?: string | null;
 }
 
 export interface DashboardStats {
@@ -235,6 +239,8 @@ export interface Canvas {
   id: number;
   name: string;
   description?: string | null;
+  /** v1.3.0：画布归属项目（一项目一画布） */
+  project_id?: number | null;
   /** 视口 X（pan） */
   viewport_x: number;
   /** 视口 Y（pan） */

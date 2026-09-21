@@ -87,8 +87,9 @@ export async function currentAsarSha256(): Promise<string | null> {
 export async function downloadPatchZip(
   patch: PatchEntry,
   onProgress?: (p: { received: number; total: number; percent: number }) => void,
+  destDir?: string,
 ): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> {
-  const dir = path.join(os.tmpdir(), 'taskmgr-patch');
+  const dir = destDir ?? path.join(os.tmpdir(), 'taskmgr-patch');
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
   const filename = `${patch.fromVersion}-to-${(patch as any).toVersion || 'next'}.zip`;
   const dest = path.join(dir, filename);
@@ -255,4 +256,129 @@ export async function startPatchUpdate(
     patch,
     sizeMB: patch.size / 1024 / 1024,
   };
+}
+
+/* ========== v1.3.0 补丁持久缓存（zip + json，设置内一键应用） ========== */
+
+/** 缓存目录：userData/update-cache（跨重启保留，区别于 tmp） */
+export function patchCacheDir(): string {
+  return path.join(app.getPath('userData'), 'update-cache');
+}
+
+export interface PatchCacheState {
+  exists: boolean;
+  /** patch-info.json 内容（补丁元数据 + 下载时间） */
+  info?: {
+    fromVersion: string;
+    toVersion: string;
+    sha256: string;
+    size: number;
+    baseAsarSha256: string;
+    appAsarSha256: string;
+    downloadedAt: number;
+    zipPath: string;
+  };
+  /** zip 实际 sha256 校验是否通过（null = zip 文件缺失） */
+  zipOk?: boolean | null;
+  /** 基线（当前 asar 是否匹配补丁起点） */
+  baselineOk?: boolean;
+}
+
+/** 下载补丁到持久缓存（不退出应用）；zip + patch-info.json 一起落盘 */
+export async function downloadPatchToCache(
+  patch: PatchEntry & { toVersion?: string },
+  onProgress?: (p: { received: number; total: number; percent: number }) => void,
+): Promise<{ ok: boolean; error?: string; state?: PatchCacheState }> {
+  const dir = patchCacheDir();
+  const r = await downloadPatchZip(patch, onProgress, dir);
+  if (!r.ok) return { ok: false, error: r.error || '下载失败' };
+  const info = {
+    fromVersion: patch.fromVersion,
+    toVersion: (patch as any).toVersion || '',
+    sha256: patch.sha256,
+    size: patch.size,
+    baseAsarSha256: patch.baseAsarSha256,
+    appAsarSha256: patch.appAsarSha256,
+    downloadedAt: Date.now(),
+    zipPath: r.path!,
+  };
+  try {
+    fs.writeFileSync(path.join(dir, 'patch-info.json'), JSON.stringify(info, null, 2));
+  } catch (e: any) {
+    return { ok: false, error: '写补丁元数据失败：' + (e?.message || e) };
+  }
+  return { ok: true, state: readPatchCache() };
+}
+
+/** 读取缓存状态：info + zip sha256 复核 + 当前 asar 基线核对 */
+export function readPatchCache(): PatchCacheState {
+  const dir = patchCacheDir();
+  const infoPath = path.join(dir, 'patch-info.json');
+  if (!fs.existsSync(infoPath)) return { exists: false };
+  let info: PatchCacheState['info'];
+  try {
+    info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+  } catch {
+    return { exists: false };
+  }
+  if (!info?.zipPath || !fs.existsSync(info.zipPath)) {
+    return { exists: true, info, zipOk: null };
+  }
+  let zipOk = false;
+  try {
+    zipOk = sha256Hex(fs.readFileSync(info.zipPath)) === info.sha256.toLowerCase();
+  } catch { zipOk = false; }
+  return { exists: true, info, zipOk };
+}
+
+/** 应用缓存里的补丁：校验 zip → 基线核对 → spawn helper（不在此退出，由调用方决定） */
+export async function applyCachedPatch(): Promise<{ ok: boolean; error?: string; state?: PatchCacheState; helperPid?: number }> {
+  const dir = patchCacheDir();
+  const infoPath = path.join(dir, 'patch-info.json');
+  if (!fs.existsSync(infoPath)) return { ok: false, error: '没有已下载的补丁' };
+  let info: NonNullable<PatchCacheState['info']>;
+  try {
+    info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+  } catch {
+    return { ok: false, error: '补丁元数据损坏，请重新下载' };
+  }
+  if (!fs.existsSync(info.zipPath)) {
+    return { ok: false, error: '补丁 zip 缺失，请重新下载' };
+  }
+  const actual = sha256Hex(fs.readFileSync(info.zipPath));
+  if (actual !== info.sha256.toLowerCase()) {
+    return { ok: false, error: `补丁 zip 校验失败（期望 ${info.sha256.slice(0, 8)}… 实际 ${actual.slice(0, 8)}…），请重新下载` };
+  }
+  const cur = await currentAsarSha256();
+  if (cur && cur !== info.baseAsarSha256.toLowerCase()) {
+    return {
+      ok: false,
+      error: `当前版本基线不匹配（${cur.slice(0, 8)}… vs 补丁起点 ${info.baseAsarSha256.slice(0, 8)}…），补丁已过期，请走完整安装`,
+      state: readPatchCache(),
+    };
+  }
+  const entry: PatchEntry = {
+    fromVersion: info.fromVersion,
+    url: info.zipPath,
+    sha256: info.sha256,
+    size: info.size,
+    baseAsarSha256: info.baseAsarSha256,
+    appAsarSha256: info.appAsarSha256,
+  };
+  const spawned = spawnPatchHelper(info.zipPath, entry, { relaunch: true });
+  if (!spawned.ok) return { ok: false, error: 'helper 启动失败：' + (spawned.error || '') };
+  return { ok: true, helperPid: spawned.pid };
+}
+
+/** 清空补丁缓存 */
+export function clearPatchCache(): { ok: boolean } {
+  const dir = patchCacheDir();
+  try {
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch {}
+      }
+    }
+  } catch { /* ignore */ }
+  return { ok: true };
 }

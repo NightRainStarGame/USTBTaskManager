@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Calendar, BookOpen, FolderKanban, Settings, AppWindow, User, Workflow
+  LayoutDashboard, Calendar, BookOpen, FolderKanban, Settings, AppWindow, User
 } from 'lucide-react';
 import clsx from '../utils/clsx';
 import { useStore } from '@/store';
@@ -11,7 +11,6 @@ const items = [
   { to: '/calendar', label: '日历', icon: Calendar, key: 'calendar' },
   { to: '/courses', label: '课程', icon: BookOpen, key: 'courses' },
   { to: '/projects', label: '项目', icon: FolderKanban, key: 'projects' },
-  { to: '/editor', label: '画布', icon: Workflow, key: 'editor' },
   { to: '/miniprogram', label: '小程序', icon: AppWindow, key: 'miniprogram' },
   { to: '/settings', label: '设置', icon: Settings, key: 'settings' },
 ];

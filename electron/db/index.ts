@@ -397,6 +397,25 @@ function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_canvas_edges_target ON canvas_edges(target_node_id);
   `);
 
+  // v1.3.0：画布并入项目（一项目一画布）+ todolist 增强（优先级/描述）
+  addColumnIfMissing(db, 'canvases', 'project_id', 'INTEGER');
+  addColumnIfMissing(db, 'project_tasks', 'priority', "INTEGER DEFAULT 1");
+  addColumnIfMissing(db, 'project_tasks', 'description', 'TEXT');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_canvas_project ON canvases(project_id);
+    CREATE INDEX IF NOT EXISTS idx_pt_priority ON project_tasks(priority);
+  `);
+
+  // v1.3.0：一次性主题迁移 —— 旧默认（空/starry/neon-green）→ aurora（新默认主题）；
+  // 主动选择过 sakura 的用户保留原选择
+  {
+    const row = db.prepare("SELECT value FROM settings WHERE key='theme'").get() as { value?: string } | undefined;
+    const t = (row?.value || '').trim();
+    if (!t || t === 'starry' || t === 'neon-green') {
+      db.prepare("INSERT INTO settings (key, value) VALUES ('theme', 'aurora') ON CONFLICT(key) DO UPDATE SET value='aurora'").run();
+    }
+  }
+
   // 迁移：若 settings 里已有 profile_* 键但 user_profiles 为空，则生成一条默认资料
   const profileExists = (db.prepare('SELECT COUNT(*) as c FROM user_profiles').get() as any).c;
   if (profileExists === 0) {
