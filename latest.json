@@ -1,15 +1,15 @@
 {
-  "version": "1.2.0",
-  "notes": "# TaskManager v1.2.0 更新日志\n\n## 🐛 修复：同步作业出现两条重复\n- 根因：同一条作业在 GitHub 和北科云盘各生成过一个不同 ID，接收合并时两条都保留\n- 现在同课程+同日期+同标题的条目只保留最新一份，两个源合并后绝不重复\n- **自动愈合**：本地已有的历史重复条目，下次接收时自动合并为一条并提示\n  「已自动合并 N 条重复作业」\n- 远端已损坏的码包在下次发布时自动收敛修复\n- remote_id 新旧格式兼容，重复接收幂等不重复插入",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.0.exe",
+  "version": "1.2.1",
+  "notes": "# v1.2.1 画布编辑器（达芬奇式节点连线）\r\n\r\n发布日期：2026-09-21\r\n\r\n## 🌟 新增功能\r\n\r\n### 画布编辑器（Canvas Editor）\r\n\r\n> Projects 页右上角「画布视图」入口，或直接路由 `/editor`\r\n\r\n- **7 种节点**：任务 / 课程 / 作业 / 日程 / 便签 / 分组 / 自定义\r\n- **4 种连线**：顺序（实线）、依赖（虚线）、关联（双线）、关键（发光红）\r\n- **关联实体**：任务节点绑定到项目任务；课程 / 作业 / 日程节点绑定到业务表\r\n- **跳转集成**：节点右上角 ⎋ 图标 → 一键跳转到 Courses / Calendar / Projects\r\n- **撤销 / 重做**（Ctrl+Z / Ctrl+Y），栈深 50，同步落库\r\n- **导入 / 导出**：JSON 格式，含 schema 版本校验\r\n- **循环依赖检测**：DFS 三色标记，环路径可视化提示\r\n- **节点拖拽节流**：松手批量落库（避免每帧 IPC）\r\n- **自动保存**：所有变更立即持久化\r\n\r\n### 樱花粉主题 v4 精修\r\n\r\n- 5 + 1 个渐变（card / button / button-hover / title / status / divider）\r\n- 液态玻璃面板（backdrop-filter blur + saturate + 高光 inset + 外阴影）\r\n- 三主题（starry / neon-green / sakura）锚点色统一，强白对比度\r\n\r\n---\r\n\r\n## 🐛 已知遗留\r\n\r\n- 增量更新协议对画布数据无影响（data 仍为用户级 JSON）；后续若需跨设备同步，再单独设计版本合并策略\r\n- 输入框偶发失灵需重启（IME/composition 相关，沿用 `src/diag/inputRepair.ts`，v1.1.6 起埋点）\r\n\r\n---\r\n\r\n## 📦 升级说明\r\n\r\n无破坏性变更。自动增量更新支持 1.2.0 → 1.2.1 补丁包。\r\n\r\n数据库迁移：v1.2.0 → v1.2.1 自动应用 `canvases` / `canvas_nodes` / `canvas_edges` 三张表（无感知）。",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.1.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.1.6",
-  "sha256": "e688bf22b1d5afb442685d0c9e58889a223be5dcb620b6da4b2aa218e152478c",
-  "size": 97402383,
-  "fileName": "TaskManager-Setup-1.2.0.exe",
+  "sha256": "ef83d0868d91e4f639cf851cbabfb642976f437171806acc69347fb741b49e94",
+  "size": 97113953,
+  "fileName": "TaskManager-Setup-1.2.1.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-20T13:40:30.379Z",
-  "asarSha256": "b2b72ac304866ec0030443de60e55a73a06cb5cf9d6ca126ac4c112a3ade185d",
-  "asarSize": 72333872,
+  "releaseDate": "2026-09-21T05:47:55.062Z",
+  "asarSha256": "0664c7b49600fe99f8805a2b07583de55365472dd165c1cb40f0c6becdadcdb9",
+  "asarSize": 74750929,
   "patches": [
     {
       "fromVersion": "1.1.5",
@@ -65,6 +65,17 @@
       "appAsarSha256": "b2b72ac304866ec0030443de60e55a73a06cb5cf9d6ca126ac4c112a3ade185d",
       "appAsarSize": 72333872,
       "createdAt": "2026-09-20T13:39:01.478Z"
+    },
+    {
+      "fromVersion": "1.2.0",
+      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.0-to-1.2.1.zip",
+      "sha256": "aa82748871e6f1649edf839a7ad1ccae7ccf096e414dfa4588e12e71eaf999c8",
+      "size": 22824005,
+      "baseAsarSha256": "b2b72ac304866ec0030443de60e55a73a06cb5cf9d6ca126ac4c112a3ade185d",
+      "baseAsarSize": 72333872,
+      "appAsarSha256": "0664c7b49600fe99f8805a2b07583de55365472dd165c1cb40f0c6becdadcdb9",
+      "appAsarSize": 74750929,
+      "createdAt": "2026-09-21T05:47:49.885Z"
     }
   ]
 }
