@@ -352,23 +352,54 @@ async function fetchManifestText(src: UpdateSource): Promise<string> {
   return downloadTextFile(cfg, file, MAX_MANIFEST_BYTES);
 }
 
-/** 解析安装包下载 URL：http(s) 直链原样返回；anyshare 类型按"<base>-<ts>.<ext>"前缀找最新一份 */
-async function resolveDownloadUrl(url: string, source?: UpdateSource | null): Promise<string> {
-  if (/^https?:\/\//i.test(url)) return url;
-  const cfg = anyshareCfgFromSource(source);
-  if (!cfg) throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
-  const m = url.match(/^(.+?)(\.[^.]+)$/);
-  if (m) {
-    const base = m[1];
-    const ext = m[2];
-    const file = (await findLatestByPrefix(cfg, base, ext)) ?? (await findShareFile(cfg, url));
-    if (!file) throw new Error(`云盘分享里没有安装包「${url}」（也没找到 ${base}-<ts>${ext}）`);
-    return getFileDownloadUrl(cfg, file);
+/** 挑第一个能解析 url 的 anyshare 源（活动源不行就遍历所有 enabled 源）。
+   * 返回 null 表示「非 http url 且没有可用的 anyshare 源」。 */
+  function pickAnyshareSource(sources: UpdateSource[], preferredIndex: number): { src: UpdateSource; cfg: AnyShareConfig } | null {
+    const ordered: UpdateSource[] = [];
+    if (sources[preferredIndex]) ordered.push(sources[preferredIndex]);
+    for (let i = 0; i < sources.length; i++) {
+      if (i !== preferredIndex && sources[i]?.enabled !== false) ordered.push(sources[i]);
+    }
+    for (const s of ordered) {
+      const cfg = anyshareCfgFromSource(s);
+      if (cfg) return { src: s, cfg };
+    }
+    return null;
   }
-  const f = await findShareFile(cfg, url);
-  if (!f) throw new Error(`云盘分享里没有「${url}」`);
-  return getFileDownloadUrl(cfg, f);
-}
+
+  /** 解析安装包下载 URL：http(s) 直链原样返回；anyshare 类型按"<base>-<ts>.<ext>"前缀找最新一份 */
+  async function resolveDownloadUrl(
+    url: string,
+    sources: UpdateSource[],
+    preferredIndex: number,
+  ): Promise<string> {
+    if (/^https?:\/\//i.test(url)) return url;
+    const picked = pickAnyshareSource(sources, preferredIndex);
+    if (!picked) {
+      const sourceSummary = sources.map((s, i) => `${i}:${s?.name || '?'}(type=${s?.type || '?'},enabled=${s?.enabled !== false})`).join(', ');
+      // 写诊断日志到任意临时路径（packaged 模式 stdout 被吞），便于排查 manifest.patches[].url 不是 http 的来源
+      try {
+        const debugLog = path.join(app.getPath('temp'), 'taskmanager-updater-debug.log');
+        fs.appendFileSync(
+          debugLog,
+          `[${new Date().toISOString()}] resolveDownloadUrl 失败 url=${JSON.stringify(url)} sources=[${sourceSummary}]\n`,
+        );
+      } catch {}
+      throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
+    }
+    const cfg = picked.cfg;
+    const m = url.match(/^(.+?)(\.[^.]+)$/);
+    if (m) {
+      const base = m[1];
+      const ext = m[2];
+      const file = (await findLatestByPrefix(cfg, base, ext)) ?? (await findShareFile(cfg, url));
+      if (!file) throw new Error(`云盘分享里没有安装包「${url}」（也没找到 ${base}-<ts>${ext}）`);
+      return getFileDownloadUrl(cfg, file);
+    }
+    const f = await findShareFile(cfg, url);
+    if (!f) throw new Error(`云盘分享里没有「${url}」`);
+    return getFileDownloadUrl(cfg, f);
+  }
 
 export async function checkForUpdate(
   db: DB | null,
@@ -520,13 +551,16 @@ async function downloadUpdate(
   url: string,
   version: string,
   sha256?: string | null,
-  source?: UpdateSource | null
+  source?: UpdateSource | null,
+  sources?: UpdateSource[],
+  preferredIndex?: number,
 ): Promise<DownloadResult> {
   cleanStaleDownloads();
 
   let realUrl = url;
   try {
-    realUrl = await resolveDownloadUrl(url, source);
+    const allSources = sources && sources.length ? sources : (source ? [source] : []);
+    realUrl = await resolveDownloadUrl(url, allSources, preferredIndex ?? 0);
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }
@@ -646,7 +680,7 @@ export function registerUpdater(db: DB | null) {
   ipcMain.handle('update:checkAll', () => checkAllSources(db));
 
   ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null; source?: { type?: string; url?: string; password?: string } | null }) =>
-    downloadUpdate(opts.url, opts.version, opts.sha256, opts.source as UpdateSource | null | undefined)
+    downloadUpdate(opts.url, opts.version, opts.sha256, opts.source as UpdateSource | null | undefined, getSources(db), getActiveSourceIndex(db))
   );
 
   ipcMain.handle('update:cancel', () => {
@@ -751,8 +785,7 @@ export function registerUpdater(db: DB | null) {
     if (!/^https?:\/\//i.test(patchUrl)) {
       try {
         const sources = getSources(db);
-        const src = sources[getActiveSourceIndex(db)];
-        patchUrl = await resolveDownloadUrl(patch.url, src);
+        patchUrl = await resolveDownloadUrl(patch.url, sources, getActiveSourceIndex(db));
       } catch (e: any) {
         return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
       }
@@ -797,8 +830,7 @@ export function registerUpdater(db: DB | null) {
     if (!/^https?:\/\//i.test(patchUrl)) {
       try {
         const sources = getSources(db);
-        const src = sources[getActiveSourceIndex(db)];
-        patchUrl = await resolveDownloadUrl(patch.url, src);
+        patchUrl = await resolveDownloadUrl(patch.url, sources, getActiveSourceIndex(db));
       } catch (e: any) {
         return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
       }
