@@ -246,8 +246,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
           hasUpdate: boolean;
           notes?: string | null;
           downloadUrl?: string | null;
-          pageUrl?: string | null;
-          sha256?: string | null;
+                /** v1.2.7：备援下载链接（GitHub Releases 主源挂了 → 试 raw → 试 jsdelivr） */
+                downloadUrlMirrors?: string[] | null;
+                pageUrl?: string | null;
+                sha256?: string | null;
           forced?: boolean;
           skipped?: boolean;
           source?: string;
@@ -286,8 +288,8 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         checkedAt: number;
       }>,
       /** v1.1.4：北科云盘源的下载需带上源信息（type/url/password），后端据此换签名直链 */
-      download: (opts: { url: string; version: string; sha256?: string | null; source?: UpdateSourceDTO | null }) =>
-        invoke('update:download', opts) as Promise<{ ok: boolean; path?: string; size?: number; error?: string; canceled?: boolean }>,
+      download: (opts: { url: string; version: string; sha256?: string | null; source?: UpdateSourceDTO | null; mirrors?: string[] | null }) =>
+        invoke('update:download', opts) as Promise<{ ok: boolean; path?: string; size?: number; error?: string; canceled?: boolean; triedMirrors?: string[] }>,
       cancel: () => invoke('update:cancel'),
       install: (filePath: string) => invoke('update:install', filePath) as Promise<{ ok: boolean; error?: string }>,
       openExternal: (url: string) => invoke('update:openExternal', url) as Promise<{ ok: boolean; error?: string }>,

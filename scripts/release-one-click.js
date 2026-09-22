@@ -32,6 +32,9 @@ const asarPatch = require('./lib/asar-patch');
 const ROOT = path.resolve(__dirname, '..');
 const REPO_RAW = 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main';
 const REPO_API = 'https://api.github.com/repos/NightRainStarGame/USTBTaskManager';
+// v1.2.7 100MB 风险预案：主源改用 GitHub Releases download（突破 raw 100MB 限制，理论 2GB）
+const REPO_RELEASES = `https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v${process.argv.find((a) => /^\d+\.\d+\.\d+$/.test(a)) || ''}`;
+const JSDELIVR = 'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main';
 const DIST_NAME = (v) => `TaskManager-Setup-${v}.exe`;
 // RELEASE_SUFFIX 让 buildDir 和 ASAR_PATH 同时偏移（绕开 safe-delete 卡死的旧产物）
 const REL_SUFFIX = process.env.RELEASE_SUFFIX || '';
@@ -262,12 +265,22 @@ try {
 
 step('更新 latest.json');
 const prevPatches = Array.isArray(latest.patches) ? latest.patches : [];
+const setupPrimaryUrl = `${REPO_RELEASES}/${DIST_NAME(version)}`;
+const setupMirrorUrls = [
+  `${REPO_RAW}/leastversion/${DIST_NAME(version)}`,       // raw CDN（92.85MB 接近 100MB 限制，做备援）
+  `${JSDELIVR}/leastversion/${DIST_NAME(version)}`,       // jsdelivr CDN（50MB 限制，v1.2.7 setup 92.85MB 不适用，作 fallback 占位）
+];
 const newPatches = patchInfo
   ? [
       ...prevPatches.filter((p) => p && p.fromVersion !== patchInfo.fromVersion),
       {
         fromVersion: patchInfo.fromVersion,
-        url: `${REPO_RAW}/${patchInfo.path.replace(/\\/g, '/')}`,
+        url: `${REPO_RELEASES}/patches/${path.basename(patchInfo.path)}`,
+        // 补丁约 22MB，jsdelivr 50MB 限制下完全够用，做备援
+        urlMirrors: [
+          `${REPO_RAW}/${patchInfo.path.replace(/\\/g, '/')}`,
+          `${JSDELIVR}/${patchInfo.path.replace(/\\/g, '/')}`,
+        ],
         sha256: patchInfo.sha256,
         size: patchInfo.size,
         baseAsarSha256: patchInfo.manifest.baseAsarSha256,
@@ -281,7 +294,8 @@ const newPatches = patchInfo
 
 latest.version = version;
 latest.fileName = DIST_NAME(version);
-latest.url = `${REPO_RAW}/leastversion/${DIST_NAME(version)}`;
+latest.url = setupPrimaryUrl;                              // v1.2.7 主源改用 GitHub Releases（突破 100MB）
+latest.urlMirrors = setupMirrorUrls;                       // raw + jsdelivr 备援
 latest.sha256 = sha256;
 latest.size = buf.length;
 latest.notes = notes;
@@ -298,7 +312,7 @@ if (newLatestContent === oldLatestContent) {
 } else {
   fs.writeFileSync(latestPath, newLatestContent);
 }
-ok(`version=${version} url=${latest.url} patches=${newPatches.length}`);
+ok(`version=${version} url=${latest.url} mirrors=${setupMirrorUrls.length} patches=${newPatches.length}`);
 
 step('git 提交推送');
 run('git', ['add', '-A']);

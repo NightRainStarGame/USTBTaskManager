@@ -10,6 +10,8 @@ interface UpdatePayload {
   hasUpdate?: boolean;
   notes?: string | null;
   downloadUrl?: string | null;
+  /** v1.2.7：备援下载链接（GitHub Releases → GitHub raw → jsdelivr） */
+  downloadUrlMirrors?: string[] | null;
   pageUrl?: string | null;
   sha256?: string | null;
   forced?: boolean;
@@ -170,9 +172,14 @@ export default function UpdateNotification({ externalTrigger }: Props) {
       url: payload.downloadUrl,
       version: payload.latestVersion,
       sha256: payload.sha256,
+      mirrors: payload.downloadUrlMirrors || null,
       source: ps ? { name: ps.name, url: ps.url, enabled: true, primary: false, type: ps.type, password: ps.password } : null,
     });
-    if (!r.ok) setErr(r.error || '下载失败');
+    if (!r.ok) {
+      // v1.2.7：fallback 链已尝试时，附带展示镜像耗尽文案
+      const tried = r.triedMirrors?.length ? `（已尝试 ${r.triedMirrors.length} 个镜像：${r.triedMirrors.map((u) => { try { return new URL(u).hostname; } catch { return u.slice(0, 30); } }).join(' → ')}）` : '';
+      setErr((r.error || '下载失败') + tried);
+    }
     setDl(null);
     if (r.path) setDlPath(r.path);
   };

@@ -17,13 +17,21 @@ import {
   type AnyShareConfig,
 } from '../anyshare';
 
-/** 内置更新源：默认两个公开源（GitHub raw + 北科云盘）。用户也可在设置里增删、替换、加主源标 */
+/** 内置更新源：默认三个公开源（GitHub raw + jsdelivr CDN 备援 + 北科云盘）。
+ *  v1.2.7：加 jsdelivr CDN 作纯 latest.json 备援（jsdelivr 50MB 限制，setup 92.85MB 不适用，
+ *  但 latest.json 和 22MB 补丁都可以走 jsdelivr）。用户也可在设置里增删、替换、加主源标 */
 export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
     name: 'GitHub',
     url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
     enabled: true,
     primary: true,
+  },
+  {
+    name: 'jsDelivr CDN（GitHub 镜像）',
+    url: 'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json',
+    enabled: true,
+    primary: false,
   },
   {
     name: '北科云盘（需校园网）',
@@ -58,6 +66,8 @@ export interface UpdateManifest {
   version: string;
   notes?: string | null;
   url?: string | null;
+  /** v1.2.7 100MB 风险预案：备援下载链接数组（GitHub Releases 主源挂了 → 试 raw → 试 jsdelivr CDN） */
+  urlMirrors?: string[] | null;
   page?: string | null;
   sha256?: string | null;
   force?: boolean;
@@ -81,6 +91,8 @@ export interface UpdateCheckResult {
   hasUpdate?: boolean;
   notes?: string | null;
   downloadUrl?: string | null;
+  /** v1.2.7：备援下载链接（按顺序：GitHub Releases → GitHub raw → jsdelivr） */
+  downloadUrlMirrors?: string[] | null;
   pageUrl?: string | null;
   sha256?: string | null;
   forced?: boolean;
@@ -149,6 +161,7 @@ export function parseManifest(text: string, sourceUrl: string): UpdateManifest |
             version: String(version).replace(/^v/i, '').trim(),
             notes: pick(obj, ['notes', 'changelog', 'description', 'body', 'releaseNotes']),
             url: pick(obj, ['url', 'download', 'downloadUrl', 'installer', 'file']),
+            urlMirrors: Array.isArray(obj.urlMirrors) ? obj.urlMirrors.filter((u: any) => typeof u === 'string' && /^https?:\/\//i.test(u)) : null,
             page: pick(obj, ['page', 'pageUrl', 'website', 'share', 'link', 'html_url']),
             sha256: pick(obj, ['sha256', 'hash', 'checksum']),
             force: obj.force === true || obj.force === 1 || obj.force === 'true',
@@ -468,6 +481,7 @@ export async function checkForUpdate(
     skipped,
     notes: manifest.notes,
     downloadUrl: manifest.url,
+    downloadUrlMirrors: manifest.urlMirrors ?? null,
     pageUrl: manifest.page || src.url,
     sha256: manifest.sha256,
     forced: hasUpdate && (!!manifest.force || (manifest.version === currentVersion && !!manifest.asarSha256)),
@@ -543,6 +557,8 @@ export interface DownloadResult {
   size?: number;
   error?: string;
   canceled?: boolean;
+  /** v1.2.7：fallback 链中试过的镜像 URL（用于 UI 展示「已尝试 N 个镜像」） */
+  triedMirrors?: string[];
 }
 
 let downloadAbort: AbortController | null = null;
@@ -554,20 +570,47 @@ async function downloadUpdate(
   source?: UpdateSource | null,
   sources?: UpdateSource[],
   preferredIndex?: number,
+  mirrors?: string[] | null,
 ): Promise<DownloadResult> {
   cleanStaleDownloads();
 
-  let realUrl = url;
-  try {
-    const allSources = sources && sources.length ? sources : (source ? [source] : []);
-    realUrl = await resolveDownloadUrl(url, allSources, preferredIndex ?? 0);
-  } catch (e: any) {
-    return { ok: false, error: e?.message || String(e) };
+  const allSources = sources && sources.length ? sources : (source ? [source] : []);
+  // v1.2.7 100MB 风险预案：按 url → mirrors[0] → mirrors[1] ... 顺序试，任一成功就停
+  const candidates = [url, ...((mirrors || []).filter((u) => typeof u === 'string' && u && u !== url))];
+  const tried: string[] = [];
+  let lastErr = '';
+  for (const candidateUrl of candidates) {
+    let realUrl: string;
+    try {
+      realUrl = await resolveDownloadUrl(candidateUrl, allSources, preferredIndex ?? 0);
+    } catch (e: any) {
+      tried.push(candidateUrl);
+      lastErr = e?.message || String(e);
+      continue;
+    }
+    const r = await tryDownloadOnce(realUrl, version, sha256);
+    if (r.ok) {
+      if (tried.length) r.triedMirrors = tried;
+      return r;
+    }
+    tried.push(candidateUrl);
+    lastErr = r.error || '下载失败';
+    // 用户主动取消 → 不再 fallback
+    if (r.canceled) return r;
   }
+  return {
+    ok: false,
+    error: tried.length > 1
+      ? `${lastErr}（已尝试 ${tried.length} 个镜像：${tried.map((u) => new URL(u).hostname).join(' → ')}）`
+      : (lastErr || '下载失败'),
+    triedMirrors: tried,
+  };
+}
 
+async function tryDownloadOnce(realUrl: string, version: string, sha256?: string | null): Promise<DownloadResult & { triedMirrors?: string[] }> {
   const dir = path.join(app.getPath('temp'), 'taskmanager-update');
   try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-  const dest = path.join(dir, pickFileName(url, version));
+  const dest = path.join(dir, pickFileName(realUrl, version));
 
   const ctrl = new AbortController();
   downloadAbort = ctrl;
@@ -679,8 +722,8 @@ export function registerUpdater(db: DB | null) {
 
   ipcMain.handle('update:checkAll', () => checkAllSources(db));
 
-  ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null; source?: { type?: string; url?: string; password?: string } | null }) =>
-    downloadUpdate(opts.url, opts.version, opts.sha256, opts.source as UpdateSource | null | undefined, getSources(db), getActiveSourceIndex(db))
+  ipcMain.handle('update:download', (_e, opts: { url: string; version: string; sha256?: string | null; source?: { type?: string; url?: string; password?: string } | null; mirrors?: string[] | null }) =>
+    downloadUpdate(opts.url, opts.version, opts.sha256, opts.source as UpdateSource | null | undefined, getSources(db), getActiveSourceIndex(db), opts.mirrors)
   );
 
   ipcMain.handle('update:cancel', () => {
