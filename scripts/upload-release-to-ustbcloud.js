@@ -135,8 +135,19 @@ async function upload(root, name, buf) {
   const jsonObj = JSON.parse(jsonRaw);
   // 匿名不能覆盖：安装包按 "<basename>-<ts>.exe" 上传，latest.json 里 url 改成 basename（不带 ts），
   // App 端 resolveDownloadUrl 按 base 前缀找最新一份换签名直链
-  // （--only-patches 时不重传 exe，basename 从现有 manifest url 提取）
-  const exeUrlBase = exePath ? path.basename(exePath) : path.basename(String(jsonObj.url || jsonObj.fileName || ''));
+  // --only-patches 时不重传 exe：basename 优先从云盘已有 exe 反推（找含版本号的最新 Setup，去 -<ts> 后缀），
+  // 避免与历史上传命名不一致（如 "TaskManager Setup 1.2.9"（空格）vs "TaskManager-Setup-1.2.9"（连字符））导致客户端前缀匹配落空
+  let exeUrlBase;
+  if (exePath) {
+    exeUrlBase = path.basename(exePath);
+  } else {
+    const ver = String(jsonObj.version || '');
+    const exeFiles = (before || []).filter((f) => /\.exe$/i.test(f.name) && /setup/i.test(f.name) && (!ver || f.name.includes(ver)));
+    exeFiles.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+    const hit = exeFiles[0];
+    exeUrlBase = hit ? hit.name.replace(/-\d{10,}\.exe$/i, '.exe') : path.basename(String(jsonObj.url || jsonObj.fileName || ''));
+    console.log(`[cloud] --only-patches basename 从云盘反推: ${exeUrlBase}`);
+  }
   const baseExeName = exeUrlBase.replace(/\.exe$/i, '') + '.exe';
   jsonObj.url = baseExeName;
   jsonObj.fileName = baseExeName;
@@ -195,6 +206,12 @@ async function upload(root, name, buf) {
   }
 
   for (const u of patchUploads) {
+    // 云盘已有同前缀补丁（-<ts>.zip 任一份）且本次不重传安装包时跳过，避免重传几十上百 MB
+    if (ONLY_PATCHES) {
+      const prefix = u.baseName.replace(/\.zip$/i, '');
+      const exists = (before || []).some((f) => f.name === prefix + '.zip' || f.name.startsWith(prefix + '-'));
+      if (exists) { console.log(`[cloud] 补丁已存在，跳过重传: ${prefix}`); continue; }
+    }
     const buf = fs.readFileSync(u.local);
     const cloudName = u.baseName.replace(/\.zip$/i, '') + `-${ts}.zip`;
     console.log(`[cloud] 上传补丁 ${cloudName}（${(buf.length / 1024 / 1024).toFixed(1)} MB）…`);
