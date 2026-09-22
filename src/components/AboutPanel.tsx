@@ -3,7 +3,18 @@ import { RefreshCw, Pencil, Save, X, Lock, Unlock, FolderOpen, FileText, AlertCi
 import dayjs from 'dayjs';
 
 function renderMarkdown(md: string): { __html: string } {
-  const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+  // v1.2.7：硬 XSS 防御（about.txt 来自多源聚合，云端可被改）
+  // 1) esc 转义 & < > " '（属性值双引号也必须转义）
+  // 2) 链接 [text](url) 强制白名单协议：仅 http / https / mailto
+  //    拒绝 javascript: / data: / vbscript: 等可执行协议
+  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  const escAttr = (s: string) => esc(s).replace(/\s/g, '%20');
+  const safeUrl = (raw: string) => {
+    const u = raw.trim();
+    if (/^https?:\/\//i.test(u)) return u;
+    if (/^mailto:/i.test(u)) return u;
+    return null; // 拒绝一切其他协议
+  };
   const lines = md.split('\n');
   const out: string[] = [];
   let inList = false;
@@ -13,7 +24,11 @@ function renderMarkdown(md: string): { __html: string } {
     esc(t)
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-ink-700/60 text-neon-green font-mono text-[12px]">$1</code>')
-      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer" class="text-neon-green underline">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, (_m, text: string, url: string) => {
+        const u = safeUrl(url);
+        if (!u) return esc(text); // 拒绝不安全协议 → 渲染为纯文本
+        return `<a href="${escAttr(u)}" target="_blank" rel="noreferrer" class="text-neon-green underline">${esc(text)}</a>`;
+      });
   const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
   const closeCode = () => { if (inCode) { out.push(`<pre class="bg-ink-900/80 border border-neon-green/15 rounded p-2 my-2 text-[12px] overflow-x-auto"><code>${esc(codeBuf.join('\n'))}</code></pre>`); inCode = false; codeBuf = []; } };
   for (const raw of lines) {

@@ -59,10 +59,17 @@ boot().catch((err) => {
   console.error('[mobile] 启动失败:', err);
   const root = document.getElementById('root');
   if (root) {
-    root.innerHTML = `
-      <div style="padding:32px;font-family:monospace;color:#ff6b6b;background:#0a0a0a;min-height:100vh">
-        <h2 style="color:#fff">启动失败</h2>
-        <pre style="white-space:pre-wrap;font-size:12px">${String(err?.stack || err)}</pre>
-      </div>`;
+    // v1.2.7：安全起见用 textContent 拼 stack（防 err.message 注入 <script>）
+    root.replaceChildren();
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'padding:32px;font-family:monospace;color:#ff6b6b;background:#0a0a0a;min-height:100vh';
+    const h2 = document.createElement('h2');
+    h2.style.color = '#fff';
+    h2.textContent = '启动失败';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;font-size:12px';
+    pre.textContent = String(err?.stack || err);
+    wrap.append(h2, pre);
+    root.append(wrap);
   }
 });
