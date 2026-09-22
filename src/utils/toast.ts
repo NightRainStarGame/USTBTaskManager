@@ -56,7 +56,7 @@ export const toast = {
     const msg = e instanceof Error ? (e.message || String(e)) : String(e);
     _push('error', prefix ? `${prefix}：${msg}` : msg, 8000);
   },
-  /** 静默吞掉异常的快捷方式（替代 `catch { /* ignore */ }`），仍会记一行 warn 日志便于排查 */
+  /** 静默吞掉异常的快捷方式（替代 catch 块省略号），仍会记一行 warn 日志便于排查 */
   silent: (e: unknown, fallbackMsg = '') => {
     if (process.env.NODE_ENV !== 'production') {
       // eslint-disable-next-line no-console
