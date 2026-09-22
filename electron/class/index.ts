@@ -259,10 +259,10 @@ export function registerClass(db: DB) {
   const bgTimer = setInterval(async () => {
     if (!db) return;
     try {
-      const rows = db.prepare('SELECT id, last_sync_at FROM classes WHERE dissolved = 0').all() as Array<{ id: number; last_sync_at: number | null }>;
+      const rows = db.prepare('SELECT id, last_synced_at FROM classes WHERE dissolved = 0').all() as Array<{ id: number; last_synced_at: number | null }>;
       for (const r of rows) {
         // 60s 内同步过的跳过（避免与前台 sync 重复）
-        if (r.last_sync_at && Date.now() - r.last_sync_at < 60_000) continue;
+        if (r.last_synced_at && Date.now() - r.last_synced_at < 60_000) continue;
         try { await syncClassCore(r.id); }
         catch { /* 单个班级失败不影响其他班级 */ }
       }
