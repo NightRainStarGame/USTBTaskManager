@@ -45,7 +45,12 @@ export const CLASS_DIR = 'class';
 // 靠 fine-grained PAT 的仓库级授权（泄露 SOP：GitHub 吊销 → 换新段 → 发版）。
 // 创建步骤见 docs/CLASS-P2P.md「内置公共写入令牌」节。
 const FALLBACK_TOKEN_B64: string[] = [
-  // 待填：豆芽创建 fine-grained PAT 后，按段 base64 填入（scripts/encode-class-token.cjs）
+  // 豆芽 2026-09-22 创建的 fine-grained PAT（仅本仓库 Contents rw，有效期 1 年）
+  // 已验证：class 仓库写/删 OK；主仓库写入 403 被拒（爆炸半径隔离成立）
+  'Z2l0aHViX3BhdF8xMUNLWEZPVkEwM2pt',
+  'SFBySHdoa2x6X21pY241Ym1hZk1CTjVW',
+  'b0U2MlN1SzdRb3dFaHZJbWVWWENIWnZh',
+  'bUlOeGtOTU9KRk9OMm91dzZmOFZF',
 ];
 export const CLASS_FALLBACK_TOKEN: string =
   FALLBACK_TOKEN_B64.map((p) => Buffer.from(p, 'base64').toString('utf8')).join('');
