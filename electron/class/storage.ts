@@ -111,6 +111,16 @@ export interface ClassManifest {
   updatedAt: number;
   /** 整体签名 = HMAC(CLASS_SECRET, classCode|name|ownerAlias|lastAnn|lastTask|updatedAt) */
   sig: string;
+  // ── v1.2.9 R1：显式条目索引（修复「逐毫秒倒数扫描只能覆盖 100ms 窗口」的致命 bug）──
+  // 设计：这些字段**不参与 manifest 签名**（signManifest 输入串不变）：
+  //   · 旧班级（v1.2.7/8 发布的 manifest）验签不破坏，新客户端能读旧文件
+  //   · 索引被篡改的后果 = 多拉/漏拉条目，条目本身有 verifyEntry 兜底
+  announcementIds?: number[];         // 全部公告 id（发布时 push）
+  taskIds?: number[];                 // 全部作业 id
+  deletedAnnouncementIds?: number[];  // 已删除公告 tombstone（sync 据此删本地）
+  // ── v1.2.9 R4/R5：接龙 / 投票索引 ──
+  chainIds?: number[];                // 全部接龙 id
+  pollIds?: number[];                 // 全部投票 id
 }
 
 export interface AnnouncementEntry {
@@ -135,6 +145,48 @@ export interface ClassTaskEntry {
   dueAt: number | null;     // 截止时间（null = 无）
   status: 'open' | 'done' | 'cancelled';
   createdAt: number;
+  sig: string;
+}
+
+/** v1.2.9 R4：接龙条目（items 多端 union 合并，任何人可追加） */
+export interface ChainItem {
+  alias: string;
+  content: string;
+  ts: number;
+}
+
+export interface ChainEntry {
+  id: number;               // 时间戳 ID
+  authorAlias: string;      // 发起人
+  title: string;
+  body: string;             // 规则说明（如「报名周六团建，格式：姓名+电话」）
+  items: ChainItem[];       // 参与记录（按 alias+ts 去重 union）
+  closed: boolean;          // 关闭后不可再接
+  createdAt: number;
+  updatedAt: number;
+  /** sig 只覆盖 title|body（发起时固定）；items 任何人可追加不参与签名 */
+  sig: string;
+}
+
+/** v1.2.9 R5：投票条目（votes 多端 union，同 alias 取 ts 大者；options 创建时固定） */
+export interface PollVote {
+  choices: number[];        // 选项下标（单选长度 1）
+  ts: number;
+}
+
+export interface PollEntry {
+  id: number;
+  authorAlias: string;
+  question: string;
+  description: string;
+  options: { text: string }[];
+  votes: Record<string, PollVote>;  // alias → vote
+  multi: boolean;                   // true = 多选
+  closed: boolean;
+  deadlineAt: number | null;        // 截止时间（null = 无）
+  createdAt: number;
+  updatedAt: number;
+  /** sig 覆盖 question|description|options 文本（创建时固定）；votes 不参与签名 */
   sig: string;
 }
 
@@ -269,53 +321,132 @@ export async function fetchClassTask(inviteCode: string, taskId: number, source:
   } catch { return null; }
 }
 
-/** 拉取一份完整的班级快照（manifest + 所有未缓存的公告/作业） */
+/** 拉取一条接龙（v1.2.9 R4；仅 GitHub 源——AnyShare 备源只兜公告/作业） */
+export async function fetchChain(inviteCode: string, chainId: number): Promise<ChainEntry | null> {
+  const r = await ghFetch(`${ghRawUrl(inviteCode, 'chains', chainId + '.json')}?t=${Date.now()}`);
+  if (r.ok) {
+    try {
+      const e = JSON.parse(r.text) as ChainEntry;
+      if (e && e.id === chainId) return e;
+    } catch {}
+  }
+  return null;
+}
+
+/** 拉取一条投票（v1.2.9 R5；仅 GitHub 源） */
+export async function fetchPoll(inviteCode: string, pollId: number): Promise<PollEntry | null> {
+  const r = await ghFetch(`${ghRawUrl(inviteCode, 'polls', pollId + '.json')}?t=${Date.now()}`);
+  if (r.ok) {
+    try {
+      const e = JSON.parse(r.text) as PollEntry;
+      if (e && e.id === pollId) return e;
+    } catch {}
+  }
+  return null;
+}
+
+/** 拉取一份完整的班级快照（manifest + 所有未缓存的公告/作业/接龙/投票）
+ *  v1.2.9 R1 重写：manifest 带 announcementIds/taskIds/chainIds/pollIds 显式索引时，
+ *  按索引逐条拉本机没有的（取代旧的「时间戳逐毫秒倒数扫描」——那只能覆盖最新 100ms 窗口，
+ *  第二条公告永远同步不到）。旧 manifest 无索引 → fallback 老扫描逻辑（兼容 v1.2.7/8 数据）。 */
 export interface ClassSnapshot {
   source: 'github' | 'anyshare';
   manifest: ClassManifest;
   announcements: AnnouncementEntry[];
   tasks: ClassTaskEntry[];
+  chains: ChainEntry[];
+  polls: PollEntry[];
   /** 拉取时间戳 */
   fetchedAt: number;
 }
 
-/** 从 manifest 推测完整快照（拉每个新条目） */
 export async function fetchClassSnapshot(
   inviteCode: string,
-  known: { lastAnnId: number; lastTaskId: number },
+  known: {
+    lastAnnId: number; lastTaskId: number;
+    /** 本机已有的条目 id 集合（增量跳过用） */
+    annIds?: number[]; taskIds?: number[]; chainIds?: number[]; pollIds?: number[];
+  },
   preferredSource: 'github' | 'anyshare' = 'github',
 ): Promise<ClassSnapshot | null> {
   const src = preferredSource === 'github' ? githubSource : anyshareSource;
   const manifest = await src.fetchManifest(inviteCode);
   if (!manifest) return null;
 
-  // 拉所有 lastAnnId 之间的公告
   const anns: AnnouncementEntry[] = [];
-  // 倒序从最新到最旧，逐个拉，失败忽略（不破坏整体）
-  const annStart = manifest.lastAnnouncementId;
-  for (let id = annStart; id > Math.max(annStart - 100, known.lastAnnId); id--) {
-    try {
-      const e = await fetchAnnouncement(inviteCode, id, preferredSource);
-      if (e) anns.push(e);
-    } catch { /* 单条失败不影响整体 */ }
-    if (id <= known.lastAnnId + 1) break;  // 增量拉取：超过本机已知就停
+  const tasks: ClassTaskEntry[] = [];
+  const chains: ChainEntry[] = [];
+  const polls: PollEntry[] = [];
+  const knownAnn = new Set(known.annIds || []);
+  const knownTask = new Set(known.taskIds || []);
+
+  if (Array.isArray(manifest.announcementIds)) {
+    // 新协议：显式索引
+    for (const id of manifest.announcementIds) {
+      if (knownAnn.has(id)) continue;
+      try {
+        const e = await fetchAnnouncement(inviteCode, id, preferredSource);
+        if (e) anns.push(e);
+      } catch { /* 单条失败不影响整体 */ }
+    }
+  } else {
+    // 旧协议 fallback：毫秒扫描（只对「本机 0 缓存 + 仅一条公告」的场景有效）
+    const annStart = manifest.lastAnnouncementId;
+    for (let id = annStart; id > Math.max(annStart - 100, known.lastAnnId); id--) {
+      try {
+        const e = await fetchAnnouncement(inviteCode, id, preferredSource);
+        if (e) anns.push(e);
+      } catch { /* 单条失败不影响整体 */ }
+      if (id <= known.lastAnnId + 1) break;
+    }
   }
 
-  const tasks: ClassTaskEntry[] = [];
-  const taskStart = manifest.lastTaskId;
-  for (let id = taskStart; id > Math.max(taskStart - 100, known.lastTaskId); id--) {
-    try {
-      const e = await fetchClassTask(inviteCode, id, preferredSource);
-      if (e) tasks.push(e);
-    } catch {}
-    if (id <= known.lastTaskId + 1) break;
+  if (Array.isArray(manifest.taskIds)) {
+    for (const id of manifest.taskIds) {
+      if (knownTask.has(id)) continue;
+      try {
+        const e = await fetchClassTask(inviteCode, id, preferredSource);
+        if (e) tasks.push(e);
+      } catch {}
+    }
+  } else {
+    const taskStart = manifest.lastTaskId;
+    for (let id = taskStart; id > Math.max(taskStart - 100, known.lastTaskId); id--) {
+      try {
+        const e = await fetchClassTask(inviteCode, id, preferredSource);
+        if (e) tasks.push(e);
+      } catch {}
+      if (id <= known.lastTaskId + 1) break;
+    }
+  }
+
+  // 接龙 / 投票仅走 GitHub（AnyShare 匿名链只兜公告/作业，文件结构不同不双写）
+  // 注意：chains/polls 是可变内容（items/votes 随时追加），不能按 knownIds 跳过——
+  // 每次全量重拉（≤50 条上限），upsert 端 union 合并幂等。班级规模下开销可接受。
+  if (preferredSource === 'github' && Array.isArray(manifest.chainIds)) {
+    for (const id of manifest.chainIds.slice(-50)) {
+      try {
+        const e = await fetchChain(inviteCode, id);
+        if (e) chains.push(e);
+      } catch {}
+    }
+  }
+  if (preferredSource === 'github' && Array.isArray(manifest.pollIds)) {
+    for (const id of manifest.pollIds.slice(-50)) {
+      try {
+        const e = await fetchPoll(inviteCode, id);
+        if (e) polls.push(e);
+      } catch {}
+    }
   }
 
   return {
     source: preferredSource,
     manifest,
-    announcements: anns.reverse(),
-    tasks: tasks.reverse(),
+    announcements: anns,
+    tasks: tasks,
+    chains,
+    polls,
     fetchedAt: Date.now(),
   };
 }
@@ -354,6 +485,23 @@ export async function ghGetSha(inviteCode: string, relPath: string[]): Promise<s
     }
   } catch {}
   return null;
+}
+
+/** GitHub 删除文件（v1.2.9 R2：公告撤回。Contents API DELETE 必须带 sha） */
+export async function ghDelete(inviteCode: string, relPath: string[], token: string, sha: string, message?: string): Promise<void> {
+  if (!token) throw new Error('GitHub 删除需要令牌');
+  const filePath = ghFilePath(inviteCode, ...relPath);
+  const body = {
+    message: message || `Delete class/${inviteCode}/${relPath.join('/')}`,
+    branch: CLASS_BRANCH,
+    sha,
+  };
+  const r = await ghFetch(`/contents/${filePath}`, { method: 'DELETE', token, body });
+  if (!r.ok) {
+    let detail = '';
+    try { detail = JSON.parse(r.text)?.message || ''; } catch {}
+    throw new Error(`删除 ${relPath.join('/')} 失败（HTTP ${r.status}${detail ? '：' + detail : ''}）`);
+  }
 }
 
 /** AnyShare 发布一条公告/任务/manifest */

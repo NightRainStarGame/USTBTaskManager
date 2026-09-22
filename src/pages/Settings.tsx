@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useStore } from '@/store';
 import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package, Bell, BellRing, Timer, Cloud, KeyRound, Crown, Wallet, MessageCircle, Copy } from 'lucide-react';
 import Modal from '@/components/Modal';
@@ -88,9 +89,28 @@ export default function SettingsPage() {
   const categories = useStore(s => s.categories);
   const userProfile = useStore(s => s.userProfile);
   const refreshAll = useStore(s => s.refreshAll);
+  const location = useLocation() as { state?: { scrollTo?: string } };
   const [theme, setTheme] = useState('aurora');
   const [semester, setSemester] = useState('2026-Fall');
   const [semesterStart, setSemesterStart] = useState('');
+  // v1.2.9 R7：跳转定位高亮（购买月卡 → /settings + state.scrollTo='monthly'）
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const target = location.state?.scrollTo;
+    if (!target) return;
+    // 等 DOM 渲染完再滚
+    const t = setTimeout(() => {
+      const el = document.getElementById(`section-${target}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setHighlightId(target);
+        // 高亮 2s 后淡出
+        setTimeout(() => setHighlightId(null), 2000);
+      }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [location.state?.scrollTo]);
 
   // 账户资料本地编辑态
   const [profile, setProfile] = useState<Partial<UserProfile>>({});
@@ -1169,7 +1189,7 @@ export default function SettingsPage() {
       </Section>
 
       {/* v1.2.6：纯本地月卡（删除班级服务，删除服务端依赖） */}
-      <Section icon={<Crown size={14} />} title="月卡与付费（v1.2.6 离线版）">
+      <Section icon={<Crown size={14} />} title="月卡与付费（v1.2.6 离线版）" id="monthly" highlight={highlightId === 'monthly'}>
         <Row label="月付状态">
           <PremiumStatusRow />
         </Row>
@@ -1810,9 +1830,12 @@ export default function SettingsPage() {
   );
 }
 
-function Section({ icon, title, children }: any) {
+function Section({ icon, title, children, id, highlight }: any) {
   return (
-    <div className="glass-panel p-5 space-y-3">
+    <div
+      id={id ? `section-${id}` : undefined}
+      className={`glass-panel p-5 space-y-3 transition-all duration-700 ${highlight ? 'ring-2 ring-neon-yellow/70 border-neon-yellow/50 shadow-[0_0_24px_rgba(251,191,36,0.15)]' : ''}`}
+    >
       <div className="flex items-center gap-2 pb-2 border-b border-neon-green/10">
         <span className="text-neon-green">{icon}</span>
         <h3 className="label-tag">{title}</h3>

@@ -657,7 +657,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       }>,
       join: (payload: { inviteCode: string; alias?: string }) => invoke('class:join', payload) as Promise<{
         ok: boolean; source?: 'github' | 'anyshare'; error?: string; errorCode?: string;
-        classId?: number; className?: string; role?: string; memberCount?: number;
+        classId?: number; className?: string; role?: string; memberCount?: number; warnings?: string[];
       }>,
       leave: (classId: number) => invoke('class:leave', classId) as Promise<{ ok: boolean; error?: string }>,
       listAnnouncements: (classId: number) => invoke('class:listAnnouncements', classId) as Promise<{ ok: boolean; announcements: any[] }>,
@@ -666,6 +666,31 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         invoke('class:publishAnnouncement', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; annId?: number; error?: string }>,
       publishTask: (classId: number, payload: { title: string; body?: string; dueAt?: number }) =>
         invoke('class:publishTask', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; taskId?: number; error?: string }>,
+      /** v1.2.9 R2：删除公告（owner/admin；云端文件 + manifest tombstone） */
+      deleteAnnouncement: (classId: number, annId: number) =>
+        invoke('class:deleteAnnouncement', classId, annId) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
+      /** v1.2.9 R3：成员角色管理（owner 专用：member ↔ admin） */
+      promoteMember: (classId: number, payload: { alias: string; role: 'admin' | 'member' }) =>
+        invoke('class:promoteMember', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; role?: string; error?: string; errorCode?: string }>,
+      /** v1.2.9 R3：移除成员（owner 可移除任何人除 owner；admin 只能移 member） */
+      removeMember: (classId: number, payload: { alias: string }) =>
+        invoke('class:removeMember', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
+      /** v1.2.9 R4：接龙 */
+      listChains: (classId: number) => invoke('class:listChains', classId) as Promise<{ ok: boolean; chains: any[] }>,
+      createChain: (classId: number, payload: { title: string; body?: string }) =>
+        invoke('class:createChain', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; chainId?: number; error?: string }>,
+      joinChain: (classId: number, chainId: number, content: string) =>
+        invoke('class:joinChain', classId, chainId, content) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
+      closeChain: (classId: number, chainId: number) =>
+        invoke('class:closeChain', classId, chainId) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
+      /** v1.2.9 R5：投票 */
+      listPolls: (classId: number) => invoke('class:listPolls', classId) as Promise<{ ok: boolean; polls: any[] }>,
+      createPoll: (classId: number, payload: { question: string; description?: string; options: string[]; multi?: boolean; deadlineAt?: number }) =>
+        invoke('class:createPoll', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; pollId?: number; error?: string }>,
+      votePoll: (classId: number, pollId: number, choices: number[]) =>
+        invoke('class:votePoll', classId, pollId, choices) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
+      closePoll: (classId: number, pollId: number) =>
+        invoke('class:closePoll', classId, pollId) as Promise<{ ok: boolean; warnings?: string[]; error?: string; errorCode?: string }>,
       markAnnouncementRead: (classId: number, annId: number) =>
         invoke('class:markAnnouncementRead', classId, annId) as Promise<{ ok: boolean }>,
       completeTask: (classId: number, taskId: number, status: 'open' | 'done' | 'cancelled') =>
@@ -673,6 +698,8 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       sync: (classId: number) => invoke('class:sync', classId) as Promise<{
         ok: boolean; source?: 'github' | 'anyshare';
         newAnnouncements?: number; newTasks?: number;
+        newChains?: number; newPolls?: number;
+        kicked?: boolean; errorCode?: string;
         manifest?: any; error?: string;
       }>,
     },

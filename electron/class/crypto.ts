@@ -82,8 +82,8 @@ export function verifyMember(alias: string, classCode: string, role: string, sig
   }
 }
 
-/** 公告 / 作业条目的内容签名（防篡改） */
-export function signEntry(classCode: string, kind: 'announcement' | 'task', id: number | string, body: string): string {
+/** 公告 / 作业 / 接龙 / 投票条目的内容签名（防篡改） */
+export function signEntry(classCode: string, kind: 'announcement' | 'task' | 'chain' | 'poll', id: number | string, body: string): string {
   return createHmac('sha256', CLASS_SECRET)
     .update(`entry:${classCode}|${kind}|${id}|${body}`)
     .digest('base64url')
@@ -91,7 +91,7 @@ export function signEntry(classCode: string, kind: 'announcement' | 'task', id: 
 }
 
 /** 校验条目签名 */
-export function verifyEntry(classCode: string, kind: 'announcement' | 'task', id: number | string, body: string, sig: string): boolean {
+export function verifyEntry(classCode: string, kind: 'announcement' | 'task' | 'chain' | 'poll', id: number | string, body: string, sig: string): boolean {
   try {
     return signEntry(classCode, kind, id, body) === (sig || '').trim();
   } catch {

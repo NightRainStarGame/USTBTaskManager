@@ -308,6 +308,11 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'classes', 'last_task_id', 'INTEGER DEFAULT 0');          // 本机已知最新作业 ID（增量）
   addColumnIfMissing(db, 'classes', 'manifest_sha', 'TEXT');                        // GitHub Contents API sha（If-None-Match 用）
   addColumnIfMissing(db, 'classes', 'members_json', "TEXT DEFAULT '[]'");          // 本机缓存的成员列表（manifest.members）
+  // v1.2.9 R1：云端条目带 authorAlias，本地之前没存（作者名恒空）
+  addColumnIfMissing(db, 'class_announcements', 'author_alias', "TEXT DEFAULT ''");
+  addColumnIfMissing(db, 'class_tasks', 'author_alias', "TEXT DEFAULT ''");
+  // v1.2.9 R3：本机昵称已写入云端成员列表的标记（被移除检测的前提；join 无 PAT 时为 0）
+  addColumnIfMissing(db, 'classes', 'member_synced', 'INTEGER DEFAULT 0');
   // 存量 done 行回填：作业用 created_at（历史完成时间近似）；任务表无时间列用迁移时刻
   db.exec(`
     UPDATE course_requirements SET completed_at = created_at
@@ -586,6 +591,41 @@ function runMigrations(db: Database.Database) {
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_class_tasks_class ON class_tasks(class_id, status, created_at DESC);
+
+    -- ============================================================
+    -- v1.2.9 R4/R5：班级接龙 + 投票（替代 class_tasks 的 UI 入口；旧表保留兼容）
+    -- id 直接用云端时间戳（显式写，非自增）——与 sync 的 upsert 键对齐
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS class_chains (
+      id INTEGER PRIMARY KEY,
+      class_id INTEGER NOT NULL,
+      author_alias TEXT DEFAULT '',
+      title TEXT NOT NULL,
+      body TEXT DEFAULT '',
+      items_json TEXT DEFAULT '[]',               -- [{alias, content, ts}]（多端 union 合并）
+      closed INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_class_chains_class ON class_chains(class_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS class_polls (
+      id INTEGER PRIMARY KEY,
+      class_id INTEGER NOT NULL,
+      author_alias TEXT DEFAULT '',
+      question TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      options_json TEXT DEFAULT '[]',             -- [{text}]（创建时固定）
+      votes_json TEXT DEFAULT '{}',               -- {alias: {choices: number[], ts}}（多端 union，同 alias 取 ts 大）
+      multi INTEGER DEFAULT 0,                    -- 0 单选 / 1 多选
+      closed INTEGER DEFAULT 0,
+      deadline_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_class_polls_class ON class_polls(class_id, created_at DESC);
 
     -- ============================================================
     -- v1.2.5：付费体系（本地账本 + 服务端对账）

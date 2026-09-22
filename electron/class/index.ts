@@ -30,14 +30,15 @@ import {
   signMember, verifyMember, signEntry, verifyEntry, normalizeInviteCode,
 } from './crypto';
 import {
-  ghFetch, ghPut, ghGetSha,
+  ghFetch, ghPut, ghGetSha, ghDelete,
   asPut,
-  fetchClassSnapshot,
+  fetchClassSnapshot, fetchChain, fetchPoll,
   githubSource, anyshareSource,
   signManifest,
   CLASS_REPO_OWNER, CLASS_REPO_NAME, CLASS_BRANCH,
   DEFAULT_CLASS_ANYSHARE,
   type ClassManifest, type MemberEntry, type AnnouncementEntry, type ClassTaskEntry,
+  type ChainEntry, type ChainItem, type PollEntry, type PollVote,
 } from './storage';
 import { parseAnyShareUrl } from '../anyshare';
 
@@ -91,6 +92,8 @@ interface ClassRow {
   alias: string; invite_code: string; owner_alias: string;
   last_announcement_id: number; last_task_id: number; manifest_sha: string | null;
   members_json: string;
+  /** v1.2.9 R3：本机昵称是否已写入云端 manifest.members（被移除检测的前提） */
+  member_synced?: number;
 }
 
 function rowToClass(row: ClassRow) {
@@ -156,20 +159,21 @@ export function registerClass(db: DB) {
   _db = db;
 
   // v1.2.8 块 O：UPSERT helper（自动合并：已存在的条目更新 content，保留本地 status / is_read）
+  // v1.2.9 R1 修复：INSERT 显式写云端时间戳 id + author_alias（之前自增 id 与云端 id 对不上 → sync 重复插入 + 作者恒空）
   function upsertAnnouncement(classId: number, e: AnnouncementEntry): 'new' | 'updated' {
     const exist = db.prepare('SELECT id FROM class_announcements WHERE class_id = ? AND id = ?').get(classId, e.id);
     if (exist) {
       db.prepare(
         `UPDATE class_announcements
-         SET title = ?, body = ?, images_json = ?, pinned = ?
+         SET title = ?, body = ?, images_json = ?, pinned = ?, author_alias = ?
          WHERE class_id = ? AND id = ?`
-      ).run(e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, classId, e.id);
+      ).run(e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.authorAlias || '', classId, e.id);
       return 'updated';
     }
     db.prepare(
-      `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
-       VALUES (?, ?, ?, ?, ?, 0, ?)`
-    ).run(classId, e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.createdAt);
+      `INSERT INTO class_announcements (id, class_id, author_alias, title, body, images_json, pinned, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`
+    ).run(e.id, classId, e.authorAlias || '', e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.createdAt);
     return 'new';
   }
   function upsertTask(classId: number, e: ClassTaskEntry): 'new' | 'updated' {
@@ -177,20 +181,77 @@ export function registerClass(db: DB) {
     if (exist) {
       db.prepare(
         `UPDATE class_tasks
-         SET title = ?, body = ?, images_json = ?, due_at = ?
+         SET title = ?, body = ?, images_json = ?, due_at = ?, author_alias = ?
          WHERE class_id = ? AND id = ?`
-      ).run(e.title, e.body, JSON.stringify(e.images || []), e.dueAt, classId, e.id);
+      ).run(e.title, e.body, JSON.stringify(e.images || []), e.dueAt, e.authorAlias || '', classId, e.id);
       return 'updated';
     }
     db.prepare(
-      `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'open', ?)`
-    ).run(classId, e.title, e.body, JSON.stringify(e.images || []), e.dueAt, e.createdAt);
+      `INSERT INTO class_tasks (id, class_id, author_alias, title, body, images_json, due_at, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)`
+    ).run(e.id, classId, e.authorAlias || '', e.title, e.body, JSON.stringify(e.images || []), e.dueAt, e.createdAt);
+    return 'updated';
+  }
+  // v1.2.9 R4：接龙 upsert（items 多端 union 合并）
+  function upsertChain(classId: number, e: ChainEntry): 'new' | 'updated' {
+    const exist = db.prepare('SELECT items_json FROM class_chains WHERE class_id = ? AND id = ?')
+      .get(classId, e.id) as { items_json: string } | undefined;
+    if (exist) {
+      const localItems: ChainItem[] = safeParseArr(exist.items_json) as unknown as ChainItem[];
+      const merged = mergeChainItems(localItems, e.items || []);
+      db.prepare(
+        `UPDATE class_chains SET title = ?, body = ?, items_json = ?, closed = ?, updated_at = ? WHERE class_id = ? AND id = ?`
+      ).run(e.title, e.body, JSON.stringify(merged), e.closed ? 1 : 0, e.updatedAt, classId, e.id);
+      return 'updated';
+    }
+    db.prepare(
+      `INSERT INTO class_chains (id, class_id, author_alias, title, body, items_json, closed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(e.id, classId, e.authorAlias || '', e.title, e.body, JSON.stringify(e.items || []), e.closed ? 1 : 0, e.createdAt, e.updatedAt);
+    return 'new';
+  }
+  // v1.2.9 R5：投票 upsert（votes 多端 union，同 alias 取 ts 大者）
+  function upsertPoll(classId: number, e: PollEntry): 'new' | 'updated' {
+    const exist = db.prepare('SELECT votes_json FROM class_polls WHERE class_id = ? AND id = ?')
+      .get(classId, e.id) as { votes_json: string } | undefined;
+    if (exist) {
+      const localVotes: Record<string, PollVote> = safeParseObj(exist.votes_json);
+      const merged = mergePollVotes(localVotes, e.votes || {});
+      db.prepare(
+        `UPDATE class_polls SET question = ?, description = ?, options_json = ?, votes_json = ?, multi = ?, closed = ?, deadline_at = ?, updated_at = ? WHERE class_id = ? AND id = ?`
+      ).run(e.question, e.description, JSON.stringify(e.options || []), JSON.stringify(merged), e.multi ? 1 : 0, e.closed ? 1 : 0, e.deadlineAt || null, e.updatedAt, classId, e.id);
+      return 'updated';
+    }
+    db.prepare(
+      `INSERT INTO class_polls (id, class_id, author_alias, question, description, options_json, votes_json, multi, closed, deadline_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(e.id, classId, e.authorAlias || '', e.question, e.description, JSON.stringify(e.options || []), JSON.stringify(e.votes || {}), e.multi ? 1 : 0, e.closed ? 1 : 0, e.deadlineAt || null, e.createdAt, e.updatedAt);
     return 'new';
   }
   // 暴露给 sync handler 复用（避免 4 处重复 INSERT/UPDATE）
   (db as any).__classUpsertAnnouncement = upsertAnnouncement;
   (db as any).__classUpsertTask = upsertTask;
+
+  // v1.2.9 R1：远端 manifest 原子更新（fetch → mutate → 重签 → PUT sha；409 冲突重拉重试 2 次）
+  async function mutateManifestRemote(inviteCode: string, token: string, message: string, mutate: (m: ClassManifest) => void): Promise<ClassManifest | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const cur = await githubSource.fetchManifest(inviteCode);
+      if (!cur) throw new Error('云端 manifest 拉取失败');
+      mutate(cur);
+      cur.updatedAt = Date.now();
+      cur.sig = signManifest(cur);
+      const sha = await ghGetSha(inviteCode, ['manifest.json']);
+      try {
+        await ghPut(inviteCode, ['manifest.json'], JSON.stringify(cur, null, 2), token, sha || undefined, message);
+        return cur;
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (attempt < 2 && /409/i.test(msg)) continue;  // sha 过期冲突 → 重拉重试
+        throw e;
+      }
+    }
+    return null;
+  }
 
   // v1.2.8 块 O：30s 后台轮询（所有 class 自动 sync）
   // - 教室下课前常常实时发布作业，及时同步比手动点 sync 体验好
@@ -211,17 +272,75 @@ export function registerClass(db: DB) {
   // 退出清理
   app.on('will-quit', () => clearInterval(bgTimer));
 
-  /** 同步核心：拉取云端 manifest + 公告/作业，自动合并到本地。
-   *  sync IPC 和 30s 后台轮询 都调它。 */
-  async function syncClassCore(classId: number): Promise<{ ok: boolean; error?: string; source?: string; newAnnouncements?: number; updatedAnnouncements?: number; newTasks?: number; updatedTasks?: number; manifest?: any }> {
+  /** 同步核心：拉取云端 manifest + 公告/作业/接龙/投票，自动合并到本地。
+   *  sync IPC 和 30s 后台轮询 都调它。
+   *  v1.2.9 R1：改用 manifest 显式索引增量拉取；R2 应用删除 tombstone；R3 检测「我被移除」。 */
+  async function syncClassCore(classId: number): Promise<{ ok: boolean; error?: string; errorCode?: string; source?: string; newAnnouncements?: number; updatedAnnouncements?: number; newTasks?: number; updatedTasks?: number; newChains?: number; newPolls?: number; kicked?: boolean; manifest?: any }> {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
+
+    // 本机已知条目 id（增量跳过；接龙/投票是可变内容，每次全量重拉后 union 合并）
+    const localAnnIds = (db.prepare('SELECT id FROM class_announcements WHERE class_id = ?').all(classId) as Array<{ id: number }>).map(r => r.id);
+    const localTaskIds = (db.prepare('SELECT id FROM class_tasks WHERE class_id = ?').all(classId) as Array<{ id: number }>).map(r => r.id);
+
+    type SyncResult = { ok: boolean; error?: string; errorCode?: string; source?: string; newAnnouncements?: number; updatedAnnouncements?: number; newTasks?: number; updatedTasks?: number; newChains?: number; newPolls?: number; kicked?: boolean; manifest?: any };
+    const applySnapshot = (snap: { source: string; manifest: ClassManifest; announcements: AnnouncementEntry[]; tasks: ClassTaskEntry[]; chains: ChainEntry[]; polls: PollEntry[] }): SyncResult => {
+      const m = snap.manifest;
+      // R3：被移除检测——本机昵称不在云端成员列表（且本机确认曾写入过云端）→ 本地下线
+      const myAlias = row.alias || getLocalAlias(db);
+      const wasMemberSynced = !!row.member_synced;
+      if (wasMemberSynced && row.role !== 'owner' && Array.isArray(m.members) && !m.members.some((x) => x.alias === myAlias)) {
+        db.prepare('UPDATE classes SET dissolved = 1 WHERE id = ?').run(classId);
+        return { ok: false, errorCode: 'KICKED', error: '你已被移出该班级', kicked: true };
+      }
+
+      let newAnn = 0, updatedAnn = 0;
+      for (const e of snap.announcements) {
+        if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
+        const r = upsertAnnouncement(classId, e);
+        if (r === 'new') newAnn++; else updatedAnn++;
+      }
+      let newTask = 0, updatedTask = 0;
+      for (const e of snap.tasks) {
+        if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
+        const r = upsertTask(classId, e);
+        if (r === 'new') newTask++; else updatedTask++;
+      }
+      let newChain = 0;
+      for (const e of snap.chains) {
+        if (!verifyEntry(row.code, 'chain', e.id, e.title + '|' + e.body, e.sig)) continue;
+        const r = upsertChain(classId, e);
+        if (r === 'new') newChain++;
+      }
+      let newPoll = 0;
+      for (const e of snap.polls) {
+        if (!verifyEntry(row.code, 'poll', e.id, e.question + '|' + e.description + '|' + (e.options || []).map(o => o.text).join('||'), e.sig)) continue;
+        const r = upsertPoll(classId, e);
+        if (r === 'new') newPoll++;
+      }
+      // R2：应用删除 tombstone（云端已删的公告，本地同步删掉）
+      if (Array.isArray(m.deletedAnnouncementIds)) {
+        for (const id of m.deletedAnnouncementIds) {
+          db.prepare('DELETE FROM class_announcements WHERE class_id = ? AND id = ?').run(classId, id);
+        }
+      }
+      updateMembersCache(classId, m.members);
+      updateLastIds(classId, m.lastAnnouncementId, m.lastTaskId);
+      setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
+      return {
+        ok: true, source: snap.source as any,
+        newAnnouncements: newAnn, updatedAnnouncements: updatedAnn,
+        newTasks: newTask, updatedTasks: updatedTask,
+        newChains: newChain, newPolls: newPoll,
+        manifest: m,
+      };
+    };
 
     let lastError = '';
     try {
       const snap = await fetchClassSnapshot(
         row.invite_code,
-        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
+        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0, annIds: localAnnIds, taskIds: localTaskIds },
         'github',
       );
       if (!snap) {
@@ -230,52 +349,23 @@ export function registerClass(db: DB) {
         if (snap.manifest.sig !== signManifest(snap.manifest)) {
           return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
         }
-        let newAnn = 0, updatedAnn = 0;
-        for (const e of snap.announcements) {
-          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
-          const r = upsertAnnouncement(classId, e);
-          if (r === 'new') newAnn++; else updatedAnn++;
-        }
-        let newTask = 0, updatedTask = 0;
-        for (const e of snap.tasks) {
-          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
-          const r = upsertTask(classId, e);
-          if (r === 'new') newTask++; else updatedTask++;
-        }
-        updateMembersCache(classId, snap.manifest.members);
-        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
-        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
-        return { ok: true, source: snap.source, newAnnouncements: newAnn, updatedAnnouncements: updatedAnn, newTasks: newTask, updatedTasks: updatedTask, manifest: snap.manifest };
+        return applySnapshot(snap);
       }
     } catch (e: any) {
       lastError = `GitHub 同步失败：${e?.message || e}`;
     }
-    // 降级到 AnyShare
+    // 降级到 AnyShare（接龙/投票仅 GitHub 源，降级时自然为空）
     try {
       const snap = await fetchClassSnapshot(
         row.invite_code,
-        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
+        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0, annIds: localAnnIds, taskIds: localTaskIds },
         'anyshare',
       );
       if (snap) {
         if (snap.manifest.sig !== signManifest(snap.manifest)) {
           return { ok: false, error: 'AnyShare manifest 签名校验失败' };
         }
-        let newAnn = 0, updatedAnn = 0, newTask = 0, updatedTask = 0;
-        for (const e of snap.announcements) {
-          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
-          const r = upsertAnnouncement(classId, e);
-          if (r === 'new') newAnn++; else updatedAnn++;
-        }
-        for (const e of snap.tasks) {
-          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
-          const r = upsertTask(classId, e);
-          if (r === 'new') newTask++; else updatedTask++;
-        }
-        updateMembersCache(classId, snap.manifest.members);
-        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
-        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
-        return { ok: true, source: 'anyshare', newAnnouncements: newAnn, updatedAnnouncements: updatedAnn, newTasks: newTask, updatedTasks: updatedTask, manifest: snap.manifest };
+        return applySnapshot(snap);
       }
     } catch (e: any) {
       return { ok: false, error: `${lastError}；AnyShare 兜底也失败：${e?.message || e}` };
@@ -379,8 +469,8 @@ export function registerClass(db: DB) {
       `INSERT INTO classes
         (code, share_code, invite_code, name, description, owner_token, owner_alias, role,
          alias, member_count, cloud_synced, last_synced_at, joined_at, dissolved,
-         last_announcement_id, last_task_id, members_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'owner', ?, 1, 0, ?, ?, 0, 0, 0, ?)`
+         last_announcement_id, last_task_id, members_json, member_synced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'owner', ?, 1, 0, ?, ?, 0, 0, 0, ?, 1)`
     ).run(
       classCode, inviteCode, inviteCode, name, String(payload?.description || '').slice(0, 500),
       ownerToken, alias, alias, now, now,
@@ -481,8 +571,8 @@ export function registerClass(db: DB) {
       `INSERT INTO classes
         (code, share_code, invite_code, name, description, owner_token, owner_alias, role,
          alias, member_count, cloud_synced, last_synced_at, joined_at, dissolved,
-         last_announcement_id, last_task_id, members_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, ?, 1, ?, ?, 0, 0, 0, ?)`
+         last_announcement_id, last_task_id, members_json, member_synced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, ?, 1, ?, ?, 0, 0, 0, ?, 0)`
     ).run(
       manifest.classCode, inviteCode, inviteCode,
       manifest.name, manifest.description,
@@ -492,10 +582,32 @@ export function registerClass(db: DB) {
     );
     const classId = Number(info.lastInsertRowid);
 
+    // v1.2.9 R1：把自己写进云端 manifest.members（之前 join 从不更新云端 → 成员列表永远只有 owner）
+    const warnings: string[] = [];
+    const ghToken = getGitHubToken(db);
+    if (ghToken) {
+      try {
+        const updated = await mutateManifestRemote(inviteCode, ghToken, `成员 ${alias} 加入班级`, (m) => {
+          if (!m.members.some((x) => x.alias === alias)) {
+            m.members.push({ alias, role: 'member', joinedAt: now, sig: signMember(alias, m.classCode, 'member') });
+          }
+        });
+        if (updated) {
+          db.prepare('UPDATE classes SET members_json = ?, member_synced = 1, member_count = ? WHERE id = ?')
+            .run(JSON.stringify(updated.members), updated.members.length, classId);
+        }
+      } catch (e: any) {
+        warnings.push(`成员列表未更新到云端：${e?.message || e}`);
+      }
+    } else {
+      warnings.push('未配置 GitHub 令牌：你的昵称不会出现在云端成员列表（其他成员看不到你，也不影响收公告）');
+    }
+
     return {
       ok: true, source,
       classId, className: manifest.name, role: 'member' as const,
-      memberCount: manifest.members.length,
+      memberCount: manifest.members.length + (warnings.length === 0 ? 1 : 0),
+      warnings,
     };
   });
 
@@ -508,24 +620,129 @@ export function registerClass(db: DB) {
     return { ok: true };
   });
 
-  // v1.2.8 块 O：成员角色管理（owner 可将 member 提升为 admin 或降级；admin 不可晋升）
-  ipcMain.handle('class:promoteMember', (_e, classId: number, payload: { alias: string; role: 'owner' | 'admin' | 'member' }) => {
+  // v1.2.9 R3：成员角色管理（重写——v1.2.8 版查询的 class_members 表根本不存在，必炸 no such table）
+  // 数据真源 = 云端 manifest.members + 本地 members_json 镜像。owner 可将 member ↔ admin。
+  ipcMain.handle('class:promoteMember', async (_e, classId: number, payload: { alias: string; role: 'admin' | 'member' }) => {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
     if (row.role !== 'owner') return { ok: false, error: '仅 owner 可调整成员角色', errorCode: 'NOT_OWNER' };
     const alias = String(payload?.alias || '').trim();
-    if (!alias) return { ok: false, error: '请指定成员 alias' };
+    if (!alias) return { ok: false, error: '请指定成员昵称' };
     const target = payload.role;
-    if (!['owner', 'admin', 'member'].includes(target)) return { ok: false, error: '非法角色' };
-    const cur = db.prepare('SELECT role FROM class_members WHERE class_id = ? AND alias = ?').get(classId, alias) as { role: string } | undefined;
-    if (!cur) return { ok: false, error: '成员不存在' };
-    if (alias === row.owner_alias) return { ok: false, error: '不能调整 owner 本人' };
-    db.prepare('UPDATE class_members SET role = ? WHERE class_id = ? AND alias = ?').run(target, classId, alias);
-    // 本机视角同步：本机角色也更新（避免 UI 显示不一致）
-    if (alias === getLocalAlias(db)) {
+    if (target !== 'admin' && target !== 'member') return { ok: false, error: '仅支持设为管理员 / 撤销管理员' };
+
+    let members: MemberEntry[] = [];
+    try { members = JSON.parse(row.members_json || '[]'); } catch {}
+    const m = members.find((x) => x.alias === alias);
+    if (!m) return { ok: false, error: `成员 ${alias} 不在成员列表（可能未同步到云端）`, errorCode: 'NOT_FOUND' };
+    if (m.role === 'owner') return { ok: false, error: '不能调整 owner 本人' };
+    if (m.role === target) return { ok: true, role: target, warnings: [] };
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        // 云端原子更新：改角色 + 重算该成员 sig + manifest 重签
+        const updated = await mutateManifestRemote(row.invite_code, ghToken, `${alias} ${target === 'admin' ? '设为管理员' : '撤销管理员'}`, (mm) => {
+          const t = mm.members.find((x) => x.alias === alias);
+          if (t) {
+            t.role = target;
+            t.sig = signMember(alias, mm.classCode, target);
+          }
+        });
+        if (updated) {
+          db.prepare('UPDATE classes SET members_json = ? WHERE id = ?').run(JSON.stringify(updated.members), classId);
+        }
+      } catch (e: any) {
+        errors.push(`云端更新失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：角色变更仅本机生效，其他成员看不到');
+    }
+    // 本机镜像也更新（即使云端失败，本地 UI 一致）
+    m.role = target;
+    m.sig = signMember(alias, row.code, target);
+    db.prepare('UPDATE classes SET members_json = ? WHERE id = ?').run(JSON.stringify(members), classId);
+    if (alias === (row.alias || getLocalAlias(db))) {
       db.prepare('UPDATE classes SET role = ? WHERE id = ?').run(target, classId);
     }
-    return { ok: true, role: target };
+    return { ok: errors.length === 0, warnings: errors, role: target };
+  });
+
+  // v1.2.9 R3：移除成员（owner 可移除任何人除 owner；admin 只能移除 member）
+  // 被移除者下次 sync 时检测到自己在 members 列表消失 → 本地自动下线（KICKED）
+  ipcMain.handle('class:removeMember', async (_e, classId: number, payload: { alias: string }) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    if (row.role !== 'owner' && row.role !== 'admin') return { ok: false, error: '仅 owner / admin 可移除成员', errorCode: 'NOT_ALLOWED' };
+    const alias = String(payload?.alias || '').trim();
+    if (!alias) return { ok: false, error: '请指定成员昵称' };
+    if (alias === row.owner_alias) return { ok: false, error: '不能移除 owner（解散班级请用「离开班级」）' };
+
+    let members: MemberEntry[] = [];
+    try { members = JSON.parse(row.members_json || '[]'); } catch {}
+    const m = members.find((x) => x.alias === alias);
+    if (!m) return { ok: false, error: `成员 ${alias} 不在成员列表`, errorCode: 'NOT_FOUND' };
+    if (row.role === 'admin' && m.role !== 'member') return { ok: false, error: 'admin 只能移除普通成员', errorCode: 'NOT_ALLOWED' };
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        const updated = await mutateManifestRemote(row.invite_code, ghToken, `移除成员 ${alias}`, (mm) => {
+          mm.members = mm.members.filter((x) => x.alias !== alias);
+        });
+        if (updated) {
+          db.prepare('UPDATE classes SET members_json = ?, member_count = ? WHERE id = ?')
+            .run(JSON.stringify(updated.members), updated.members.length, classId);
+          return { ok: errors.length === 0, warnings: errors };
+        }
+      } catch (e: any) {
+        errors.push(`云端更新失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：移除仅本机生效，被移除者不会收到通知');
+    }
+    // 本地镜像兜底
+    const rest = members.filter((x) => x.alias !== alias);
+    db.prepare('UPDATE classes SET members_json = ?, member_count = ? WHERE id = ?').run(JSON.stringify(rest), rest.length, classId);
+    return { ok: errors.length === 0, warnings: errors };
+  });
+
+  // v1.2.9 R2：删除公告（撤回）。本地删 + 云端文件删 + manifest tombstone（其他端 sync 时删本地）
+  ipcMain.handle('class:deleteAnnouncement', async (_e, classId: number, annId: number) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    if (row.role !== 'owner' && row.role !== 'admin') return { ok: false, error: '仅 owner / admin 可删除公告', errorCode: 'NOT_ALLOWED' };
+    const annIdNum = Number(annId);
+    if (!annIdNum || annIdNum < 1) return { ok: false, error: '公告 id 无效' };
+
+    // 本地删除
+    const r = db.prepare('DELETE FROM class_announcements WHERE class_id = ? AND id = ?').run(classId, annIdNum);
+    if ((r.changes || 0) === 0) return { ok: false, error: '公告不存在（可能已删除）' };
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        // 云端条目文件删除（Contents DELETE 需 sha）
+        const sha = await ghGetSha(row.invite_code, ['announcements', annIdNum + '.json']);
+        if (sha) {
+          await ghDelete(row.invite_code, ['announcements', annIdNum + '.json'], ghToken, sha, `删除公告 #${annIdNum}`);
+        }
+        // manifest：索引移除 + tombstone 记录
+        await mutateManifestRemote(row.invite_code, ghToken, `删除公告 #${annIdNum}`, (m) => {
+          if (Array.isArray(m.announcementIds)) m.announcementIds = m.announcementIds.filter((x) => x !== annIdNum);
+          if (!Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = [];
+          if (!m.deletedAnnouncementIds.includes(annIdNum)) m.deletedAnnouncementIds.push(annIdNum);
+        });
+      } catch (e: any) {
+        errors.push(`云端删除失败：${e?.message || e}（本地已删除，其他成员同步后仍会看到）`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：仅本机删除，其他成员仍会看到这条公告');
+    }
+    return { ok: errors.length === 0, warnings: errors };
   });
 
   // ----------------- 公告 / 作业 列表 -----------------
@@ -535,7 +752,7 @@ export function registerClass(db: DB) {
       'SELECT * FROM class_announcements WHERE class_id = ? ORDER BY created_at DESC'
     ).all(classId) as Array<{
       id: number; title: string; body: string; images_json: string;
-      pinned: number; is_read: number; created_at: number; author_alias?: string;
+      pinned: number; is_read: number; created_at: number; author_alias: string;
     }>;
     return {
       ok: true,
@@ -543,7 +760,7 @@ export function registerClass(db: DB) {
         id: r.id, title: r.title, body: r.body,
         images: safeParseArr(r.images_json), pinned: !!r.pinned,
         isRead: !!r.is_read, createdAt: r.created_at,
-        authorAlias: (r as any).author_alias || '',
+        authorAlias: r.author_alias || '',
       })),
     };
   });
@@ -569,14 +786,15 @@ export function registerClass(db: DB) {
   ipcMain.handle('class:publishAnnouncement', async (_e, classId: number, payload: { title: string; body: string; images?: string[] }) => {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
-    if (row.role !== 'owner') return { ok: false, error: '仅 owner 可发布公告', errorCode: 'NOT_OWNER' };
+    // v1.2.9 R3：admin 也可发布（原来仅 owner）
+    if (row.role !== 'owner' && row.role !== 'admin') return { ok: false, error: '仅 owner / admin 可发布公告', errorCode: 'NOT_ALLOWED' };
 
     const title = String(payload?.title || '').trim().slice(0, 80);
     const body = String(payload?.body || '').slice(0, 4000);
     if (!title) return { ok: false, error: '请输入公告标题' };
     const images = Array.isArray(payload?.images) ? payload.images.filter((u) => typeof u === 'string' && u.trim()).slice(0, 9) : [];
 
-    const alias = String(row.owner_alias || getLocalAlias(db));
+    const alias = String(row.alias || row.owner_alias || getLocalAlias(db));
     const now = Date.now();
     const annId = now;
     const sig = signEntry(row.code, 'announcement', annId, body);
@@ -586,32 +804,28 @@ export function registerClass(db: DB) {
       createdAt: now, sig,
     };
 
-    // 写本地
-    db.prepare(
-      `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
-       VALUES (?, ?, ?, ?, 0, 1, ?)`
-    ).run(classId, title, body, JSON.stringify(images), now);
+    // 写本地（v1.2.9 R1：显式时间戳 id + author_alias，与云端对齐，避免 sync 重复插入）
+    upsertAnnouncement(classId, entry);
 
-    // 写远端：先 put announcement，再 update manifest（含新 lastAnnouncementId）
+    // 写远端：先 put announcement，再 update manifest（索引 + lastAnnouncementId）
     const ghToken = getGitHubToken(db);
     const errors: string[] = [];
     if (ghToken) {
       try {
         await ghPut(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2), ghToken);
-        // 拿现有 manifest，更新 lastAnnouncementId
-        const cur = await githubSource.fetchManifest(row.invite_code);
-        if (cur) {
-          cur.lastAnnouncementId = annId;
-          cur.updatedAt = now;
-          cur.sig = signManifest(cur);
-          const sha = await ghGetSha(row.invite_code, ['manifest.json']);
-          await ghPut(row.invite_code, ['manifest.json'], JSON.stringify(cur, null, 2), ghToken, sha || undefined, `发布公告 ${title}`);
-          const newSha = await ghGetSha(row.invite_code, ['manifest.json']);
-          db.prepare('UPDATE classes SET last_announcement_id = ?, manifest_sha = ? WHERE id = ?').run(annId, newSha, classId);
-        }
+        await mutateManifestRemote(row.invite_code, ghToken, `发布公告 ${title}`, (m) => {
+          m.lastAnnouncementId = Math.max(m.lastAnnouncementId || 0, annId);
+          if (!Array.isArray(m.announcementIds)) m.announcementIds = [];
+          if (!m.announcementIds.includes(annId)) m.announcementIds.push(annId);
+          if (Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = m.deletedAnnouncementIds.filter((x) => x !== annId);
+        });
+        db.prepare('UPDATE classes SET last_announcement_id = ? WHERE id = ?').run(annId, classId);
       } catch (e: any) {
         errors.push(`GitHub 发布失败：${e?.message || e}`);
       }
+    } else {
+      // v1.2.9 R1：之前没 PAT 时静默「成功」，用户以为发了但云端什么都没有
+      errors.push('未配置 GitHub 令牌：公告仅保存在本机，其他成员看不到（设置 → 班级 → 配置 → GitHub 令牌）');
     }
     const cloud = getClassAnyShareConfig(db);
     if (cloud.enabled) {
@@ -628,14 +842,14 @@ export function registerClass(db: DB) {
   ipcMain.handle('class:publishTask', async (_e, classId: number, payload: { title: string; body?: string; dueAt?: number; images?: string[] }) => {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
-    if (row.role !== 'owner') return { ok: false, error: '仅 owner 可发布作业', errorCode: 'NOT_OWNER' };
+    if (row.role !== 'owner' && row.role !== 'admin') return { ok: false, error: '仅 owner / admin 可发布作业', errorCode: 'NOT_ALLOWED' };
 
     const title = String(payload?.title || '').trim().slice(0, 80);
     const body = String(payload?.body || '').slice(0, 4000);
     if (!title) return { ok: false, error: '请输入作业标题' };
     const images = Array.isArray(payload?.images) ? payload.images.filter((u) => typeof u === 'string' && u.trim()).slice(0, 9) : [];
 
-    const alias = String(row.owner_alias || getLocalAlias(db));
+    const alias = String(row.alias || row.owner_alias || getLocalAlias(db));
     const now = Date.now();
     const taskId = now;
     const sig = signEntry(row.code, 'task', taskId, body + (payload?.dueAt || 0));
@@ -646,29 +860,25 @@ export function registerClass(db: DB) {
       createdAt: now, sig,
     };
 
-    db.prepare(
-      `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'open', ?)`
-    ).run(classId, title, body, JSON.stringify(images), entry.dueAt, now);
+    // v1.2.9 R1：显式 id + author_alias（v1.2.9 起 UI 移除作业 tab，此 IPC 保留 API 兼容）
+    upsertTask(classId, entry);
 
     const ghToken = getGitHubToken(db);
     const errors: string[] = [];
     if (ghToken) {
       try {
         await ghPut(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2), ghToken);
-        const cur = await githubSource.fetchManifest(row.invite_code);
-        if (cur) {
-          cur.lastTaskId = taskId;
-          cur.updatedAt = now;
-          cur.sig = signManifest(cur);
-          const sha = await ghGetSha(row.invite_code, ['manifest.json']);
-          await ghPut(row.invite_code, ['manifest.json'], JSON.stringify(cur, null, 2), ghToken, sha || undefined, `发布作业 ${title}`);
-          const newSha = await ghGetSha(row.invite_code, ['manifest.json']);
-          db.prepare('UPDATE classes SET last_task_id = ?, manifest_sha = ? WHERE id = ?').run(taskId, newSha, classId);
-        }
+        await mutateManifestRemote(row.invite_code, ghToken, `发布作业 ${title}`, (m) => {
+          m.lastTaskId = Math.max(m.lastTaskId || 0, taskId);
+          if (!Array.isArray(m.taskIds)) m.taskIds = [];
+          if (!m.taskIds.includes(taskId)) m.taskIds.push(taskId);
+        });
+        db.prepare('UPDATE classes SET last_task_id = ? WHERE id = ?').run(taskId, classId);
       } catch (e: any) {
         errors.push(`GitHub 发布失败：${e?.message || e}`);
       }
+    } else {
+      errors.push('未配置 GitHub 令牌：作业仅保存在本机，其他成员看不到');
     }
     const cloud = getClassAnyShareConfig(db);
     if (cloud.enabled) {
@@ -694,6 +904,273 @@ export function registerClass(db: DB) {
     return { ok: true };
   });
 
+  // ----------------- v1.2.9 R4：接龙 -----------------
+
+  ipcMain.handle('class:listChains', (_e, classId: number) => {
+    const rows = db.prepare('SELECT * FROM class_chains WHERE class_id = ? ORDER BY created_at DESC').all(classId) as Array<{
+      id: number; author_alias: string; title: string; body: string;
+      items_json: string; closed: number; created_at: number; updated_at: number | null;
+    }>;
+    return {
+      ok: true,
+      chains: rows.map(r => ({
+        id: r.id, authorAlias: r.author_alias, title: r.title, body: r.body,
+        items: safeParseArr(r.items_json), closed: !!r.closed,
+        createdAt: r.created_at, updatedAt: r.updated_at,
+      })),
+    };
+  });
+
+  ipcMain.handle('class:createChain', async (_e, classId: number, payload: { title: string; body?: string }) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const title = String(payload?.title || '').trim().slice(0, 80);
+    const body = String(payload?.body || '').slice(0, 2000);
+    if (!title) return { ok: false, error: '请输入接龙标题' };
+
+    const alias = String(row.alias || getLocalAlias(db));
+    const now = Date.now();
+    const chainId = now;
+    const sig = signEntry(row.code, 'chain', chainId, title + '|' + body);
+    const entry: ChainEntry = {
+      id: chainId, authorAlias: alias, title, body,
+      items: [], closed: false, createdAt: now, updatedAt: now, sig,
+    };
+    upsertChain(classId, entry);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        await ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(entry, null, 2), ghToken);
+        await mutateManifestRemote(row.invite_code, ghToken, `发起接龙 ${title}`, (m) => {
+          if (!Array.isArray(m.chainIds)) m.chainIds = [];
+          if (!m.chainIds.includes(chainId)) m.chainIds.push(chainId);
+        });
+      } catch (e: any) {
+        errors.push(`GitHub 发布失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：接龙仅保存在本机，其他成员看不到');
+    }
+    return { ok: errors.length === 0, warnings: errors, chainId };
+  });
+
+  ipcMain.handle('class:joinChain', async (_e, classId: number, chainId: number, content: string) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const c = String(content || '').trim().slice(0, 200);
+    if (!c) return { ok: false, error: '请输入接龙内容' };
+
+    const local = db.prepare('SELECT * FROM class_chains WHERE class_id = ? AND id = ?')
+      .get(classId, chainId) as { items_json: string; closed: number } | undefined;
+    if (!local) return { ok: false, error: '接龙不存在（先点同步）', errorCode: 'NOT_FOUND' };
+    if (local.closed) return { ok: false, error: '接龙已结束' };
+
+    const alias = String(row.alias || getLocalAlias(db));
+    const item: ChainItem = { alias, content: c, ts: Date.now() };
+    const items = mergeChainItems(safeParseArr(local.items_json) as unknown as ChainItem[], [item]);
+    db.prepare('UPDATE class_chains SET items_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
+      .run(JSON.stringify(items), item.ts, classId, chainId);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const remote = await fetchChain(row.invite_code, chainId);
+          if (!remote) throw new Error('云端接龙条目不存在');
+          if (remote.closed) return { ok: false, error: '接龙已被发起人结束' };
+          remote.items = mergeChainItems(remote.items || [], [item]);
+          remote.updatedAt = Date.now();
+          const sha = await ghGetSha(row.invite_code, ['chains', chainId + '.json']);
+          try {
+            await ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2), ghToken, sha || undefined, `${alias} 参与接龙`);
+            break;
+          } catch (e: any) {
+            if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时接龙 → 重拉合并重试
+            throw e;
+          }
+        }
+      } catch (e: any) {
+        errors.push(`云端参与失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：参与记录仅保存在本机');
+    }
+    return { ok: errors.length === 0, warnings: errors };
+  });
+
+  ipcMain.handle('class:closeChain', async (_e, classId: number, chainId: number) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const local = db.prepare('SELECT * FROM class_chains WHERE class_id = ? AND id = ?')
+      .get(classId, chainId) as { author_alias: string } | undefined;
+    if (!local) return { ok: false, error: '接龙不存在' };
+    const alias = String(row.alias || getLocalAlias(db));
+    if (row.role !== 'owner' && row.role !== 'admin' && local.author_alias !== alias) {
+      return { ok: false, error: '仅发起人或管理员可结束接龙', errorCode: 'NOT_ALLOWED' };
+    }
+    db.prepare('UPDATE class_chains SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, chainId);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        const remote = await fetchChain(row.invite_code, chainId);
+        if (remote) {
+          remote.closed = true;
+          remote.updatedAt = Date.now();
+          const sha = await ghGetSha(row.invite_code, ['chains', chainId + '.json']);
+          await ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2), ghToken, sha || undefined, `结束接龙 #${chainId}`);
+        }
+      } catch (e: any) {
+        errors.push(`云端结束失败：${e?.message || e}`);
+      }
+    }
+    return { ok: errors.length === 0, warnings: errors };
+  });
+
+  // ----------------- v1.2.9 R5：投票 -----------------
+
+  ipcMain.handle('class:listPolls', (_e, classId: number) => {
+    const rows = db.prepare('SELECT * FROM class_polls WHERE class_id = ? ORDER BY created_at DESC').all(classId) as Array<{
+      id: number; author_alias: string; question: string; description: string;
+      options_json: string; votes_json: string; multi: number; closed: number;
+      deadline_at: number | null; created_at: number; updated_at: number | null;
+    }>;
+    return {
+      ok: true,
+      polls: rows.map(r => ({
+        id: r.id, authorAlias: r.author_alias, question: r.question, description: r.description,
+        options: safeParseArr(r.options_json), votes: safeParseObj(r.votes_json),
+        multi: !!r.multi, closed: !!r.closed, deadlineAt: r.deadline_at,
+        createdAt: r.created_at, updatedAt: r.updated_at,
+      })),
+    };
+  });
+
+  ipcMain.handle('class:createPoll', async (_e, classId: number, payload: { question: string; description?: string; options: string[]; multi?: boolean; deadlineAt?: number }) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const question = String(payload?.question || '').trim().slice(0, 120);
+    const description = String(payload?.description || '').slice(0, 2000);
+    const options = (Array.isArray(payload?.options) ? payload.options : [])
+      .map((o) => String(o || '').trim().slice(0, 60))
+      .filter(Boolean);
+    if (!question) return { ok: false, error: '请输入投票问题' };
+    if (options.length < 2) return { ok: false, error: '至少需要 2 个选项' };
+    if (options.length > 8) return { ok: false, error: '选项最多 8 个' };
+
+    const alias = String(row.alias || getLocalAlias(db));
+    const now = Date.now();
+    const pollId = now;
+    const sig = signEntry(row.code, 'poll', pollId, question + '|' + description + '|' + options.join('||'));
+    const entry: PollEntry = {
+      id: pollId, authorAlias: alias, question, description,
+      options: options.map((text) => ({ text })),
+      votes: {}, multi: !!payload?.multi, closed: false,
+      deadlineAt: payload?.deadlineAt || null,
+      createdAt: now, updatedAt: now, sig,
+    };
+    upsertPoll(classId, entry);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        await ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(entry, null, 2), ghToken);
+        await mutateManifestRemote(row.invite_code, ghToken, `发起投票 ${question}`, (m) => {
+          if (!Array.isArray(m.pollIds)) m.pollIds = [];
+          if (!m.pollIds.includes(pollId)) m.pollIds.push(pollId);
+        });
+      } catch (e: any) {
+        errors.push(`GitHub 发布失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：投票仅保存在本机，其他成员看不到');
+    }
+    return { ok: errors.length === 0, warnings: errors, pollId };
+  });
+
+  ipcMain.handle('class:votePoll', async (_e, classId: number, pollId: number, choices: number[]) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const local = db.prepare('SELECT * FROM class_polls WHERE class_id = ? AND id = ?')
+      .get(classId, pollId) as { options_json: string; votes_json: string; multi: number; closed: number; deadline_at: number | null } | undefined;
+    if (!local) return { ok: false, error: '投票不存在（先点同步）', errorCode: 'NOT_FOUND' };
+    if (local.closed) return { ok: false, error: '投票已结束' };
+    if (local.deadline_at && Date.now() > local.deadline_at) return { ok: false, error: '投票已过截止时间' };
+
+    const opts = safeParseArr(local.options_json);
+    const picked = [...new Set((Array.isArray(choices) ? choices : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < opts.length))];
+    if (picked.length === 0) return { ok: false, error: '请选择选项' };
+    if (!local.multi && picked.length > 1) return { ok: false, error: '这是单选投票，只能选 1 项' };
+
+    const alias = String(row.alias || getLocalAlias(db));
+    const vote: PollVote = { choices: picked, ts: Date.now() };
+    const votes = { ...safeParseObj(local.votes_json), [alias]: vote };
+    db.prepare('UPDATE class_polls SET votes_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
+      .run(JSON.stringify(votes), vote.ts, classId, pollId);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const remote = await fetchPoll(row.invite_code, pollId);
+          if (!remote) throw new Error('云端投票条目不存在');
+          if (remote.closed) return { ok: false, error: '投票已被结束' };
+          remote.votes = { ...(remote.votes || {}), [alias]: vote };
+          remote.updatedAt = Date.now();
+          const sha = await ghGetSha(row.invite_code, ['polls', pollId + '.json']);
+          try {
+            await ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2), ghToken, sha || undefined, `${alias} 投票`);
+            break;
+          } catch (e: any) {
+            if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时投票 → 重拉覆盖重试（同 alias 幂等）
+            throw e;
+          }
+        }
+      } catch (e: any) {
+        errors.push(`云端投票失败：${e?.message || e}`);
+      }
+    } else {
+      errors.push('未配置 GitHub 令牌：投票仅保存在本机');
+    }
+    return { ok: errors.length === 0, warnings: errors };
+  });
+
+  ipcMain.handle('class:closePoll', async (_e, classId: number, pollId: number) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    const local = db.prepare('SELECT * FROM class_polls WHERE class_id = ? AND id = ?')
+      .get(classId, pollId) as { author_alias: string } | undefined;
+    if (!local) return { ok: false, error: '投票不存在' };
+    const alias = String(row.alias || getLocalAlias(db));
+    if (row.role !== 'owner' && row.role !== 'admin' && local.author_alias !== alias) {
+      return { ok: false, error: '仅发起人或管理员可结束投票', errorCode: 'NOT_ALLOWED' };
+    }
+    db.prepare('UPDATE class_polls SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, pollId);
+
+    const ghToken = getGitHubToken(db);
+    const errors: string[] = [];
+    if (ghToken) {
+      try {
+        const remote = await fetchPoll(row.invite_code, pollId);
+        if (remote) {
+          remote.closed = true;
+          remote.updatedAt = Date.now();
+          const sha = await ghGetSha(row.invite_code, ['polls', pollId + '.json']);
+          await ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2), ghToken, sha || undefined, `结束投票 #${pollId}`);
+        }
+      } catch (e: any) {
+        errors.push(`云端结束失败：${e?.message || e}`);
+      }
+    }
+    return { ok: errors.length === 0, warnings: errors };
+  });
+
   // ----------------- 同步（拉取最新） -----------------
 
   ipcMain.handle('class:sync', async (_e, classId: number) => syncClassCore(classId));
@@ -701,4 +1178,28 @@ export function registerClass(db: DB) {
 
 function safeParseArr(s: string | null | undefined): string[] {
   try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+function safeParseObj(s: string | null | undefined): Record<string, any> {
+  try { const v = JSON.parse(s || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
+}
+
+/** v1.2.9 R4：接龙条目多端 union 合并（按 alias|ts 去重，按 ts 升序稳定输出） */
+function mergeChainItems(a: ChainItem[], b: ChainItem[]): ChainItem[] {
+  const map = new Map<string, ChainItem>();
+  for (const it of [...(a || []), ...(b || [])]) {
+    if (!it || typeof it.alias !== 'string') continue;
+    map.set(`${it.alias}|${it.ts}`, it);
+  }
+  return [...map.values()].sort((x, y) => x.ts - y.ts);
+}
+
+/** v1.2.9 R5：投票多端 union 合并（同 alias 取 ts 大者） */
+function mergePollVotes(a: Record<string, PollVote>, b: Record<string, PollVote>): Record<string, PollVote> {
+  const out: Record<string, PollVote> = { ...(a || {}) };
+  for (const [alias, v] of Object.entries(b || {})) {
+    const cur = out[alias];
+    if (!cur || (v && v.ts >= cur.ts)) out[alias] = v;
+  }
+  return out;
 }
