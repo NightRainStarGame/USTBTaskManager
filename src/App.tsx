@@ -1,4 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import ClassListPage from './pages/Class';
+import ClassDetailPage from './pages/Class/ClassDetail';
 import { useEffect, useRef } from 'react';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
@@ -50,6 +52,8 @@ export default function App() {
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/miniprogram" element={<MiniProgramPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/class" element={<ClassListPage />} />
+          <Route path="/class/:id" element={<ClassDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

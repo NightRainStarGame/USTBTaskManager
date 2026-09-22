@@ -7,6 +7,7 @@ import { softDeleteRow, registerCleanup } from '../cleanup';
 import { registerWebdav } from '../webdav';
 
 import { registerBilling } from '../billing';
+import { registerClass } from '../class/index';
 
 // ====== Courses ======
 function registerCourses(db: DB) {
@@ -1030,4 +1031,6 @@ export function registerAllIpc(db: DB) {
   registerWebdav(db);
   // v1.2.6 付费体系（纯本地，月卡 30 天计时；v1.2.5 班级系统已删除）
   registerBilling(db);
+  // v1.2.7 P2P 班级（GitHub raw + 北科云盘双源；去 VPS 化）
+  registerClass(db);
 }
