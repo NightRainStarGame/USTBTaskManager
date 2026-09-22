@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +7,8 @@ import { registerAllIpc } from './ipc/index';
 import { autoCheckUpdate } from './updater/index';
 import { refreshAbout } from './about/index';
 import { scheduleAutoCleanup } from './cleanup';
+import { initTray, destroyTray } from './tray';
+import { startNotificationScheduler } from './notify';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -196,6 +198,22 @@ ipcMain.handle('window:maximize', () => {
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 
+// ── v1.2.3 托盘常驻：关窗可从托盘唤回 ──────────────────────────
+let trayActive = false;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    mainWindow?.once('ready-to-show', () => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+}
+
 ipcMain.on('app:ready-to-show', () => {
   bootLog('renderer reports ready-to-show');
   splashProgress(100, '就绪');
@@ -264,6 +282,33 @@ app.whenReady().then(() => {
     bootLog(`window created (dbReady=${dbReady})`);
     splashProgress(72, '正在绘制界面…');
 
+    // v1.2.3：托盘 + 系统通知 + 全局快捷键（Ctrl+Shift+A 快速添加）
+    try {
+      trayActive = initTray(showMainWindow, () => app.quit());
+      bootLog(`tray initialized (active=${trayActive})`);
+    } catch (e: any) {
+      bootLog('TRAY INIT FAILED: ' + (e?.message || e));
+    }
+    if (dbReady) {
+      try {
+        startNotificationScheduler(getDb(), () => mainWindow);
+        bootLog('notification scheduler started');
+      } catch (e: any) {
+        bootLog('NOTIFY SCHEDULER FAILED: ' + (e?.message || e));
+      }
+    }
+    try {
+      const registered = globalShortcut.register('Control+Shift+A', () => {
+        showMainWindow();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('app:quickadd');
+        }
+      });
+      if (!registered) bootLog('global shortcut Ctrl+Shift+A NOT registered (conflict?)');
+    } catch (e: any) {
+      bootLog('GLOBAL SHORTCUT FAILED: ' + (e?.message || e));
+    }
+
     setTimeout(() => {
       let dbRef = null as ReturnType<typeof getDb> | null;
       try { dbRef = getDb(); } catch {}
@@ -281,5 +326,11 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // v1.2.3：托盘常驻——关窗不退出（点托盘「显示主窗口」可回来）；托盘不可用时维持旧行为
+  if (process.platform !== 'darwin' && !trayActive) app.quit();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  destroyTray();
 });

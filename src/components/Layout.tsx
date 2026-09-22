@@ -4,6 +4,8 @@ import TopBar from './TopBar';
 import ParticleBg from './ParticleBg';
 import PlusMenu from './PlusMenu';
 import SearchPalette from './SearchPalette';
+import PomodoroWidget from './Pomodoro';
+import QuickAdd from './QuickAdd';
 import useShortcuts from '@/hooks/useShortcuts';
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
@@ -11,9 +13,16 @@ import { useStore } from '@/store';
 export default function Layout() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const setAppInfo = useStore(s => s.setAppInfo);
   const setUpdateInfo = useStore(s => s.setUpdateInfo);
   useShortcuts(() => setPlusOpen(true), () => setSearchOpen(true));
+
+  // v1.2.3：主进程全局快捷键（Ctrl+Shift+A）→ 呼出快速添加（应用外也能唤起主窗口）
+  useEffect(() => {
+    const off = window.taskAPI.system?.onQuickAdd?.(() => setQuickAddOpen(true));
+    return () => off?.();
+  }, []);
 
   // 应用信息 + 启动静默检查更新
   useEffect(() => {
@@ -67,6 +76,9 @@ export default function Layout() {
       {/* 全局弹层 */}
       {plusOpen && <PlusMenu onClose={() => setPlusOpen(false)} />}
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
+      {/* v1.2.3：全局番茄钟 + 自然语言快速添加 */}
+      <PomodoroWidget />
+      {quickAddOpen && <QuickAdd onClose={() => setQuickAddOpen(false)} />}
     </div>
   );
 }

@@ -4,6 +4,8 @@ import { ipcMain } from 'electron';
 import { registerInputDiagIpc } from '../diag/inputDiag';
 import { registerAboutIpc as registerAbout } from '../about';
 import { softDeleteRow, registerCleanup } from '../cleanup';
+import { registerWebdav } from '../webdav';
+import { registerGroupSync } from '../grouplists';
 
 // ====== Courses ======
 function registerCourses(db: DB) {
@@ -54,25 +56,42 @@ function registerRequirements(db: DB) {
   });
   ipcMain.handle('db:requirements:create', (_e, data) => {
     const stmt = db.prepare(
-      `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status, estimated_hours, actual_hours, notes, created_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status, estimated_hours, actual_hours, notes, created_at, completed_at, recurrence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       data.course_id, data.title, data.type ?? 'homework',
       data.description ?? null, data.due_date, data.priority ?? 2,
       data.status ?? 'pending', data.estimated_hours ?? null, data.actual_hours ?? null, data.notes ?? null, Date.now(),
-      data.status === 'done' ? Date.now() : null
+      data.status === 'done' ? Date.now() : null,
+      data.recurrence ?? null
     );
     return db.prepare('SELECT * FROM course_requirements WHERE id = ?').get(info.lastInsertRowid);
   });
   ipcMain.handle('db:requirements:update', (_e, id, data) => {
+    const prev = db.prepare('SELECT * FROM course_requirements WHERE id = ?').get(id) as any;
     db.prepare(
-      `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, priority=?, status=?, estimated_hours=?, actual_hours=?, notes=? WHERE id=?`
-    ).run(data.title, data.type, data.description, data.due_date, data.priority, data.status, data.estimated_hours, data.actual_hours, data.notes ?? null, id);
+      `UPDATE course_requirements SET title=?, type=?, description=?, due_date=?, priority=?, status=?, estimated_hours=?, actual_hours=?, notes=?, recurrence=? WHERE id=?`
+    ).run(data.title, data.type, data.description, data.due_date, data.priority, data.status, data.estimated_hours, data.actual_hours, data.notes ?? null, data.recurrence ?? null, id);
     // v1.1.9 自动清理：完成时间戳（变 done 记录时刻；取消完成清空）
     db.prepare(
       `UPDATE course_requirements SET completed_at = CASE WHEN status = 'done' THEN COALESCE(completed_at, ?) ELSE NULL END WHERE id = ?`
     ).run(Date.now(), id);
+
+    // v1.2.3 周期任务：完成带 recurrence 的作业时自动生成下一轮（同课同题同截止偏移去重）
+    if (prev && data.status === 'done' && prev.status !== 'done' && prev.recurrence) {
+      const stepDays = prev.recurrence === 'daily' ? 1 : prev.recurrence === 'biweekly' ? 14 : 7;
+      const nextDue = Number(data.due_date) + stepDays * 86400000;
+      const dup = db.prepare(
+        `SELECT 1 FROM course_requirements WHERE course_id = ? AND title = ? AND due_date = ? AND status != 'done'`
+      ).get(prev.course_id, data.title, nextDue);
+      if (!dup) {
+        db.prepare(
+          `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status, notes, created_at, recurrence)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+        ).run(prev.course_id, data.title, data.type, data.description ?? null, nextDue, data.priority ?? 2, data.notes ?? null, Date.now(), prev.recurrence);
+      }
+    }
     return db.prepare('SELECT * FROM course_requirements WHERE id = ?').get(id);
   });
   ipcMain.handle('db:requirements:delete', (_e, id) => {
@@ -724,6 +743,267 @@ function registerCanvasEdges(db: DB) {
   });
 }
 
+// ====== v1.2.3：成绩 ======
+function registerGrades(db: DB) {
+  ipcMain.handle('db:grades:list', (_e, filter) => {
+    let sql = `SELECT g.*, c.name as course_name, c.color as course_color
+               FROM grades g LEFT JOIN courses c ON g.course_id = c.id`;
+    const params: any[] = [];
+    if (filter?.semester) { sql += ' WHERE g.semester = ?'; params.push(filter.semester); }
+    if (filter?.courseId) { sql += (params.length ? ' AND' : ' WHERE') + ' g.course_id = ?'; params.push(filter.courseId); }
+    sql += ' ORDER BY g.course_id ASC, g.id ASC';
+    return db.prepare(sql).all(params);
+  });
+  ipcMain.handle('db:grades:create', (_e, data) => {
+    const now = Date.now();
+    const info = db.prepare(
+      `INSERT INTO grades (course_id, semester, component, score, credit, full_score, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.course_id, data.semester ?? null, data.component ?? 'total',
+      data.score ?? null, data.credit ?? 0, data.full_score ?? 100, data.notes ?? null, now, now
+    );
+    return db.prepare('SELECT * FROM grades WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:grades:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE grades SET course_id=?, semester=?, component=?, score=?, credit=?, full_score=?, notes=?, updated_at=? WHERE id=?`
+    ).run(data.course_id, data.semester, data.component, data.score, data.credit, data.full_score, data.notes ?? null, Date.now(), id);
+    return db.prepare('SELECT * FROM grades WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:grades:delete', (_e, id) => {
+    db.prepare('DELETE FROM grades WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
+// ====== v1.2.3：考试 ======
+function registerExams(db: DB) {
+  ipcMain.handle('db:exams:list', (_e, filter) => {
+    let sql = `SELECT e.*, c.name as course_name, c.color as course_color
+               FROM exams e LEFT JOIN courses c ON e.course_id = c.id`;
+    const params: any[] = [];
+    if (filter?.status) { sql += ' WHERE e.status = ?'; params.push(filter.status); }
+    else { sql += ` WHERE e.status != 'cancelled'`; }
+    sql += ' ORDER BY e.exam_date ASC';
+    return db.prepare(sql).all(params);
+  });
+  ipcMain.handle('db:exams:create', (_e, data) => {
+    const info = db.prepare(
+      `INSERT INTO exams (course_id, title, exam_date, location, duration_minutes, notes, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.course_id ?? null, data.title, data.exam_date, data.location ?? null,
+      data.duration_minutes ?? null, data.notes ?? null, data.status ?? 'upcoming', Date.now()
+    );
+    return db.prepare('SELECT * FROM exams WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:exams:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE exams SET course_id=?, title=?, exam_date=?, location=?, duration_minutes=?, notes=?, status=? WHERE id=?`
+    ).run(data.course_id ?? null, data.title, data.exam_date, data.location, data.duration_minutes, data.notes ?? null, data.status ?? 'upcoming', id);
+    return db.prepare('SELECT * FROM exams WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:exams:delete', (_e, id) => {
+    db.prepare('DELETE FROM exams WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
+// ====== v1.2.3：番茄钟 ======
+function registerPomodoro(db: DB) {
+  ipcMain.handle('db:pomodoro:list', (_e, filter) => {
+    let sql = `SELECT p.*, c.name as course_name, c.color as course_color
+               FROM pomodoro_sessions p LEFT JOIN courses c ON p.course_id = c.id`;
+    const params: any[] = [];
+    const conds: string[] = [];
+    if (filter?.from) { conds.push('p.started_at >= ?'); params.push(filter.from); }
+    if (filter?.to) { conds.push('p.started_at < ?'); params.push(filter.to); }
+    if (filter?.courseId) { conds.push('p.course_id = ?'); params.push(filter.courseId); }
+    if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
+    sql += ' ORDER BY p.started_at DESC';
+    return db.prepare(sql).all(params);
+  });
+  ipcMain.handle('db:pomodoro:create', (_e, data) => {
+    const info = db.prepare(
+      `INSERT INTO pomodoro_sessions (course_id, ref_type, ref_id, label, started_at, ended_at, minutes, mode, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.course_id ?? null, data.ref_type ?? null, data.ref_id ?? null, data.label ?? null,
+      data.started_at ?? Date.now(), data.ended_at ?? null, data.minutes ?? 25, data.mode ?? 'work', Date.now()
+    );
+    return db.prepare('SELECT * FROM pomodoro_sessions WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:pomodoro:stop', (_e, id, minutes) => {
+    db.prepare(`UPDATE pomodoro_sessions SET ended_at = ?, minutes = ? WHERE id = ?`)
+      .run(Date.now(), minutes ?? null, id);
+    return db.prepare('SELECT * FROM pomodoro_sessions WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:pomodoro:stats', (_e, from, to) => {
+    const byDay = db.prepare(
+      `SELECT strftime('%Y-%m-%d', started_at/1000, 'unixepoch', 'localtime') AS day,
+              SUM(minutes) AS minutes, COUNT(*) AS sessions
+       FROM pomodoro_sessions
+       WHERE mode = 'work' AND started_at >= ? AND started_at < ?
+       GROUP BY day ORDER BY day`
+    ).all(from, to);
+    const byCourse = db.prepare(
+      `SELECT p.course_id AS courseId, c.name AS courseName, c.color AS courseColor,
+              SUM(p.minutes) AS minutes, COUNT(*) AS sessions
+       FROM pomodoro_sessions p LEFT JOIN courses c ON p.course_id = c.id
+       WHERE p.mode = 'work' AND p.started_at >= ? AND p.started_at < ?
+       GROUP BY p.course_id ORDER BY minutes DESC`
+    ).all(from, to);
+    return { byDay, byCourse };
+  });
+}
+
+// ====== v1.2.3：习惯打卡 ======
+function registerHabits(db: DB) {
+  ipcMain.handle('db:habits:list', () => {
+    const habits = db.prepare('SELECT * FROM habits WHERE archived = 0 ORDER BY sort_order ASC, id ASC').all() as any[];
+    const checkins = db.prepare('SELECT habit_id, date FROM habit_checkins').all() as Array<{ habit_id: number; date: string }>;
+    const byHabit = new Map<number, string[]>();
+    for (const c of checkins) {
+      if (!byHabit.has(c.habit_id)) byHabit.set(c.habit_id, []);
+      byHabit.get(c.habit_id)!.push(c.date);
+    }
+    return habits.map((h) => ({ ...h, checkinDates: (byHabit.get(h.id) || []).sort() }));
+  });
+  ipcMain.handle('db:habits:create', (_e, data) => {
+    const info = db.prepare(
+      `INSERT INTO habits (name, emoji, color, frequency, target_per_week, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.name, data.emoji ?? '🔥', data.color ?? '#00FF88', data.frequency ?? 'daily',
+      data.target_per_week ?? null, data.sort_order ?? 0, Date.now()
+    );
+    return db.prepare('SELECT * FROM habits WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:habits:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE habits SET name=?, emoji=?, color=?, frequency=?, target_per_week=?, archived=?, sort_order=? WHERE id=?`
+    ).run(data.name, data.emoji, data.color, data.frequency, data.target_per_week, data.archived ? 1 : 0, data.sort_order ?? 0, id);
+    return db.prepare('SELECT * FROM habits WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:habits:delete', (_e, id) => {
+    db.prepare('DELETE FROM habit_checkins WHERE habit_id = ?').run(id);
+    db.prepare('DELETE FROM habits WHERE id = ?').run(id);
+    return { ok: true };
+  });
+  // 打卡 / 取消打卡（同一天幂等切换）
+  ipcMain.handle('db:habits:toggleCheckin', (_e, habitId, date) => {
+    const existing = db.prepare('SELECT id FROM habit_checkins WHERE habit_id = ? AND date = ?').get(habitId, date);
+    if (existing) {
+      db.prepare('DELETE FROM habit_checkins WHERE id = ?').run((existing as any).id);
+      return { ok: true, checked: false };
+    }
+    db.prepare('INSERT INTO habit_checkins (habit_id, date, created_at) VALUES (?, ?, ?)').run(habitId, date, Date.now());
+    return { ok: true, checked: true };
+  });
+}
+
+// ====== v1.2.3：出勤 ======
+function registerAttendance(db: DB) {
+  ipcMain.handle('db:attendance:list', (_e, filter) => {
+    let sql = `SELECT a.*, c.name as course_name, c.color as course_color
+               FROM attendance a LEFT JOIN courses c ON a.course_id = c.id`;
+    const params: any[] = [];
+    if (filter?.courseId) { sql += ' WHERE a.course_id = ?'; params.push(filter.courseId); }
+    sql += ' ORDER BY a.date DESC';
+    return db.prepare(sql).all(params);
+  });
+  ipcMain.handle('db:attendance:upsert', (_e, data) => {
+    db.prepare(
+      `INSERT INTO attendance (course_id, date, status, note, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(course_id, date) DO UPDATE SET status = excluded.status, note = excluded.note`
+    ).run(data.course_id, data.date, data.status, data.note ?? null, Date.now());
+    return db.prepare('SELECT * FROM attendance WHERE course_id = ? AND date = ?').get(data.course_id, data.date);
+  });
+  ipcMain.handle('db:attendance:stats', (_e, courseId) => {
+    const sql = `SELECT status, COUNT(*) AS n FROM attendance ${courseId ? 'WHERE course_id = ?' : ''} GROUP BY status`;
+    const rows = courseId ? db.prepare(sql).all(courseId) : db.prepare(sql).all();
+    const out: Record<string, number> = { present: 0, late: 0, absent: 0, leave: 0 };
+    for (const r of rows as any[]) out[r.status] = r.n;
+    return out;
+  });
+}
+
+// ====== v1.2.3：小组共享清单（本地镜像 CRUD；远端同步在 grouplists 模块） ======
+function registerGroupLists(db: DB) {
+  ipcMain.handle('db:groupLists:list', () =>
+    db.prepare('SELECT * FROM group_lists ORDER BY created_at DESC').all()
+  );
+  ipcMain.handle('db:groupLists:delete', (_e, id) => {
+    db.prepare('DELETE FROM group_list_items WHERE list_id = ?').run(id);
+    db.prepare('DELETE FROM group_lists WHERE id = ?').run(id);
+    return { ok: true };
+  });
+  ipcMain.handle('db:groupListItems:list', (_e, listId) =>
+    db.prepare('SELECT * FROM group_list_items WHERE list_id = ? ORDER BY sort_order ASC, id ASC').all(listId)
+  );
+  ipcMain.handle('db:groupListItems:create', (_e, data) => {
+    const info = db.prepare(
+      `INSERT INTO group_list_items (list_id, remote_key, title, assignee, status, due_date, sort_order, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      data.list_id, data.remote_key ?? null, data.title, data.assignee ?? null,
+      data.status ?? 'todo', data.due_date ?? null, data.sort_order ?? 0, Date.now()
+    );
+    return db.prepare('SELECT * FROM group_list_items WHERE id = ?').get(info.lastInsertRowid);
+  });
+  ipcMain.handle('db:groupListItems:update', (_e, id, data) => {
+    db.prepare(
+      `UPDATE group_list_items SET title=?, assignee=?, status=?, due_date=?, sort_order=?, updated_at=? WHERE id=?`
+    ).run(data.title, data.assignee ?? null, data.status ?? 'todo', data.due_date ?? null, data.sort_order ?? 0, Date.now(), id);
+    return db.prepare('SELECT * FROM group_list_items WHERE id = ?').get(id);
+  });
+  ipcMain.handle('db:groupListItems:delete', (_e, id) => {
+    db.prepare('DELETE FROM group_list_items WHERE id = ?').run(id);
+    return { ok: true };
+  });
+}
+
+// ====== v1.2.3：统计报表（周报 / 月报聚合） ======
+function registerStatsReport(db: DB) {
+  ipcMain.handle('db:stats:report', (_e, from, to) => {
+    const reqDoneByDay = db.prepare(
+      `SELECT strftime('%Y-%m-%d', completed_at/1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS n
+       FROM course_requirements
+       WHERE completed_at >= ? AND completed_at < ?
+       GROUP BY day ORDER BY day`
+    ).all(from, to);
+    const reqDoneByCourse = db.prepare(
+      `SELECT r.course_id AS courseId, c.name AS courseName, c.color AS courseColor, COUNT(*) AS n
+       FROM course_requirements r LEFT JOIN courses c ON r.course_id = c.id
+       WHERE r.completed_at >= ? AND r.completed_at < ?
+       GROUP BY r.course_id ORDER BY n DESC`
+    ).all(from, to);
+    const habitCheckinsByDay = db.prepare(
+      `SELECT date AS day, COUNT(*) AS n
+       FROM habit_checkins WHERE date >= ? AND date < ?
+       GROUP BY date ORDER BY date`
+    ).all(dayjsDate(from), dayjsDate(to));
+    const attendanceSummary = (() => {
+      const rows = db.prepare(
+        `SELECT status, COUNT(*) AS n FROM attendance WHERE date >= ? AND date < ? GROUP BY status`
+      ).all(dayjsDate(from), dayjsDate(to));
+      const out: Record<string, number> = { present: 0, late: 0, absent: 0, leave: 0 };
+      for (const r of rows as any[]) out[r.status] = r.n;
+      return out;
+    })();
+    return { reqDoneByDay, reqDoneByCourse, habitCheckinsByDay, attendanceSummary, range: { from, to } };
+  });
+}
+
+/** 毫秒时间戳 → 'YYYY-MM-DD'（本地时区） */
+function dayjsDate(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function registerAllIpc(db: DB) {
   // 统一 IPC 错误包装：所有 handler 的异常都记入主进程日志后再抛回渲染进程。
   // 保持 rejection 语义（页面侧现有 .catch / try-catch 不受影响），但主进程可留痕排查。
@@ -773,4 +1053,15 @@ export function registerAllIpc(db: DB) {
   registerCanvases(db);
   registerCanvasNodes(db);
   registerCanvasEdges(db);
+  // v1.2.3 学业 / 专注 / 习惯 / 出勤 / 小组清单 / 统计报表
+  registerGrades(db);
+  registerExams(db);
+  registerPomodoro(db);
+  registerHabits(db);
+  registerAttendance(db);
+  registerGroupLists(db);
+  registerStatsReport(db);
+  // v1.2.3 WebDAV 云同步 + 小组清单远端同步（GitHub）
+  registerWebdav(db);
+  registerGroupSync(db);
 }

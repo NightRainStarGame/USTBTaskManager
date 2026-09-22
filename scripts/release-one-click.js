@@ -175,6 +175,18 @@ try {
   if (!fs.existsSync(ASAR_PATH(version))) {
     throw new Error(`找不到 ${ASAR_PATH(version)}`);
   }
+  // v1.2.3 重发支持：stash 前把已有同版本缓存备份为 <version>-pre（作为「旧version → 新version」补丁基线）
+  {
+    const cacheAsar = path.join(asarPatch.CACHE_DIR, `${version}.asar`);
+    const cacheJson = path.join(asarPatch.CACHE_DIR, `${version}.json`);
+    if (fs.existsSync(cacheAsar)) {
+      fs.copyFileSync(cacheAsar, path.join(asarPatch.CACHE_DIR, `${version}-pre.asar`));
+      if (fs.existsSync(cacheJson)) {
+        fs.copyFileSync(cacheJson, path.join(asarPatch.CACHE_DIR, `${version}-pre.json`));
+      }
+      console.log(`    已备份旧缓存 → ${version}-pre.asar（重发基线，保留回退）`);
+    }
+  }
   newAsarInfo = asarPatch.stashAsar(version, ASAR_PATH(version));
   ok(`app.asar sha256=${newAsarInfo.sha256.slice(0, 16)}…`);
 
@@ -215,7 +227,30 @@ try {
       console.log(`    [!] 历史 asar 信息缺失且无法从 NSIS 抽出，跳过补丁`);
     }
   } else if (prevDistVersion === version) {
-    console.log(`    [!] prevDistVersion === version，跳过自指补丁`);
+    // v1.2.3 重发场景：同版本号重打包 —— 用重发前备份（<version>-pre）作基线生成补丁。
+    // updater 已支持「同版本号但 asar 哈希不同 → 有更新」（d28d1eb），fromVersion 允许等于 version。
+    const preInfo = asarPatch.readAsarInfo(`${version}-pre`);
+    if (preInfo && fs.existsSync(path.join(asarPatch.CACHE_DIR, `${version}-pre.asar`))) {
+      const patchesDir = path.join(leastDir, 'patches');
+      fs.mkdirSync(patchesDir, { recursive: true });
+      const built = asarPatch.buildPatchZip({
+        fromVersion: version, // 旧 version（pre 基线）
+        fromInfo: preInfo,
+        toVersion: version,   // 新 version（刚 stash 的）
+        toAsarPath: ASAR_PATH(version),
+        outDir: patchesDir,
+      });
+      patchInfo = {
+        fromVersion: version,
+        path: built.relPath,
+        sha256: built.sha256,
+        size: built.size,
+        manifest: built.manifest,
+      };
+      ok(`重发补丁 zip -> ${built.relPath}`);
+    } else {
+      console.log(`    [!] prevDistVersion === version 且无 ${version}-pre 备份，跳过自指补丁`);
+    }
   } else {
     console.log('    无前一版本（first release），跳过补丁');
   }
@@ -319,8 +354,18 @@ if (!NO_RELEASE_PAGE) {
         continue;
       }
       if (existingNames.has(a.name)) {
-        console.log(`    附件 ${a.name} 已存在，跳过`);
-        continue;
+        // v1.2.3 重发支持：删除同名旧附件后重传（否则 Release 页会一直挂着旧文件）
+        try {
+          const assetsArr = JSON.parse(curlJson(token, `${REPO_API}/releases/${releaseId}/assets?per_page=100`, 'GET'));
+          const oldAsset = Array.isArray(assetsArr) && assetsArr.find((x) => x.name === a.name);
+          if (oldAsset) {
+            curlJson(token, `https://api.github.com/repos/NightRainStarGame/USTBTaskManager/releases/assets/${oldAsset.id}`, 'DELETE');
+            console.log(`    附件 ${a.name} 已存在 → 已删除旧附件（id=${oldAsset.id}），重新上传`);
+          }
+        } catch (e) {
+          console.log(`    [!] 删除旧附件失败：${e.message}，跳过上传`);
+          continue;
+        }
       }
       const sizeMB = fs.statSync(a.path).size / 1024 / 1024;
       console.log(`    上传 ${a.name}（${sizeMB.toFixed(1)} MB）…`);

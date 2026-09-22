@@ -76,6 +76,8 @@ export interface Requirement {
   session_date?: string | null;
   /** 发布人（同步作业携带） */
   publisher?: string | null;
+  /** v1.2.3：周期任务（null=一次性 | daily/weekly/biweekly，完成时自动生成下一轮） */
+  recurrence?: 'daily' | 'weekly' | 'biweekly' | null;
 }
 
 export interface CalendarEvent {
@@ -278,4 +280,109 @@ export interface CanvasEdge {
   /** JSON 字符串：sourceHandle/targetHandle 等端点数据 */
   data_json: string;
   created_at: number;
+}
+
+// ===== v1.2.3 学业 / 专注 / 习惯 / 出勤 / 小组清单 =====
+
+/** 成绩（一门课可有多条组成部分 + 一条总评） */
+export interface Grade {
+  id: number;
+  course_id: number;
+  semester?: string | null;
+  /** total=总评 | regular=平时 | midterm=期中 | final=期末 | other */
+  component: 'total' | 'regular' | 'midterm' | 'final' | 'other';
+  score: number | null;
+  credit: number;
+  full_score: number;
+  notes?: string | null;
+  created_at: number;
+  updated_at: number;
+  course_name?: string;
+  course_color?: string;
+}
+
+/** 考试 */
+export interface Exam {
+  id: number;
+  course_id: number | null;
+  title: string;
+  exam_date: number;
+  location?: string | null;
+  duration_minutes?: number | null;
+  notes?: string | null;
+  /** upcoming | done | cancelled */
+  status: string;
+  created_at: number;
+  course_name?: string;
+  course_color?: string;
+}
+
+/** 番茄钟专注记录 */
+export interface PomodoroSession {
+  id: number;
+  course_id: number | null;
+  /** requirement | task | exam | habit | null */
+  ref_type?: string | null;
+  ref_id?: number | null;
+  label?: string | null;
+  started_at: number;
+  ended_at?: number | null;
+  minutes: number;
+  /** work | break */
+  mode: string;
+  created_at: number;
+  course_name?: string;
+  course_color?: string;
+}
+
+/** 习惯（checkinDates 由 list 接口附带） */
+export interface Habit {
+  id: number;
+  name: string;
+  emoji: string;
+  color: string;
+  /** 'daily' | 'weekly' */
+  frequency: string;
+  target_per_week: number | null;
+  archived: number;
+  sort_order: number;
+  created_at: number;
+  checkinDates: string[];
+}
+
+/** 出勤记录 */
+export interface Attendance {
+  id: number;
+  course_id: number;
+  /** YYYY-MM-DD */
+  date: string;
+  status: 'present' | 'late' | 'absent' | 'leave';
+  note?: string | null;
+  created_at: number;
+  course_name?: string;
+  course_color?: string;
+}
+
+/** 小组共享清单（本地镜像） */
+export interface GroupList {
+  id: number;
+  group_code: string;
+  name: string;
+  owner_name?: string | null;
+  last_synced_at?: number | null;
+  created_at: number;
+}
+
+/** 小组清单条目 */
+export interface GroupListItem {
+  id: number;
+  list_id: number;
+  remote_key?: string | null;
+  title: string;
+  assignee?: string | null;
+  /** todo | doing | done */
+  status: 'todo' | 'doing' | 'done';
+  due_date?: number | null;
+  sort_order: number;
+  updated_at: number;
 }

@@ -140,6 +140,58 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       },
       stats: {
         dashboard: () => invoke('db:stats:dashboard'),
+        /** v1.2.3：周报 / 月报聚合（时间范围毫秒时间戳） */
+        report: (from: number, to: number) => invoke('db:stats:report', from, to) as Promise<{
+          reqDoneByDay: Array<{ day: string; n: number }>;
+          reqDoneByCourse: Array<{ courseId: number; courseName: string | null; courseColor: string | null; n: number }>;
+          habitCheckinsByDay: Array<{ day: string; n: number }>;
+          attendanceSummary: Record<string, number>;
+          range: { from: number; to: number };
+        }>,
+      },
+      // ── v1.2.3 新模块 ──
+      grades: {
+        list: (filter?: { semester?: string; courseId?: number }) => invoke('db:grades:list', filter),
+        create: (data: any) => invoke('db:grades:create', data),
+        update: (id: number, data: any) => invoke('db:grades:update', id, data),
+        delete: (id: number) => invoke('db:grades:delete', id),
+      },
+      exams: {
+        list: (filter?: { status?: string }) => invoke('db:exams:list', filter),
+        create: (data: any) => invoke('db:exams:create', data),
+        update: (id: number, data: any) => invoke('db:exams:update', id, data),
+        delete: (id: number) => invoke('db:exams:delete', id),
+      },
+      pomodoro: {
+        list: (filter?: { from?: number; to?: number; courseId?: number }) => invoke('db:pomodoro:list', filter),
+        create: (data: any) => invoke('db:pomodoro:create', data),
+        stop: (id: number, minutes: number) => invoke('db:pomodoro:stop', id, minutes),
+        stats: (from: number, to: number) => invoke('db:pomodoro:stats', from, to) as Promise<{
+          byDay: Array<{ day: string; minutes: number; sessions: number }>;
+          byCourse: Array<{ courseId: number; courseName: string | null; courseColor: string | null; minutes: number; sessions: number }>;
+        }>,
+      },
+      habits: {
+        list: () => invoke('db:habits:list') as Promise<Array<{ id: number; name: string; emoji: string; color: string; frequency: string; target_per_week: number | null; archived: number; sort_order: number; created_at: number; checkinDates: string[] }>>,
+        create: (data: any) => invoke('db:habits:create', data),
+        update: (id: number, data: any) => invoke('db:habits:update', id, data),
+        delete: (id: number) => invoke('db:habits:delete', id),
+        toggleCheckin: (habitId: number, date: string) => invoke('db:habits:toggleCheckin', habitId, date) as Promise<{ ok: boolean; checked: boolean }>,
+      },
+      attendance: {
+        list: (filter?: { courseId?: number }) => invoke('db:attendance:list', filter),
+        upsert: (data: { course_id: number; date: string; status: string; note?: string }) => invoke('db:attendance:upsert', data),
+        stats: (courseId?: number) => invoke('db:attendance:stats', courseId) as Promise<Record<string, number>>,
+      },
+      groupLists: {
+        list: () => invoke('db:groupLists:list'),
+        delete: (id: number) => invoke('db:groupLists:delete', id),
+      },
+      groupListItems: {
+        list: (listId: number) => invoke('db:groupListItems:list', listId),
+        create: (data: any) => invoke('db:groupListItems:create', data),
+        update: (id: number, data: any) => invoke('db:groupListItems:update', id, data),
+        delete: (id: number) => invoke('db:groupListItems:delete', id),
       },
     },
     // 微信小程序（预留接口）
@@ -530,6 +582,40 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       }>>,
       restore: (id: number) => invoke('cleanup:bin:restore', id) as Promise<{ ok: boolean; error?: string; newId?: number }>,
       purge: (id?: number | null) => invoke('cleanup:bin:purge', id ?? null) as Promise<{ purged: number }>,
+    },
+
+    /** v1.2.3：WebDAV 云同步（坚果云等） */
+    webdav: {
+      config: () => invoke('webdav:config') as Promise<{ url: string; user: string; hasPass: boolean; configured: boolean }>,
+      save: (cfg: { url?: string; user?: string; pass?: string; clearPass?: boolean }) => invoke('webdav:save', cfg) as Promise<{ ok: boolean }>,
+      test: () => invoke('webdav:test') as Promise<{ ok: boolean; error?: string; warning?: string }>,
+      push: () => invoke('webdav:push') as Promise<{ ok: boolean; size?: number; counts?: Record<string, number>; exportedAt?: number; error?: string }>,
+      remoteInfo: () => invoke('webdav:remoteInfo') as Promise<{
+        ok: boolean; exists?: boolean; exportedAt?: number; appVersion?: string;
+        counts?: Record<string, number>; error?: string;
+      }>,
+      pull: () => invoke('webdav:pull') as Promise<{
+        ok: boolean; restored?: Record<string, number>; safetyBackupPath?: string;
+        exportedAt?: number; error?: string;
+      }>,
+    },
+
+    /** v1.2.3：小组共享清单（GitHub 远端同步，与作业同步共用令牌） */
+    groups: {
+      create: (name: string) => invoke('groups:create', name) as Promise<{ ok: boolean; id?: number; code?: string; name?: string; error?: string }>,
+      join: (code: string) => invoke('groups:join', code) as Promise<{ ok: boolean; id?: number; code?: string; name?: string; items?: number; error?: string }>,
+      pull: (listId: number) => invoke('groups:pull', listId) as Promise<{ ok: boolean; items?: number; updatedAt?: number; error?: string }>,
+      publish: (listId: number) => invoke('groups:publish', listId) as Promise<{ ok: boolean; items?: number; error?: string }>,
+      leave: (listId: number) => invoke('groups:leave', listId) as Promise<{ ok: boolean }>,
+    },
+
+    /** v1.2.3：主进程推送事件（托盘 / 全局快捷键） */
+    system: {
+      /** 订阅「呼出快速添加」（Ctrl+Shift+A / 托盘），返回取消订阅函数 */
+      onQuickAdd: (cb: () => void) => {
+        if (subscribe) return subscribe('app:quickadd', cb);
+        return () => { /* 浏览器 / 移动端无此事件 */ };
+      },
     },
   };
 

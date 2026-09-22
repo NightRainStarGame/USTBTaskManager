@@ -20,6 +20,15 @@ export const BACKUP_TABLES = [
   'projects',
   'project_tasks',
   'user_profiles',
+  // v1.2.3 新模块（依赖 courses / 自身层级）
+  'grades',
+  'exams',
+  'pomodoro_sessions',
+  'habits',
+  'habit_checkins',
+  'attendance',
+  'group_lists',
+  'group_list_items',
   'settings',
 ] as const;
 

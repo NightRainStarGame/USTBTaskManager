@@ -416,6 +416,131 @@ function runMigrations(db: Database.Database) {
     }
   }
 
+  // ── v1.2.3 学业 / 专注 / 习惯 / 出勤 / 小组清单 ──────────────────
+  // 成绩（一门课可有多条组成部分成绩 + 一条总评）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS grades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_id INTEGER NOT NULL,
+      semester TEXT,
+      component TEXT DEFAULT 'total',
+      score REAL,
+      credit REAL DEFAULT 0,
+      full_score REAL DEFAULT 100,
+      notes TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 考试（考试周模式）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS exams (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_id INTEGER,
+      title TEXT NOT NULL,
+      exam_date INTEGER NOT NULL,
+      location TEXT,
+      duration_minutes INTEGER,
+      notes TEXT,
+      status TEXT DEFAULT 'upcoming',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL
+    );
+  `);
+
+  // 番茄钟专注记录（可绑课程 / 任意任务引用）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_id INTEGER,
+      ref_type TEXT,
+      ref_id INTEGER,
+      label TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      minutes INTEGER NOT NULL,
+      mode TEXT DEFAULT 'work',
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  // 习惯打卡（长期追踪）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS habits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      emoji TEXT DEFAULT '🔥',
+      color TEXT DEFAULT '#00FF88',
+      frequency TEXT DEFAULT 'daily',
+      target_per_week INTEGER,
+      archived INTEGER DEFAULT 0,
+      sort_order INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS habit_checkins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      habit_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      note TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(habit_id, date),
+      FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 出勤记录（按课程按天打卡）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('present','late','absent','leave')),
+      note TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(course_id, date),
+      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 小组共享清单（远端 GitHub grouplists/<groupCode>.json 为真源，本地为镜像）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS group_lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      owner_name TEXT,
+      last_synced_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS group_list_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id INTEGER NOT NULL,
+      remote_key TEXT,
+      title TEXT NOT NULL,
+      assignee TEXT,
+      status TEXT DEFAULT 'todo',
+      due_date INTEGER,
+      sort_order INTEGER DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (list_id) REFERENCES group_lists(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 作业周期任务：none(默认)/daily/weekly/biweekly，完成时自动生成下一轮
+  addColumnIfMissing(db, 'course_requirements', 'recurrence', 'TEXT');
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_grades_course ON grades(course_id);
+    CREATE INDEX IF NOT EXISTS idx_exams_date ON exams(exam_date);
+    CREATE INDEX IF NOT EXISTS idx_pomo_started ON pomodoro_sessions(started_at);
+    CREATE INDEX IF NOT EXISTS idx_checkin_habit ON habit_checkins(habit_id);
+    CREATE INDEX IF NOT EXISTS idx_checkin_date ON habit_checkins(date);
+    CREATE INDEX IF NOT EXISTS idx_att_course ON attendance(course_id);
+    CREATE INDEX IF NOT EXISTS idx_gli_list ON group_list_items(list_id);
+  `);
+
   // 迁移：若 settings 里已有 profile_* 键但 user_profiles 为空，则生成一条默认资料
   const profileExists = (db.prepare('SELECT COUNT(*) as c FROM user_profiles').get() as any).c;
   if (profileExists === 0) {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
-import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package } from 'lucide-react';
+import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package, Bell, BellRing, Timer, Cloud } from 'lucide-react';
 import Modal from '@/components/Modal';
 import AboutPanel from '@/components/AboutPanel';
 import dayjs from 'dayjs';
@@ -531,6 +531,88 @@ export default function SettingsPage() {
     }
   };
 
+  // ===== v1.2.3：WebDAV 云同步 =====
+  const [webdavCfg, setWebdavCfg] = useState<{ url: string; user: string; pass: string }>({ url: '', user: '', pass: '' });
+  const [webdavBusy, setWebdavBusy] = useState('');
+  const [webdavMsg, setWebdavMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    window.taskAPI.webdav.config().then(c => setWebdavCfg({ url: c.url, user: c.user, pass: '' }));
+  }, []);
+
+  const webdavFlash = (ok: boolean, text: string) => {
+    setWebdavMsg({ ok, text });
+    setTimeout(() => setWebdavMsg(null), 6000);
+  };
+
+  /** v1.2.3：单键设置立即写库 + 同步 store */
+  const persistSetting = async (key: string, value: string) => {
+    await window.taskAPI.db.settings.set(key, value);
+    setSettings({ ...settings, [key]: value });
+  };
+
+  const webdavSave = async () => {
+    setWebdavBusy('save');
+    try {
+      await window.taskAPI.webdav.save({
+        url: webdavCfg.url, user: webdavCfg.user,
+        ...(webdavCfg.pass ? { pass: webdavCfg.pass } : {}),
+      });
+      webdavFlash(true, '配置已保存');
+    } finally { setWebdavBusy(''); }
+  };
+
+  const webdavTest = async () => {
+    setWebdavBusy('test');
+    try {
+      await webdavSave();
+      const r = await window.taskAPI.webdav.test();
+      if (r.ok) webdavFlash(true, r.warning || '连接成功 ✓（目录可写）');
+      else webdavFlash(false, r.error || '连接失败');
+    } finally { setWebdavBusy(''); }
+  };
+
+  const webdavPush = async () => {
+    setWebdavBusy('push');
+    try {
+      const r = await window.taskAPI.webdav.push();
+      if (r.ok) {
+        const n = Object.values(r.counts || {}).reduce((a, b) => a + b, 0);
+        webdavFlash(true, `已上传 ${(r.size! / 1024).toFixed(1)} KB（${n} 条记录）`);
+      } else webdavFlash(false, r.error || '上传失败');
+    } finally { setWebdavBusy(''); }
+  };
+
+  const webdavInfo = async () => {
+    setWebdavBusy('info');
+    try {
+      const r = await window.taskAPI.webdav.remoteInfo();
+      if (!r.ok) { webdavFlash(false, r.error || '查询失败'); return; }
+      if (!r.exists) { webdavFlash(true, '云端还没有备份——先点「上传备份」'); return; }
+      const n = Object.values(r.counts || {}).reduce((a, b) => a + b, 0);
+      webdavFlash(true, `云端备份：${dayjs(r.exportedAt).format('YYYY-MM-DD HH:mm')} · v${r.appVersion} · ${n} 条记录`);
+    } finally { setWebdavBusy(''); }
+  };
+
+  const webdavPull = async () => {
+    if (!confirm('将从云端备份覆盖本地全部数据（会先自动做安全备份）。确定继续？')) return;
+    setWebdavBusy('pull');
+    try {
+      const r = await window.taskAPI.webdav.pull();
+      if (r.ok) {
+        webdavFlash(true, `已恢复（云端备份于 ${dayjs(r.exportedAt).format('MM-DD HH:mm')}）· 建议重启应用`);
+      } else webdavFlash(false, r.error || '恢复失败');
+    } finally { setWebdavBusy(''); }
+  };
+
+  const testNotification = () => {
+    try {
+      new Notification('[StarOS] 测试通知', { body: '通知通道正常 ✓ 上课/作业/考试提醒将按时到达' });
+    } catch {
+      webdavFlash(false, '当前环境不支持系统通知');
+    }
+  };
+
   // ===== 数据管理：全量备份 / 恢复 / 完整性检查 =====
   const [backupStatus, setBackupStatus] = useState<{
     integrity: string; foreignKeyViolations: number; journalMode: string;
@@ -855,6 +937,104 @@ export default function SettingsPage() {
                 <div key={t} className="flex justify-between"><span className="text-text-dim">{t}</span><span className="text-text-secondary">{c}</span></div>
               ))}
             </div>
+          </div>
+        )}
+      </Section>
+
+      {/* v1.2.3：提醒通知 */}
+      <Section icon={<Bell size={14} />} title="提醒通知（v1.2.3 新增）">
+        <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
+          <div>· 应用常驻托盘后台检查（每分钟），上课前、作业截止前、考试前<strong className="text-neon-green">系统弹窗提醒</strong></div>
+          <div>· 关闭主窗口不影响提醒（托盘常驻，右键托盘可退出）</div>
+        </div>
+        <Row label="系统提醒">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={(settings.notify_enabled ?? '1') !== '0'}
+              onChange={(e) => persistSetting('notify_enabled', e.target.checked ? '1' : '0')}
+              className="accent-[#00FF88]"
+            />
+            <span className="font-mono text-[10px] text-text-dim">{(settings.notify_enabled ?? '1') !== '0' ? '已开启（总开关）' : '全部提醒已静默'}</span>
+          </div>
+        </Row>
+        <Row label="上课前提醒">
+          <div className="flex items-center gap-1">
+            <input type="number" min={0} max={120} value={Number(settings.notify_class_minutes ?? 15)}
+              onChange={(e) => persistSetting('notify_class_minutes', String(Math.max(0, Math.min(120, Number(e.target.value) || 0))))}
+              className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+            <span className="text-xs text-text-dim">分钟前（0=关闭）</span>
+          </div>
+        </Row>
+        <Row label="作业提前24h">
+          <input type="checkbox" checked={(settings.notify_due_24h ?? '1') !== '0'}
+            onChange={(e) => persistSetting('notify_due_24h', e.target.checked ? '1' : '0')} className="accent-[#00FF88]" />
+        </Row>
+        <Row label="作业提前1h">
+          <input type="checkbox" checked={(settings.notify_due_1h ?? '1') !== '0'}
+            onChange={(e) => persistSetting('notify_due_1h', e.target.checked ? '1' : '0')} className="accent-[#00FF88]" />
+        </Row>
+        <Row label="考试前1天">
+          <input type="checkbox" checked={(settings.notify_exam_1d ?? '1') !== '0'}
+            onChange={(e) => persistSetting('notify_exam_1d', e.target.checked ? '1' : '0')} className="accent-[#00FF88]" />
+        </Row>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={testNotification} className="btn-ghost"><BellRing size={14} /> 发送测试通知</button>
+        </div>
+      </Section>
+
+      {/* v1.2.3：番茄钟 */}
+      <Section icon={<Timer size={14} />} title="番茄钟（v1.2.3 新增）">
+        <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
+          <div>· 右下角悬浮番茄钟（所有页面可用），专注结束自动记录并统计到<strong className="text-neon-green">「统计」页</strong></div>
+        </div>
+        <Row label="专注时长">
+          <div className="flex items-center gap-1">
+            <input type="number" min={5} max={120} value={Number(settings.pomodoro_work ?? 25)}
+              onChange={(e) => persistSetting('pomodoro_work', String(Math.max(5, Math.min(120, Number(e.target.value) || 25))))}
+              className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+            <span className="text-xs text-text-dim">分钟</span>
+          </div>
+        </Row>
+        <Row label="休息时长">
+          <div className="flex items-center gap-1">
+            <input type="number" min={1} max={60} value={Number(settings.pomodoro_break ?? 5)}
+              onChange={(e) => persistSetting('pomodoro_break', String(Math.max(1, Math.min(60, Number(e.target.value) || 5))))}
+              className="input-neon w-16 py-0.5 px-2 text-xs text-right" />
+            <span className="text-xs text-text-dim">分钟</span>
+          </div>
+        </Row>
+      </Section>
+
+      {/* v1.2.3：WebDAV 云同步 */}
+      <Section icon={<Cloud size={14} />} title="WebDAV 云同步（v1.2.3 新增）">
+        <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
+          <div>· 把全量备份推到坚果云等 WebDAV 网盘，换机 / 多设备随时<strong className="text-neon-green">一键恢复</strong></div>
+          <div>· 坚果云：网页端「账户信息 → 安全选项 → 添加应用密码」；地址填 <span className="font-mono text-neon-green">https://dav.jianguoyun.com/dav/</span></div>
+          <div>· 恢复前自动安全备份一份到本地，放心覆盖</div>
+        </div>
+        <Row label="服务器地址">
+          <input value={webdavCfg.url} onChange={(e) => setWebdavCfg({ ...webdavCfg, url: e.target.value })}
+            className="input-neon flex-1 min-w-48 text-xs" placeholder="https://dav.jianguoyun.com/dav/" />
+        </Row>
+        <Row label="账号">
+          <input value={webdavCfg.user} onChange={(e) => setWebdavCfg({ ...webdavCfg, user: e.target.value })}
+            className="input-neon flex-1 min-w-48 text-xs" placeholder="you@example.com" />
+        </Row>
+        <Row label="应用密码">
+          <input type="password" value={webdavCfg.pass} onChange={(e) => setWebdavCfg({ ...webdavCfg, pass: e.target.value })}
+            className="input-neon flex-1 min-w-48 text-xs" placeholder="留空 = 不修改已存密码" />
+        </Row>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={webdavSave} disabled={!!webdavBusy} className="btn-ghost"><Save size={14} /> 保存</button>
+          <button onClick={webdavTest} disabled={!!webdavBusy} className="btn-neon">{webdavBusy === 'test' ? '测试中…' : '测试连接'}</button>
+          <button onClick={webdavPush} disabled={!!webdavBusy} className="btn-neon"><Upload size={14} /> {webdavBusy === 'push' ? '上传中…' : '上传备份'}</button>
+          <button onClick={webdavInfo} disabled={!!webdavBusy} className="btn-ghost">{webdavBusy === 'info' ? '查询中…' : '云端信息'}</button>
+          <button onClick={webdavPull} disabled={!!webdavBusy} className="btn-neon btn-neon-yellow"><Download size={14} /> {webdavBusy === 'pull' ? '恢复中…' : '从云端恢复'}</button>
+        </div>
+        {webdavMsg && (
+          <div className={`mt-3 p-3 rounded-md border font-mono text-xs break-all ${webdavMsg.ok ? 'border-neon-green/40 text-neon-green bg-neon-green/5' : 'border-neon-danger/50 text-neon-danger bg-neon-danger/5'}`}>
+            {webdavMsg.ok ? '✓ ' : '✗ '}{webdavMsg.text}
           </div>
         )}
       </Section>

@@ -54,6 +54,15 @@ let settings: Record<string, any> = {
 let userProfiles: UserProfile[] = [];
 let courseNotes: CourseNote[] = [];
 let miniPrograms: CourseMiniProgram[] = [];
+// v1.2.3 新模块内存 mock
+let gradesMock: any[] = [];
+let examsMock: any[] = [];
+let pomoMock: any[] = [];
+let habitsMock: any[] = [];
+let checkinsMock: Array<{ habit_id: number; date: string; created_at: number }> = [];
+let attendanceMock: any[] = [];
+let groupListsMock: any[] = [];
+let groupItemsMock: any[] = [];
 
 // ---------- 贝壳课表（USTB）Mock 状态 ----------
 const ustbMock = {
@@ -270,6 +279,70 @@ export function createBrowserApi() {
       },
       stats: {
         dashboard: async () => { await delay(); return computeStats(); },
+        // v1.2.3：统计报表（浏览器预览返回空聚合）
+        report: async (from: number, to: number) => {
+          await delay();
+          return {
+            reqDoneByDay: [] as Array<{ day: string; n: number }>,
+            reqDoneByCourse: [] as Array<{ courseId: number; courseName: string | null; courseColor: string | null; n: number }>,
+            habitCheckinsByDay: [] as Array<{ day: string; n: number }>,
+            attendanceSummary: { present: 0, late: 0, absent: 0, leave: 0 },
+            range: { from, to },
+          };
+        },
+      },
+      // ── v1.2.3 新模块（内存 mock） ──
+      grades: {
+        list: async () => { await delay(); return gradesMock.map(withCourseInfo); },
+        create: async (data: any) => { await delay(); const g = { id: nextId(), created_at: Date.now(), updated_at: Date.now(), ...data }; gradesMock.push(g); return g; },
+        update: async (id: number, data: any) => { await delay(); const i = gradesMock.findIndex((g) => g.id === id); if (i >= 0) gradesMock[i] = { ...gradesMock[i], ...data, updated_at: Date.now() }; return gradesMock[i]; },
+        delete: async (id: number) => { await delay(); gradesMock = gradesMock.filter((g) => g.id !== id); return { ok: true }; },
+      },
+      exams: {
+        list: async () => { await delay(); return examsMock.map(withCourseInfo).filter((e: any) => e.status !== 'cancelled'); },
+        create: async (data: any) => { await delay(); const e = { id: nextId(), created_at: Date.now(), status: 'upcoming', ...data }; examsMock.push(e); return e; },
+        update: async (id: number, data: any) => { await delay(); const i = examsMock.findIndex((e) => e.id === id); if (i >= 0) examsMock[i] = { ...examsMock[i], ...data }; return examsMock[i]; },
+        delete: async (id: number) => { await delay(); examsMock = examsMock.filter((e) => e.id !== id); return { ok: true }; },
+      },
+      pomodoro: {
+        list: async () => { await delay(); return [...pomoMock].map(withCourseInfo); },
+        create: async (data: any) => { await delay(); const p = { id: nextId(), created_at: Date.now(), mode: 'work', ...data }; pomoMock.push(p); return p; },
+        stop: async (id: number, minutes: number) => { await delay(); const i = pomoMock.findIndex((p) => p.id === id); if (i >= 0) pomoMock[i] = { ...pomoMock[i], ended_at: Date.now(), minutes }; return pomoMock[i]; },
+        stats: async () => { await delay(); return { byDay: [], byCourse: [] }; },
+      },
+      habits: {
+        list: async () => { await delay(); return habitsMock.map((h) => ({ ...h, checkinDates: checkinsMock.filter((c) => c.habit_id === h.id).map((c) => c.date) })); },
+        create: async (data: any) => { await delay(); const h = { id: nextId(), created_at: Date.now(), emoji: '🔥', color: '#00FF88', frequency: 'daily', target_per_week: null, archived: 0, sort_order: 0, ...data }; habitsMock.push(h); return h; },
+        update: async (id: number, data: any) => { await delay(); const i = habitsMock.findIndex((h) => h.id === id); if (i >= 0) habitsMock[i] = { ...habitsMock[i], ...data }; return habitsMock[i]; },
+        delete: async (id: number) => { await delay(); habitsMock = habitsMock.filter((h) => h.id !== id); checkinsMock = checkinsMock.filter((c) => c.habit_id !== id); return { ok: true }; },
+        toggleCheckin: async (habitId: number, date: string) => {
+          await delay();
+          const i = checkinsMock.findIndex((c) => c.habit_id === habitId && c.date === date);
+          if (i >= 0) { checkinsMock.splice(i, 1); return { ok: true, checked: false }; }
+          checkinsMock.push({ habit_id: habitId, date, created_at: Date.now() });
+          return { ok: true, checked: true };
+        },
+      },
+      attendance: {
+        list: async () => { await delay(); return attendanceMock.map(withCourseInfo); },
+        upsert: async (data: any) => {
+          await delay();
+          const i = attendanceMock.findIndex((a) => a.course_id === data.course_id && a.date === data.date);
+          if (i >= 0) attendanceMock[i] = { ...attendanceMock[i], ...data };
+          else attendanceMock.push({ id: nextId(), created_at: Date.now(), ...data });
+          return attendanceMock.find((a) => a.course_id === data.course_id && a.date === data.date);
+        },
+        stats: async () => { await delay(); return { present: 0, late: 0, absent: 0, leave: 0 }; },
+      },
+      groupLists: {
+        list: async () => { await delay(); return [...groupListsMock]; },
+        delete: async (id: number) => { await delay(); groupListsMock = groupListsMock.filter((g) => g.id !== id); groupItemsMock = groupItemsMock.filter((i) => i.list_id !== id); return { ok: true }; },
+      },
+      groupListItems: {
+        list: async (listId: number) => { await delay(); return groupItemsMock.filter((i) => i.list_id === listId); },
+        create: async (data: any) => { await delay(); const it = { id: nextId(), updated_at: Date.now(), status: 'todo', sort_order: 0, ...data }; groupItemsMock.push(it); return it; },
+        update: async (id: number, data: any) => { await delay(); const i = groupItemsMock.findIndex((x) => x.id === id); if (i >= 0) groupItemsMock[i] = { ...groupItemsMock[i], ...data, updated_at: Date.now() }; return groupItemsMock[i]; },
+        delete: async (id: number) => { await delay(); groupItemsMock = groupItemsMock.filter((x) => x.id !== id); return { ok: true }; },
       },
     },
     // 微信小程序（浏览器模式占位）
@@ -634,6 +707,30 @@ export function createBrowserApi() {
       bin: async () => [] as any[],
       restore: async () => ({ ok: false, error: '(浏览器预览模式不支持恢复，请在桌面应用中使用)' }),
       purge: async () => ({ purged: 0 }),
+    },
+
+    // v1.2.3：WebDAV 云同步（浏览器预览不可用）
+    webdav: {
+      config: async () => ({ url: '', user: '', hasPass: false, configured: false }),
+      save: async () => ({ ok: true }),
+      test: async () => ({ ok: false, error: '浏览器预览不支持 WebDAV' }),
+      push: async () => ({ ok: false, error: '浏览器预览不支持 WebDAV' }),
+      remoteInfo: async () => ({ ok: false, error: '浏览器预览不支持 WebDAV' }),
+      pull: async () => ({ ok: false, error: '浏览器预览不支持 WebDAV' }),
+    },
+
+    // v1.2.3：小组共享清单（浏览器预览仅本地态，不支持远端同步）
+    groups: {
+      create: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
+      join: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
+      pull: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
+      publish: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
+      leave: async () => ({ ok: true }),
+    },
+
+    // v1.2.3：主进程事件（浏览器无）
+    system: {
+      onQuickAdd: () => () => { /* noop */ },
     },
   };
 }

@@ -7,6 +7,10 @@ import CoursesPage from './pages/Courses';
 import ProjectsPage from './pages/Projects';
 import SettingsPage from './pages/Settings';
 import MiniProgramPage from './pages/MiniProgram';
+import AcademicPage from './pages/Academic';
+import HabitsPage from './pages/Habits';
+import GroupsPage from './pages/Groups';
+import StatsPage from './pages/Stats';
 import UpdateNotification from './components/UpdateNotification';
 import { useStore } from './store';
 import { useApplyTheme } from './hooks/useApplyTheme';
@@ -41,7 +45,11 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/courses" element={<CoursesPage />} />
+          <Route path="/academic" element={<AcademicPage />} />
+          <Route path="/habits" element={<HabitsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/groups" element={<GroupsPage />} />
+          <Route path="/stats" element={<StatsPage />} />
           <Route path="/miniprogram" element={<MiniProgramPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

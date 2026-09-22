@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, BookOpen, Pencil, Trash2, FileText, Grid3X3, ListTodo, StickyNote, X, AppWindow, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, Clock, Layers, CloudUpload, CloudDownload, KeyRound, ExternalLink, RefreshCw, CheckCircle2, AlertCircle, Shell } from 'lucide-react';
 import Modal from '@/components/Modal';
+import BeikeTimetable from '@/components/BeikeTimetable';
 import dayjs from 'dayjs';
 import { getSemesterWeek } from '@/utils/lunar';
 import type { Course, Requirement, CalendarEvent, CourseNote } from '@/types';
@@ -27,6 +28,8 @@ export default function CoursesPage() {
   const [genCodesOpen, setGenCodesOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // 贝壳课表：USTB 教务同步（v1.2.3 从小程序中心迁入）
+  const [beikeOpen, setBeikeOpen] = useState(false);
 
   // 处理 URL 参数
   useEffect(() => {
@@ -102,6 +105,9 @@ export default function CoursesPage() {
               <CalendarDays size={13} /> 课表日历
             </button>
           </div>
+          <button onClick={() => setBeikeOpen(true)} className="btn-ghost" title="USTB 统一身份认证扫码登录，一键导入教务课表">
+            <Shell size={14} /> 贝壳课表
+          </button>
           <button onClick={() => openDrawer(null, 'info')} className="btn-neon">
             <Plus size={14} /> 新建课程
           </button>
@@ -220,6 +226,13 @@ export default function CoursesPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* 贝壳课表：USTB 教务同步弹窗 */}
+      {beikeOpen && (
+        <Modal title="贝壳课表 · USTB 教务同步" onClose={() => setBeikeOpen(false)} width="max-w-3xl">
+          <BeikeTimetable />
+        </Modal>
       )}
 
       {/* 课程编辑抽屉 */}
@@ -891,9 +904,16 @@ function ReqsTab({ course }: { course: Course }) {
   const refreshAll = useStore(s => s.refreshAll);
   const courseReqs = useMemo(() => requirements.filter(r => r.course_id === course.id).sort((a, b) => a.due_date - b.due_date), [requirements, course.id]);
   const [editing, setEditing] = useState<Requirement | null>(null);
+  // v1.2.3：过期 / 已完成 分区折叠
+  const [showOverdue, setShowOverdue] = useState(false);
+  const [showDone, setShowDone] = useState(false);
 
   const pending = courseReqs.filter(r => r.status !== 'done').length;
   const done = courseReqs.filter(r => r.status === 'done').length;
+  // v1.2.3：三段分区 —— 进行中（未逾期）/ 已逾期未完成 / 已完成（归档）
+  const activeReqs = courseReqs.filter(r => r.status !== 'done' && !dayjs(r.due_date).isBefore(dayjs(), 'day'));
+  const overdueReqs = courseReqs.filter(r => r.status !== 'done' && dayjs(r.due_date).isBefore(dayjs(), 'day'));
+  const doneReqs = courseReqs.filter(r => r.status === 'done');
 
   return (
     <div className="space-y-3">
@@ -901,6 +921,7 @@ function ReqsTab({ course }: { course: Course }) {
         <div className="flex items-center gap-2 font-mono text-[10px] text-text-dim">
           <span>共 {courseReqs.length} 项</span>
           <span className="px-1.5 py-0.5 rounded border border-neon-yellow/40 text-neon-yellow">待完成 {pending}</span>
+          {overdueReqs.length > 0 && <span className="px-1.5 py-0.5 rounded border border-neon-danger/50 text-neon-danger">逾期 {overdueReqs.length}</span>}
           <span className="px-1.5 py-0.5 rounded border border-neon-green/40 text-neon-green">已完成 {done}</span>
         </div>
         <button onClick={() => setEditing({ id: 0, course_id: course.id, title: '', type: 'homework', due_date: Date.now(), priority: 2, status: 'pending', created_at: Date.now() } as Requirement)} className="btn-neon btn-neon-yellow">
@@ -910,9 +931,44 @@ function ReqsTab({ course }: { course: Course }) {
       {courseReqs.length === 0 ? (
         <div className="py-8 text-center text-text-dim font-mono text-sm">[ ∅ ] 暂无作业<br /><span className="text-xs">点击右上角「添加作业」创建第一条</span></div>
       ) : (
-        courseReqs.map(r => (
-          <ReqRow key={r.id} req={r} onEdit={() => setEditing(r)} onUpdate={refreshAll} />
-        ))
+        <>
+          {/* 进行中（未逾期） */}
+          {activeReqs.map(r => (
+            <ReqRow key={r.id} req={r} onEdit={() => setEditing(r)} onUpdate={refreshAll} />
+          ))}
+          {/* 已逾期未完成（v1.2.3 归档区，默认折叠标红） */}
+          {overdueReqs.length > 0 && (
+            <div className="rounded-md border border-neon-danger/30 bg-neon-danger/3 overflow-hidden">
+              <button onClick={() => setShowOverdue(s => !s)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-neon-danger/5">
+                <ChevronDown size={12} className={`text-neon-danger transition-transform ${showOverdue ? '' : '-rotate-90'}`} />
+                <span className="font-mono text-[10px] text-neon-danger">已逾期未完成 · {overdueReqs.length}</span>
+              </button>
+              {showOverdue && (
+                <div className="px-2 pb-2 space-y-2">
+                  {overdueReqs.map(r => (
+                    <ReqRow key={r.id} req={r} onEdit={() => setEditing(r)} onUpdate={refreshAll} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* 已完成（归档区） */}
+          {doneReqs.length > 0 && (
+            <div className="rounded-md border border-neon-green/10 overflow-hidden">
+              <button onClick={() => setShowDone(s => !s)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-neon-green/5">
+                <ChevronDown size={12} className={`text-neon-green transition-transform ${showDone ? '' : '-rotate-90'}`} />
+                <span className="font-mono text-[10px] text-text-dim">已完成 · {doneReqs.length}</span>
+              </button>
+              {showDone && (
+                <div className="px-2 pb-2 space-y-2">
+                  {doneReqs.map(r => (
+                    <ReqRow key={r.id} req={r} onEdit={() => setEditing(r)} onUpdate={refreshAll} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
       {editing && (
         <ReqInlineEditor req={editing} courseId={course.id} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refreshAll(); }} />
@@ -976,11 +1032,34 @@ function ReqRow({ req, onEdit, onUpdate }: { req: Requirement; onEdit: () => voi
               <CloudDownload size={9} /> 同步
             </span>
           )}
+          {req.recurrence && (
+            <span className="inline-flex items-center mr-1 px-1 py-px rounded text-[9px] font-mono border border-sky-400/40 text-sky-400 align-middle" title={`周期任务：${req.recurrence === 'daily' ? '每天' : req.recurrence === 'biweekly' ? '每两周' : '每周'}，完成自动生成下一轮`}>
+              🔁 {req.recurrence === 'daily' ? '日' : req.recurrence === 'biweekly' ? '双周' : '周'}
+            </span>
+          )}
           {req.title}
         </div>
         <div className="font-mono text-[10px] text-text-dim mt-0.5">
           {due.format('MM-DD ddd HH:mm')}{req.session_date ? ` · 该节 ${req.session_date.slice(5)}` : ''} · 预计 {req.estimated_hours || '?'}h · 实际 {req.actual_hours || '0'}h · 优先级 {req.priority}
         </div>
+        {/* v1.2.3：截止倒计时进度条（创建 → 截止 时间消耗） */}
+        {req.status !== 'done' && (() => {
+          const span = req.due_date - (req.created_at || req.due_date);
+          if (span <= 0) return null;
+          const used = Math.min(100, Math.max(0, ((Date.now() - (req.created_at || req.due_date)) / span) * 100));
+          const urgent = used >= 80;
+          return (
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="flex-1 h-1 bg-ink-900/80 rounded-full overflow-hidden border border-neon-green/5">
+                <div
+                  className="h-full transition-all"
+                  style={{ width: `${used}%`, background: urgent ? 'linear-gradient(90deg,#FFC53D99,#FF3355)' : 'linear-gradient(90deg,#00FF8844,#00FF88AA)' }}
+                />
+              </div>
+              <span className={`font-mono text-[9px] tabular-nums ${urgent ? 'text-neon-danger' : 'text-text-dim'}`}>{Math.round(used)}%</span>
+            </div>
+          );
+        })()}
       </div>
       <span className={`data-pill ${req.status === 'done' ? 'border-neon-green/40 text-neon-green' : req.status === 'in_progress' ? 'border-neon-yellow/40 text-neon-yellow' : overdue ? 'border-neon-danger/50 text-neon-danger' : 'border-text-dim/40 text-text-secondary'}`}>
         {req.status === 'done' ? '已完成' : req.status === 'in_progress' ? '进行中' : overdue ? '已逾期' : '待办'}
@@ -1013,6 +1092,8 @@ function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement
   const [estimatedHours, setEstimatedHours] = useState(req.estimated_hours || '');
   const [actualHours, setActualHours] = useState(req.actual_hours || '');
   const [notes, setNotes] = useState(req.notes || '');
+  // v1.2.3：周期任务（完成时自动生成下一轮）
+  const [recurrence, setRecurrence] = useState<string>(req.recurrence || '');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -1030,6 +1111,7 @@ function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement
         estimated_hours: estimatedHours ? Number(estimatedHours) : null,
         actual_hours: actualHours ? Number(actualHours) : null,
         notes: notes.trim() || null,
+        recurrence: (recurrence || null) as Requirement['recurrence'],
       };
       if (isNew) {
         await window.taskAPI.db.requirements.create(payload);
@@ -1077,7 +1159,17 @@ function ReqInlineEditor({ req, courseId, onClose, onSaved }: { req: Requirement
             </select>
           </Field>
         </div>
-        <Field label="截止时间 *"><input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="input-neon" /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="截止时间 *"><input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="input-neon" /></Field>
+          <Field label="重复（完成自动生成下一轮）">
+            <select value={recurrence} onChange={(e) => setRecurrence(e.target.value)} className="input-neon">
+              <option value="">一次性</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="biweekly">每两周</option>
+            </select>
+          </Field>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <Field label="状态">
             <select value={status} onChange={(e) => setStatus(e.target.value as any)} className="input-neon">
