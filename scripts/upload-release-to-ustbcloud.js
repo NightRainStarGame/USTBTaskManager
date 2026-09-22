@@ -106,7 +106,8 @@ async function upload(root, name, buf) {
 (async () => {
   const args = process.argv.slice(2);
   const ONLY_ABOUT = args.includes('--only-about');
-  const exePath = args.find((a) => !a.startsWith('--'));
+  const ONLY_PATCHES = args.includes('--only-patches');
+  const exePath = ONLY_PATCHES ? null : args.find((a) => !a.startsWith('--'));
   const jsonPath = args.find((a) => a.endsWith('.json') && !a.startsWith('--')) || path.join(projectRoot, 'latest.json');
 
   console.log('[cloud] 登录北科云盘…');
@@ -123,7 +124,7 @@ async function upload(root, name, buf) {
     process.exit(0);
   }
 
-  if (!exePath || !fs.existsSync(exePath)) { console.error('用法: node upload-release-to-ustbcloud.js <exe路径> [latest.json] [--only-about]'); process.exit(1); }
+  if (!ONLY_PATCHES && (!exePath || !fs.existsSync(exePath))) { console.error('用法: node upload-release-to-ustbcloud.js <exe路径> [latest.json] [--only-about] [--only-patches]'); process.exit(1); }
   console.log('[cloud] 分享根 docid:', root.slice(0, 20) + '…');
 
   const before = await listFiles(root);
@@ -144,10 +145,22 @@ async function upload(root, name, buf) {
   if (Array.isArray(jsonObj.patches)) {
     for (const p of jsonObj.patches) {
       if (!p || typeof p.url !== 'string' || /^https?:\/\//i.test(p.url) !== true) continue;
-      const rel = p.url.split(`/${process.env.PATCH_REPO_BRANCH || 'main'}/`)[1];
-      if (!rel) continue;
-      const local = path.join(projectRoot, rel);
-      if (!fs.existsSync(local)) { console.log(`[cloud] 补丁本地不存在，跳过: ${rel}`); continue; }
+      // rel 提取：raw URL 按 /main/ 分隔；GitHub Release URL（v1.2.7+ 主源）则依次回退
+      // urlMirrors 里的 raw 条目 → 约定路径 leastversion/patches/<basename>
+      const branch = process.env.PATCH_REPO_BRANCH || 'main';
+      const candidates = [p.url, ...(Array.isArray(p.urlMirrors) ? p.urlMirrors : [])];
+      let rel = null;
+      for (const u of candidates) {
+        if (typeof u !== 'string') continue;
+        const r = u.split(`/${branch}/`)[1];
+        if (r) { rel = r; break; }
+      }
+      let local = rel ? path.join(projectRoot, rel) : null;
+      if (!local || !fs.existsSync(local)) {
+        const guess = path.join(projectRoot, 'leastversion', 'patches', path.basename(p.url));
+        if (fs.existsSync(guess)) { local = guess; rel = path.relative(projectRoot, guess); }
+      }
+      if (!local || !fs.existsSync(local)) { console.log(`[cloud] 补丁本地不存在，跳过: ${rel || p.url}`); continue; }
       const baseName = path.basename(local);
       patchUploads.push({ local, baseName, entry: p });
     }
@@ -157,12 +170,16 @@ async function upload(root, name, buf) {
   await upload(root, `latest-${ts}.json`, jsonBuf2);
   console.log(`[cloud] ✓ latest-${ts}.json (${jsonBuf2.length} B, patches=${(jsonObj.patches || []).length})`);
 
-  const exeName = path.basename(exePath);
-  const exeBuf = fs.readFileSync(exePath);
-  const cloudExeName = exeName.replace(/\.exe$/i, '') + `-${ts}.exe`;
-  console.log(`[cloud] 上传安装包 ${cloudExeName}（${(exeBuf.length / 1024 / 1024).toFixed(1)} MB）…`);
-  await upload(root, cloudExeName, exeBuf);
-  console.log(`[cloud] ✓ ${cloudExeName}`);
+  const exeName = exePath ? path.basename(exePath) : null;
+  if (exePath) {
+    const exeBuf = fs.readFileSync(exePath);
+    const cloudExeName = exeName.replace(/\.exe$/i, '') + `-${ts}.exe`;
+    console.log(`[cloud] 上传安装包 ${cloudExeName}（${(exeBuf.length / 1024 / 1024).toFixed(1)} MB）…`);
+    await upload(root, cloudExeName, exeBuf);
+    console.log(`[cloud] ✓ ${cloudExeName}`);
+  } else {
+    console.log('[cloud] --only-patches：跳过安装包（云盘已有同版本安装包）');
+  }
 
   const aboutLocal = path.join(projectRoot, 'about.txt');
   if (fs.existsSync(aboutLocal)) {

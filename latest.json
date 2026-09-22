@@ -90,7 +90,7 @@
     },
     {
       "fromVersion": "1.2.7",
-      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.8/patches/TaskManager-Patch-1.2.7-to-1.2.8.zip",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.8/TaskManager-Patch-1.2.7-to-1.2.8.zip",
       "urlMirrors": [
         "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.7-to-1.2.8.zip",
         "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.7-to-1.2.8.zip"
@@ -105,7 +105,7 @@
     },
     {
       "fromVersion": "1.2.8",
-      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.9/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.9/TaskManager-Patch-1.2.8-to-1.2.9.zip",
       "urlMirrors": [
         "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip",
         "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip"

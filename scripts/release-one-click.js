@@ -275,7 +275,9 @@ const newPatches = patchInfo
       ...prevPatches.filter((p) => p && p.fromVersion !== patchInfo.fromVersion),
       {
         fromVersion: patchInfo.fromVersion,
-        url: `${REPO_RELEASES}/patches/${path.basename(patchInfo.path)}`,
+        // GitHub Release asset 名 = basename（无目录结构），URL 不能带 /patches/ 段
+        // （1.2.7/1.2.8 曾因此 404；raw/jsdelivr mirrors 指向 git 里的 leastversion/patches/ 是活的）
+        url: `${REPO_RELEASES}/${path.basename(patchInfo.path)}`,
         // 补丁约 22MB，jsdelivr 50MB 限制下完全够用，做备援
         urlMirrors: [
           `${REPO_RAW}/${patchInfo.path.replace(/\\/g, '/')}`,
