@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
 
@@ -81,28 +82,76 @@ function waitForProcessExit(pid, timeoutMs) {
   });
 }
 
-/** 用 7zip-bin 抽 app.asar 到 tmpdir */
-function extractAsarToTmp(zipPath, targetTmp) {
-  const candidates = [
-    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'),
-  ];
-  // 也允许从 CWD 找本地开发副本
-  const local = path.resolve(__dirname, '..', '..', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe');
-  candidates.push(local);
-  const sevenZ = candidates.find((p) => p && fs.existsSync(p));
-  if (!sevenZ) throw new Error('helper: 找不到 7za.exe —— 本机开发可 npm install 7zip-bin，打包版需要把 7za.exe 复制到 resources/');
+/**
+ * 零依赖 zip 单文件解压（v1.2.7 重写）——
+ * 干掉原 7zip-bin 依赖（package.json 没列 7zip-bin + 没 asarUnpack → helper 永远 throw "找不到 7za.exe"）。
+ * 仅支持 store(0) + deflate(8)，足够补丁 zip 用。
+ * 不支持 Zip64（补丁远不到 4GB），文件名强制按 UTF-8 解码。
+ */
+function extractAsarFromZip(zipPath, outPath) {
+  const buf = fs.readFileSync(zipPath);
 
-  fs.mkdirSync(targetTmp, { recursive: true });
-  const r = spawn(sevenZ, ['x', '-y', `-o${targetTmp}`, zipPath, 'app.asar'], { stdio: ['ignore', 'pipe', 'pipe'] });
-  return new Promise((resolve, reject) => {
-    let err = '';
-    r.stderr.on('data', (d) => { err += d.toString(); });
-    r.on('exit', (code) => {
-      const extracted = path.join(targetTmp, 'app.asar');
-      if (code !== 0 || !fs.existsSync(extracted)) return reject(new Error('7za 抽 app.asar 失败：' + (err || `exit=${code}`)));
-      resolve(extracted);
-    });
-  });
+  // 1) 找 EOCD 签名 0x06054b50（End of Central Directory，固定 22 字节尾部）
+  let eocdOffset = -1;
+  const minScan = Math.max(0, buf.length - 65557);
+  for (let i = buf.length - 22; i >= minScan; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) throw new Error('zip 格式错：找不到 EOCD');
+
+  const totalEntries = buf.readUInt16LE(eocdOffset + 10);
+  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
+
+  // 2) 遍历中央目录，找名字为 'app.asar' 的 entry
+  let localHeaderOffset = -1;
+  let compressedSize = -1, uncompressedSize = -1, compressionMethod = -1;
+  let p = cdOffset;
+  for (let i = 0; i < totalEntries; i++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('中央目录签名错 @' + p);
+    const method = buf.readUInt16LE(p + 10);
+    const csize = buf.readUInt32LE(p + 20);
+    const usize = buf.readUInt32LE(p + 24);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const localOffset = buf.readUInt32LE(p + 42);
+    const name = buf.slice(p + 46, p + 46 + nameLen).toString('utf8');
+    if (name === 'app.asar') {
+      localHeaderOffset = localOffset;
+      compressedSize = csize;
+      uncompressedSize = usize;
+      compressionMethod = method;
+      break;
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  if (localHeaderOffset < 0) throw new Error('zip 里没有 app.asar');
+
+  // 3) 跳到 local file header 读数据
+  if (buf.readUInt32LE(localHeaderOffset) !== 0x04034b50) throw new Error('local header 签名错');
+  const lhNameLen = buf.readUInt16LE(localHeaderOffset + 26);
+  const lhExtraLen = buf.readUInt16LE(localHeaderOffset + 28);
+  const dataStart = localHeaderOffset + 30 + lhNameLen + lhExtraLen;
+  const compressed = buf.slice(dataStart, dataStart + compressedSize);
+
+  // 4) 解压（store=原样 / deflate=raw inflate）
+  let data;
+  if (compressionMethod === 0) {
+    data = compressed;
+  } else if (compressionMethod === 8) {
+    data = zlib.inflateRawSync(compressed);
+  } else {
+    throw new Error('不支持的压缩方法：' + compressionMethod);
+  }
+  if (data.length !== uncompressedSize) {
+    throw new Error('解压大小不匹配：期望 ' + uncompressedSize + ' 实际 ' + data.length);
+  }
+
+  fs.writeFileSync(outPath, data);
+  return outPath;
 }
 
 /** 真正的活：解压 + 校验 + rename 落盘 */
@@ -127,10 +176,11 @@ async function apply(opts) {
     log(`基线校验通过 sha256=${expectedBaseSha.slice(0, 16)}…`);
   }
 
-  // 2) 解压到 tmp
+  // 2) 解压到 tmp（v1.2.7 改：零依赖 zip reader，不再依赖 7za.exe）
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'taskmgr-patch-apply-'));
   try {
-    const extractedAsar = await extractAsarToTmp(zipPath, tmp);
+    const extractedAsar = path.join(tmp, 'app.asar');
+    extractAsarFromZip(zipPath, extractedAsar);
     const newSha = sha256File(extractedAsar);
     if (expectedToSha && newSha !== expectedToSha) {
       throw new Error(`zip 里 app.asar sha256 不匹配 manifest.appAsarSha256：${newSha.slice(0, 16)}… vs ${expectedToSha.slice(0, 16)}…`);
@@ -187,4 +237,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { apply, sha256File };
+module.exports = { apply, sha256File, extractAsarFromZip };
