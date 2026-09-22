@@ -563,6 +563,27 @@ export interface DownloadResult {
 
 let downloadAbort: AbortController | null = null;
 
+/**
+ * v1.2.8 块 Q8：ipcSafe — 把所有 ipcMain.handle 包一层 Promise.then().catch()
+ * - 任何 handler 抛出的异常都会被捕获，返回统一 {ok:false, error}
+ * - 避免渲染进程一侧 IPC 永久 pending（IPC 异常不会触发渲染侧 catch）
+ * - 落盘到 LOG_FILE 便于诊断
+ */
+function ipcSafe<T>(fn: () => Promise<T> | T): Promise<T | { ok: false; error: string }> {
+  return Promise.resolve()
+    .then(fn)
+    .catch((e: any) => {
+      try {
+        const debugLog = path.join(app.getPath('temp'), 'taskmanager-ipc-error.log');
+        fs.appendFileSync(
+          debugLog,
+          `[${new Date().toISOString()}] ${e?.stack || String(e)}\n`,
+        );
+      } catch {}
+      return { ok: false, error: e?.message || String(e) };
+    });
+}
+
 async function downloadUpdate(
   url: string,
   version: string,
@@ -763,34 +784,49 @@ export function registerUpdater(db: DB | null) {
     return { ok: true };
   });
 
-  ipcMain.handle('update:skipVersion', (_e, version: string) => {
-    setSetting(db as DB, SETTING_SKIPPED, version || '');
-    return { ok: true };
-  });
+  ipcMain.handle('update:skipVersion', (_e, version: string) =>
+    ipcSafe(() => {
+      if (!db) return { ok: false, error: '数据库未初始化' };
+      setSetting(db, SETTING_SKIPPED, version || '');
+      return { ok: true };
+    })
+  );
 
-  ipcMain.handle('update:setSource', (_e, source: string) => {
-    const s = String(source || '').trim();
-    const sources = setSources(db, [{ name: '自定义源', url: s, enabled: true, primary: true }]);
-    setSetting(db as DB, SETTING_ACTIVE_INDEX, '0');
-    return { ok: true, source: s, sources };
-  });
+  ipcMain.handle('update:setSource', (_e, source: string) =>
+    ipcSafe(() => {
+      if (!db) return { ok: false, error: '数据库未初始化' };
+      const s = String(source || '').trim();
+      const sources = setSources(db, [{ name: '自定义源', url: s, enabled: true, primary: true }]);
+      setSetting(db, SETTING_ACTIVE_INDEX, '0');
+      return { ok: true, source: s, sources };
+    })
+  );
 
-  ipcMain.handle('update:setSources', (_e, payload: { sources: UpdateSource[]; activeIndex: number }) => {
-    const cleaned = setSources(db, payload?.sources || []);
-    const safe = Math.max(0, Math.min(payload?.activeIndex ?? 0, cleaned.length - 1));
-    setSetting(db as DB, SETTING_ACTIVE_INDEX, String(safe));
-    return { ok: true, sources: cleaned, activeIndex: safe };
-  });
+  ipcMain.handle('update:setSources', (_e, payload: { sources: UpdateSource[]; activeIndex: number }) =>
+    ipcSafe(() => {
+      if (!db) return { ok: false, error: '数据库未初始化' };
+      const cleaned = setSources(db, payload?.sources || []);
+      const safe = Math.max(0, Math.min(payload?.activeIndex ?? 0, cleaned.length - 1));
+      setSetting(db, SETTING_ACTIVE_INDEX, String(safe));
+      return { ok: true, sources: cleaned, activeIndex: safe };
+    })
+  );
 
-  ipcMain.handle('update:setActiveSource', (_e, index: number) => {
-    const safe = setActiveSourceIndex(db, typeof index === 'number' ? index : 0);
-    return { ok: true, activeIndex: safe, sources: getSources(db) };
-  });
+  ipcMain.handle('update:setActiveSource', (_e, index: number) =>
+    ipcSafe(() => {
+      if (!db) return { ok: false, error: '数据库未初始化' };
+      const safe = setActiveSourceIndex(db, typeof index === 'number' ? index : 0);
+      return { ok: true, activeIndex: safe, sources: getSources(db) };
+    })
+  );
 
-  ipcMain.handle('update:setAutoCheck', (_e, enabled: boolean) => {
-    setSetting(db as DB, SETTING_AUTO, enabled ? '1' : '0');
-    return { ok: true, enabled };
-  });
+  ipcMain.handle('update:setAutoCheck', (_e, enabled: boolean) =>
+    ipcSafe(() => {
+      if (!db) return { ok: false, error: '数据库未初始化' };
+      setSetting(db, SETTING_AUTO, enabled ? '1' : '0');
+      return { ok: true, enabled };
+    })
+  );
 
   const patchApply = require('./patchApply') as typeof import('./patchApply');
 

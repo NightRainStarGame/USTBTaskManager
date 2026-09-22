@@ -51,9 +51,14 @@ function splashProgress(pct: number, text: string) {
   }
 }
 
+/** splash 淡出计时器持有，destroy 前清理避免泄漏 */
+let splashFadeTimer: NodeJS.Timeout | null = null;
+let splashMinTimer: NodeJS.Timeout | null = null;
+
 function hideSplashAndShowMain() {
   if (splashHidden) return;
   splashHidden = true;
+  if (splashMinTimer) { clearTimeout(splashMinTimer); splashMinTimer = null; }
 
   const doTransition = () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -63,24 +68,28 @@ function hideSplashAndShowMain() {
     if (splashWindow && !splashWindow.isDestroyed()) {
       const start = Date.now();
       const fadeStep = () => {
-        if (!splashWindow || splashWindow.isDestroyed()) return;
+        if (!splashWindow || splashWindow.isDestroyed()) {
+          splashFadeTimer = null;
+          return;
+        }
         const t = (Date.now() - start) / SPLASH_FADE_MS;
         if (t >= 1) {
           splashWindow.destroy();
           splashWindow = null;
+          splashFadeTimer = null;
         } else {
           try { splashWindow.setOpacity(1 - t); } catch {}
-          setTimeout(fadeStep, 16);
+          splashFadeTimer = setTimeout(fadeStep, 16);
         }
       };
-      fadeStep();
+      splashFadeTimer = setTimeout(fadeStep, 0);
     }
     bootLog('splash fading out, main shown');
   };
 
   const elapsed = splashShownAt ? Date.now() - splashShownAt : SPLASH_MIN_MS;
   const remain = Math.max(0, SPLASH_MIN_MS - elapsed);
-  if (remain > 0) setTimeout(doTransition, remain);
+  if (remain > 0) splashMinTimer = setTimeout(doTransition, remain);
   else doTransition();
 }
 

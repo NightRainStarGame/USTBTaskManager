@@ -109,8 +109,8 @@ export async function downloadPatchZip(
 
     const hash = crypto.createHash('sha256');
     const out = fs.createWriteStream(dest);
-    // @ts-ignore
-    const reader = res.body.getReader();
+    // Electron net.fetch 返回的 body 类型未声明 getReader（实际是 ReadableStream）
+    const reader = (res.body as unknown as ReadableStream<Uint8Array>).getReader();
     let received = 0;
     let lastTick = 0;
     for (;;) {
