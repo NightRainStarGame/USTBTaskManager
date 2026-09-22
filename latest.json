@@ -1,15 +1,15 @@
 {
-  "version": "1.2.3",
-  "notes": "# v1.2.3 更新说明\r\n\r\n> 本次为 v1.2.2 之后的功能集合（Dashboard 重做 + 学业/习惯/小组/统计/番茄钟/提醒/WebDAV 7 大块），数据库迁移较多（新增 6 张表 + 字段索引），首次启动会有短暂的「数据库升级中…」提示，老数据无损保留。\r\n\r\n## 🏠 主页（Dashboard）全面升级\r\n\r\n顶部「今日全景」一键掌握：\r\n\r\n- **快捷添加**：输入框或全局快捷键 `Ctrl+Shift+A`（应用外也能呼出主窗口），用自然语言一句话建作业 ——「周五交高数作业」「明天14:30复习数据结构」自动解析日期 / 课程 / 类型\r\n- **考试倒计时横幅**：最近一场考试倒计时，点击直达学业页\r\n- **上课中 / 下节课卡片**：高亮当前课程（剩余时间）和下一节（教室 + 倒计时）\r\n- **今日待办 / 今日截止**：今天到期需要完成的作业 / 任务，**时间消耗进度条**（截止时间过去百分比，超 80% 变红预警）\r\n- **今日习惯打卡行**：今天该打的卡一键全打完\r\n- **今日专注时长**：当日番茄钟累计分钟数\r\n\r\n下面照旧是各课程 / 项目完成度概览。\r\n\r\n## 🎓 学业（成绩 / 考试 / 出勤）\r\n\r\n- **成绩**：按课程 + 学期录入「平时 / 期中 / 期末 / 总评」+ 学分；自动算**加权 GPA（4.0 制）**、加权平均分；成绩分布条形图（60 分及格线标线）；**挂科预警**横幅\r\n- **考试**：考试卡片倒计时角标（≤3 天高亮），**一键生成复习任务**（按科目生成考前一天截止的复习作业，自动去重）；已结束考试归档\r\n- **出勤**：选课 + 一键打卡（出勤 / 迟到 / 缺勤 / 请假）；各课出勤率进度条 + 构成统计\r\n\r\n## 🔥 习惯打卡\r\n\r\n- 习惯卡片 emoji 图标 + 自定义颜色 + **连击天数** 🔥 streak + 近 8 周热力图\r\n- 频率：每天 或 每周 N 次\r\n- 今日打卡进度条 + 一键打卡 / 取消\r\n\r\n## 👥 小组共享清单\r\n\r\n小组共享清单（复用作业同步的 GitHub 通道与令牌）：\r\n\r\n1. 「创建小组」自动生成**组码**（GL-XXXXXXXX），发给同学即可加入\r\n2. 条目支持**认领**（负责人）、状态（待办 / 进行中 / 完成）、截止日期\r\n3. **发布**（本地改动整包推云端）/ **拉取**（云端整包覆盖本地）—— 改完先发布，别人拉取就能看到\r\n\r\n## ⏱ 全局番茄钟\r\n\r\n右下角悬浮番茄钟，所有页面可用：\r\n\r\n- 环形倒计时（专注 / 休息自动衔接），时长在 设置 → 番茄钟 配置（默认 25 / 5 分钟）\r\n- 可**绑定任务**（从待办里选），专注结束自动落库，统计进「统计」页各科专注时长\r\n- 专注完成弹系统通知\r\n\r\n## 📊 统计复盘\r\n\r\n- **周报 / 月报**切换 + 前后翻期回顾\r\n- 完成任务数 / 日均完成 / 专注时长 / 习惯打卡 / 出勤率 五张汇总卡片\r\n- **完成任务 / 天**、**专注时长 / 天** 柱状图（悬停看明细）\r\n- **各科完成量 / 各科专注时长** TOP 横向条形图\r\n- 出勤构成堆叠条\r\n\r\n## 🔔 系统提醒 + 托盘常驻\r\n\r\n- 应用**托盘常驻**：关窗不退出，托盘菜单显示下节课 / 今日待办数 / 考试倒计时，双击图标回主窗口\r\n- **系统弹窗提醒**（后台每分钟检查，当天去重）：上课前 X 分钟（可配）、作业截止前 24h 和 1h（分级）、考试前 1 天和 1 小时\r\n- 提醒开关在 设置 → 提醒通知，可发测试通知验证通道\r\n\r\n## 💾 WebDAV 云同步\r\n\r\n设置 → WebDAV 云同步：\r\n\r\n- 把全量备份推到坚果云等网盘（支持自定义服务器地址）\r\n- 换设备 / 重装系统时「从云端恢复」一键拉回（**恢复前自动安全备份**当前数据）\r\n- 坚果云接入示例：网页端「账户信息 → 安全选项 → 添加应用密码」，地址填 `https://dav.jianguoyun.com/dav/`\r\n\r\n## 🔗 课程页调整\r\n\r\n- 贝壳课表（USTB 教务扫码导入）从原小程序中心迁到「课程」页右上角按钮；登录态仅存本机，下次同步免扫码，需校园网\r\n\r\n## 🗃 数据库迁移\r\n\r\n新增表：\r\n\r\n- `habits` / `habit_logs`：习惯定义 + 打卡记录\r\n- `courses_scores` / `courses_exams` / `courses_attendance` / `courses_attendance_records`：学业模块\r\n- `group_lists` / `group_list_items`：小组共享清单\r\n- `pomodoro_sessions`：专注时长落库\r\n- `webdav_configs` / `webdav_sync_log`：WebDAV 凭证与同步日志\r\n\r\n新增字段 / 索引若干。首次启动自动升级，老数据无损保留；如升级失败可在 设置 → 数据管理 → 数据库自检 中手动触发。\r\n\r\n## 🛠 其他\r\n\r\n- 全局快捷键 `Ctrl+Shift+A`：应用外也能呼出主窗口，自然语言一句话建作业\r\n- 通知去重：同一条提醒当天不再弹\r\n- README 全面更新：上述模块都有独立小节说明 + 截图位",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.3.exe",
+  "version": "1.2.4",
+  "notes": "# v1.2.4 更新说明\r\n\r\n> 本次为 v1.2.3 之后的修复补丁，针对桌面启动体验。\r\n\r\n## 🐛 启动体验修复\r\n\r\n### Splash 启动动画「立刻可见」\r\n\r\n之前点击应用图标后存在一段黑屏/静止窗口，**等待主进程跑完 DB 初始化 + IPC 注册 + 主窗口构造**之后才看到启动动画。修复后 splash 窗口在 `whenReady` 后**立即显示**，操作系统在窗口 background 时先把首帧画好（`paintWhenInitiallyHidden: true`），配合黑色背景，视觉上与主进程初始化重叠，用户**点图标即看到动画**，无明显黑屏。\r\n\r\n技术细节：移除了对 `ready-to-show` 事件的依赖（Electron 在同步阻塞期间不触发该事件）。保险丝保留在背景运行期，不再承担主路径职责。\r\n\r\n## 🛠 升级说明\r\n\r\n- 已装 v1.2.3 的用户：自动应用增量补丁 ~22MB，无需重装\r\n- 新装用户：下载完整安装包 ~97MB\r\n- 数据无损保留，无需迁移",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.4.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.2",
-  "sha256": "c8100679a1702c50301199bcf49337ba9e66d90a3482fef59a6ba43e68aa3b40",
-  "size": 97201038,
-  "fileName": "TaskManager-Setup-1.2.3.exe",
+  "sha256": "459ce52b14f7ff56bf9a869cf2a29e1d6daedb1236befcaccb6f7f08472687f8",
+  "size": 97201482,
+  "fileName": "TaskManager-Setup-1.2.4.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-22T01:06:53.274Z",
-  "asarSha256": "02f4dbc6cf322913c7bc39b3f4b94d6a7ae15a378ead131ee736c93b8c7b07f4",
-  "asarSize": 74941223,
+  "releaseDate": "2026-09-22T01:33:00.565Z",
+  "asarSha256": "68d2d4be44c10864aa6680c17ceaf58873707502f858f99d2dd7c8df3e701aaf",
+  "asarSize": 74942765,
   "patches": [
     {
       "fromVersion": "1.1.9",
@@ -54,6 +54,17 @@
       "appAsarSha256": "02f4dbc6cf322913c7bc39b3f4b94d6a7ae15a378ead131ee736c93b8c7b07f4",
       "appAsarSize": 74941223,
       "createdAt": "2026-09-22T01:06:51.204Z"
+    },
+    {
+      "fromVersion": "1.2.3",
+      "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.3-to-1.2.4.zip",
+      "sha256": "96f5ecc36a3a2d5544a3718ed600a12e6c733101bd8c4a1d385ee465acfdb0e2",
+      "size": 22878195,
+      "baseAsarSha256": "02f4dbc6cf322913c7bc39b3f4b94d6a7ae15a378ead131ee736c93b8c7b07f4",
+      "baseAsarSize": 74941223,
+      "appAsarSha256": "68d2d4be44c10864aa6680c17ceaf58873707502f858f99d2dd7c8df3e701aaf",
+      "appAsarSize": 74942765,
+      "createdAt": "2026-09-22T01:32:56.282Z"
     }
   ]
 }
