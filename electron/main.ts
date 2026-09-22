@@ -95,7 +95,9 @@ function createSplash() {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    show: false,
+    // 立即 show：配合 paintWhenInitiallyHidden 让 OS 先画好首帧，避免主线程被
+    // DB init / IPC 注册 / 主窗口创建等同步操作阻塞时出现「黑屏等 splash」的卡顿感
+    show: true,
     paintWhenInitiallyHidden: true,
     backgroundColor: '#000000',
     webPreferences: {
@@ -104,19 +106,15 @@ function createSplash() {
       preload: path.join(__dirname, 'splash-preload.js'),
     },
   });
+  splashShownAt = Date.now();
+  bootLog('splash shown (immediate)');
   splashWindow.webContents.once('did-finish-load', () => {
     splashLoaded = true;
     if (splashLastMsg) {
       try { splashWindow?.webContents.send('splash:progress', splashLastMsg); } catch {}
     }
   });
-  splashWindow.once('ready-to-show', () => {
-    if (splashHidden) return;
-    splashWindow?.show();
-    splashShownAt = Date.now();
-    bootLog('splash shown (ready-to-show)');
-  });
-  // ready-to-show 在部分环境下不触发；300ms 没显示就强制 show（保险丝）
+  // 保险丝——立即可见下正常 300ms 内必然 ready，保留只为 setVisible 标志兜底
   setTimeout(() => {
     if (splashWindow && !splashWindow.isDestroyed() && !splashHidden && !splashShownAt) {
       try { splashWindow.show(); } catch {}
