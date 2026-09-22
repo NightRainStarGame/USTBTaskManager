@@ -33,6 +33,9 @@ const today = new Date();
 today.setHours(0, 0, 0, 0);
 const T0 = today.getTime();
 
+/** v1.2.6：浏览器 mock 的月卡激活库（模拟 DB UNIQUE 行为） */
+const mockBilledCodes = new Map<string, { openedAt: number; expiresAt: number }>();
+
 // ---------- 内存数据（默认为空，全部由用户自行创建） ----------
 let courses: Course[] = [];
 let requirements: Requirement[] = [];
@@ -61,8 +64,6 @@ let pomoMock: any[] = [];
 let habitsMock: any[] = [];
 let checkinsMock: Array<{ habit_id: number; date: string; created_at: number }> = [];
 let attendanceMock: any[] = [];
-let groupListsMock: any[] = [];
-let groupItemsMock: any[] = [];
 
 // ---------- 贝壳课表（USTB）Mock 状态 ----------
 const ustbMock = {
@@ -333,16 +334,6 @@ export function createBrowserApi() {
           return attendanceMock.find((a) => a.course_id === data.course_id && a.date === data.date);
         },
         stats: async () => { await delay(); return { present: 0, late: 0, absent: 0, leave: 0 }; },
-      },
-      groupLists: {
-        list: async () => { await delay(); return [...groupListsMock]; },
-        delete: async (id: number) => { await delay(); groupListsMock = groupListsMock.filter((g) => g.id !== id); groupItemsMock = groupItemsMock.filter((i) => i.list_id !== id); return { ok: true }; },
-      },
-      groupListItems: {
-        list: async (listId: number) => { await delay(); return groupItemsMock.filter((i) => i.list_id === listId); },
-        create: async (data: any) => { await delay(); const it = { id: nextId(), updated_at: Date.now(), status: 'todo', sort_order: 0, ...data }; groupItemsMock.push(it); return it; },
-        update: async (id: number, data: any) => { await delay(); const i = groupItemsMock.findIndex((x) => x.id === id); if (i >= 0) groupItemsMock[i] = { ...groupItemsMock[i], ...data, updated_at: Date.now() }; return groupItemsMock[i]; },
-        delete: async (id: number) => { await delay(); groupItemsMock = groupItemsMock.filter((x) => x.id !== id); return { ok: true }; },
       },
     },
     // 微信小程序（浏览器模式占位）
@@ -719,13 +710,66 @@ export function createBrowserApi() {
       pull: async () => ({ ok: false, error: '浏览器预览不支持 WebDAV' }),
     },
 
-    // v1.2.3：小组共享清单（浏览器预览仅本地态，不支持远端同步）
-    groups: {
-      create: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
-      join: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
-      pull: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
-      publish: async () => ({ ok: false, error: '浏览器预览不支持小组同步' }),
-      leave: async () => ({ ok: true }),
+    // v1.2.6：付费月卡 mock（浏览器预览，UI 完整渲染；激活完全在桌面端进行）
+    billing: {
+      status: async () => {
+        await delay();
+        const activated = Array.from(mockBilledCodes.entries()).map(([code, info]) => ({
+          codeMasked: (() => {
+            const parts = code.split('-');
+            if (parts.length !== 4) return '****-****-****-****';
+            return `${parts[0]}-****-****-${parts[3]}`;
+          })(),
+          openedAtIso: new Date(info.openedAt).toISOString(),
+          expiresAtIso: new Date(info.expiresAt).toISOString(),
+        }));
+        const maxExp = activated.length > 0
+          ? Math.max(...Array.from(mockBilledCodes.values()).map(v => v.expiresAt))
+          : null;
+        const isPremium = !!(maxExp && maxExp > Date.now());
+        const remainingDays = maxExp ? Math.max(0, Math.ceil((maxExp - Date.now()) / 86400_000)) : 0;
+        return {
+          ok: true,
+          isPremium,
+          premiumUntil: maxExp,
+          premiumUntilIso: maxExp ? new Date(maxExp).toISOString() : null,
+          remainingDays,
+          activatedCount: activated.length,
+          monthlyDays: 30,
+          recentlyActivatedCodes: activated,
+        };
+      },
+      redeemMonthly: async (code: string) => {
+        await delay();
+        // 浏览器预览：识别 DEMO 前缀的码为「假激活」（让 UI 流程可见）
+        if (/^DEMO[-A-Z0-9]{0,30}$/i.test(code)) {
+          // 模拟 DB UNIQUE：同码第二次激活 → ALREADY_ACTIVATED
+          if (mockBilledCodes.has(code.toUpperCase())) {
+            const existing = mockBilledCodes.get(code.toUpperCase())!;
+            return {
+              ok: false,
+              errorCode: 'ALREADY_ACTIVATED',
+              error: '该月卡码已在本机使用过（每个码仅可激活 1 次）',
+              activatedAtIso: new Date(existing.openedAt).toISOString(),
+              expiresAtIso: new Date(existing.expiresAt).toISOString(),
+              remainingDays: Math.max(0, Math.ceil((existing.expiresAt - Date.now()) / 86400_000)),
+            };
+          }
+          const openedAt = Date.now();
+          const expiresAt = openedAt + 30 * 86400_000;
+          mockBilledCodes.set(code.toUpperCase(), { openedAt, expiresAt });
+          return {
+            ok: true,
+            isPremium: true,
+            premiumUntil: expiresAt,
+            expiresAtIso: new Date(expiresAt).toISOString(),
+            remainingDays: 30,
+          };
+        }
+        return { ok: false, error: '浏览器预览只支持 DEMO 前缀的假激活码（真实激活请用桌面端）' };
+      },
+      redeemVoucher: async (_code: string) => ({ ok: false, error: 'v1.2.6 起仅支持月卡码（请用桌面端）' }),
+      syncVouchers: async () => ({ ok: true, activated: 0 }),
     },
 
     // v1.2.3：主进程事件（浏览器无）

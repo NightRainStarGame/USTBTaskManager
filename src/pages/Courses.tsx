@@ -105,6 +105,33 @@ export default function CoursesPage() {
               <CalendarDays size={13} /> 课表日历
             </button>
           </div>
+          <div className="relative">
+            <button onClick={() => setHwMenuOpen(v => !v)} className={`btn-ghost ${hwMenuOpen ? 'text-neon-green border-neon-green/60 bg-neon-green/10' : ''}`} title="生成作业码 / 发布 / 接收作业">
+              <RefreshCw size={14} /> 作业同步
+            </button>
+            {hwMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 z-30 glass-panel rounded-lg p-1.5 border border-neon-green/20 shadow-neon-green flex flex-col gap-1.5 animate-in min-w-[140px]">
+                <button
+                  onClick={() => { setHwMenuOpen(false); setGenCodesOpen(true); }}
+                  className="btn-neon text-xs whitespace-nowrap justify-start"
+                >
+                  <KeyRound size={13} /> 生成作业码
+                </button>
+                <button
+                  onClick={() => { setHwMenuOpen(false); setPublishOpen(true); }}
+                  className="btn-neon btn-neon-yellow text-xs whitespace-nowrap justify-start"
+                >
+                  <CloudUpload size={13} /> 发布作业
+                </button>
+                <button
+                  onClick={() => { setHwMenuOpen(false); setReceiveOpen(true); }}
+                  className="btn-neon text-xs whitespace-nowrap justify-start"
+                >
+                  <CloudDownload size={13} /> 接收作业
+                </button>
+              </div>
+            )}
+          </div>
           <button onClick={() => setBeikeOpen(true)} className="btn-ghost" title="USTB 统一身份认证扫码登录，一键导入教务课表">
             <Shell size={14} /> 贝壳课表
           </button>
@@ -245,37 +272,7 @@ export default function CoursesPage() {
         />
       )}
 
-      {/* 右下角：作业同步入口（点开 → 生成作业码 / 发布作业 / 接收作业） */}
-      <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-2">
-        {hwMenuOpen && (
-          <div className="glass-panel rounded-lg p-1.5 border border-neon-green/20 shadow-neon-green flex flex-col gap-1.5 animate-in">
-            <button
-              onClick={() => { setHwMenuOpen(false); setGenCodesOpen(true); }}
-              className="btn-neon text-xs whitespace-nowrap"
-            >
-              <KeyRound size={13} /> 生成作业码
-            </button>
-            <button
-              onClick={() => { setHwMenuOpen(false); setPublishOpen(true); }}
-              className="btn-neon btn-neon-yellow text-xs whitespace-nowrap"
-            >
-              <CloudUpload size={13} /> 发布作业
-            </button>
-            <button
-              onClick={() => { setHwMenuOpen(false); setReceiveOpen(true); }}
-              className="btn-neon text-xs whitespace-nowrap"
-            >
-              <CloudDownload size={13} /> 接收作业
-            </button>
-          </div>
-        )}
-        <button
-          onClick={() => setHwMenuOpen(v => !v)}
-          className={`glass-panel rounded-lg px-4 py-2.5 border shadow-neon-green flex items-center gap-2 font-mono text-xs transition-all ${hwMenuOpen ? 'border-neon-green bg-neon-green/10 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
-        >
-          <RefreshCw size={14} /> 作业同步
-        </button>
-      </div>
+      {/* v1.2.5: 作业同步入口已迁到顶部（避免与右下 Pomodoro 重叠） */}
 
       {genCodesOpen && (
         <GenerateCodesModal onClose={() => setGenCodesOpen(false)} />

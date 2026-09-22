@@ -1,6 +1,10 @@
 /**
- * v1.2.3 全局番茄钟：悬浮右下角（所有页面可用），绑定任务专注 + 落库统计。
- * 工作时段结束自动记录 pomodoro_sessions，休息后自动回到就绪态。
+ * v1.2.5 全局番茄钟：悬浮右下角（所有页面可用），绑定任务专注 + 落库统计。
+ * v1.2.5 UI 修复：
+ *   - 浮动按钮缩小（56→48px）+ Esc 关闭面板
+ *   - 浮动按钮可拖动到任意位置（位置持久化到 localStorage）
+ *   - 双击浮动按钮重置位置到右下角
+ *   - 解决 v1.2.4 引入的「挡 Settings 保存条 / Courses 作业同步键 / Calendar +键」问题
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
@@ -13,6 +17,19 @@ type Phase = 'idle' | 'work' | 'break';
 
 const DEFAULT_WORK = 25;
 const DEFAULT_BREAK = 5;
+const POS_STORAGE_KEY = 'pomodoro_widget_pos';
+const DEFAULT_POS: { x: number; y: number } = { x: 0, y: 0 }; // 在 bottom-6 right-6 锚点上的偏移
+
+function loadPos(): { x: number; y: number } {
+  try {
+    const saved = localStorage.getItem(POS_STORAGE_KEY);
+    if (saved) {
+      const p = JSON.parse(saved);
+      if (typeof p?.x === 'number' && typeof p?.y === 'number') return p;
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_POS;
+}
 
 export default function PomodoroWidget() {
   const requirements = useStore(s => s.requirements);
@@ -26,6 +43,15 @@ export default function PomodoroWidget() {
   const [refReqId, setRefReqId] = useState<number | null>(null);
   const [todayMinutes, setTodayMinutes] = useState(0);
   const [flash, setFlash] = useState(false);
+
+  // 可拖动：pos 是在 bottom-6 right-6 锚点上的像素偏移
+  const [pos, setPos] = useState<{ x: number; y: number }>(loadPos);
+  const posRef = useRef(pos); // 同步镜像，避免 onUp 闭包读到旧 pos
+  useEffect(() => { posRef.current = pos; }, [pos]);
+  const [dragging, setDragging] = useState(false);
+  const didDragRef = useRef(false);
+  const dragStartRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
   const startedAtRef = useRef<number>(0);
   const notifiedRef = useRef(false);
 
@@ -37,6 +63,14 @@ export default function PomodoroWidget() {
     [requirements]
   );
   const boundReq = pendingReqs.find(r => r.id === refReqId) || null;
+
+  // Esc 关闭面板
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [open]);
 
   // 今日专注时长（面板打开时刷新）
   useEffect(() => {
@@ -116,6 +150,40 @@ export default function PomodoroWidget() {
   const finishPhaseRef = useRef<() => void>(() => {});
   useEffect(() => { finishPhaseRef.current = finishPhase; });
 
+  // 拖动：仅浮动按钮本体可拖；面板展开后不可拖
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const dx = e.clientX - dragStartRef.current.startX;
+      const dy = e.clientY - dragStartRef.current.startY;
+      // 阈值 > 3px 才算"真拖动"，避免误判点击
+      if (!didDragRef.current && Math.hypot(dx, dy) > 3) didDragRef.current = true;
+      const next = {
+        x: dragStartRef.current.origX + dx,
+        y: dragStartRef.current.origY + dy,
+      };
+      posRef.current = next;
+      setPos(next);
+    };
+    const onUp = () => {
+      setDragging(false);
+      // 持久化（用 ref 同步读最新值）
+      try {
+        localStorage.setItem(POS_STORAGE_KEY, JSON.stringify(posRef.current));
+      } catch { /* ignore */ }
+      dragStartRef.current = null;
+      // 下一帧再清 didDragRef，让 onClick 不会误触发
+      setTimeout(() => { didDragRef.current = false; }, 0);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [dragging]);
+
   const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
   const ss = String(remaining % 60).padStart(2, '0');
   const progress = totalSecs > 0 ? 1 - remaining / totalSecs : 0;
@@ -123,14 +191,47 @@ export default function PomodoroWidget() {
   const phaseColor = phase === 'work' ? 'text-neon-green' : phase === 'break' ? 'text-neon-yellow' : 'text-text-secondary';
   const ringColor = phase === 'work' ? '#00FF88' : '#FFC53D';
 
+  const handleFabMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    didDragRef.current = false;
+    dragStartRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+    setDragging(true);
+  };
+
+  const handleFabClick = () => {
+    // 如果刚才拖动过，不响应点击
+    if (didDragRef.current) return;
+    setOpen(o => !o);
+  };
+
+  const handleFabDoubleClick = () => {
+    setPos(DEFAULT_POS);
+    posRef.current = DEFAULT_POS;
+    try { localStorage.setItem(POS_STORAGE_KEY, JSON.stringify(DEFAULT_POS)); } catch { /* ignore */ }
+  };
+
   return (
-    <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3">
+    <div
+      style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+      className={clsx(
+        'fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3',
+        dragging && 'cursor-grabbing select-none'
+      )}
+    >
       {/* 展开面板 */}
       {open && (
         <div className={clsx(
           'w-72 rounded-xl glass-panel p-4 space-y-3 shadow-neon-green/30',
           flash && 'animate-pulse-glow border-neon-green'
         )}>
+          {/* 顶部：标题 + 关闭 */}
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] uppercase tracking-widest text-text-dim">FOCUS TIMER</span>
+            <button onClick={() => setOpen(false)} className="btn-ghost p-1" title="关闭 (Esc)">
+              <X size={14} />
+            </button>
+          </div>
           {/* 环形计时 */}
           <div className="flex flex-col items-center gap-2">
             <div className="relative w-32 h-32">
@@ -197,25 +298,32 @@ export default function PomodoroWidget() {
             <span className="flex items-center gap-1"><Coffee size={11} /> 今日专注 {todayMinutes} 分钟</span>
             {phase === 'break' && <span className="text-neon-yellow">休息中…</span>}
           </div>
+          {/* 拖动提示 */}
+          <div className="text-[9px] text-text-dim font-mono pt-1 border-t border-neon-green/10 text-center">
+            可拖动 · 双击浮动按钮重置位置
+          </div>
         </div>
       )}
 
-      {/* 悬浮按钮 */}
+      {/* 浮动按钮（48px，可拖动） */}
       <button
-        onClick={() => setOpen(o => !o)}
+        onMouseDown={handleFabMouseDown}
+        onClick={handleFabClick}
+        onDoubleClick={handleFabDoubleClick}
         className={clsx(
-          'w-14 h-14 rounded-full glass-panel flex items-center justify-center transition-all',
+          'w-12 h-12 rounded-full glass-panel flex items-center justify-center transition-all',
           'shadow-neon-green hover:shadow-[0_0_18px_rgba(0,255,136,0.5)]',
-          phase !== 'idle' && 'animate-pulse-glow',
+          dragging ? 'cursor-grabbing' : 'cursor-grab',
+          phase !== 'idle' && !open && 'animate-pulse-glow',
           flash && 'ring-2 ring-neon-green'
         )}
-        title="番茄钟 · 专注计时"
+        title="番茄钟 · 专注计时（可拖动 · 双击重置位置）"
       >
-        {open ? <X size={20} className="text-text-secondary" /> : (
+        {open ? <X size={18} className="text-text-secondary" /> : (
           <div className="flex flex-col items-center leading-none">
-            <Timer size={18} className={phase === 'work' ? 'text-neon-green' : phase === 'break' ? 'text-neon-yellow' : 'text-text-secondary'} />
+            <Timer size={16} className={phase === 'work' ? 'text-neon-green' : phase === 'break' ? 'text-neon-yellow' : 'text-text-secondary'} />
             {phase !== 'idle' && (
-              <span className="font-mono text-[10px] font-bold mt-0.5 tabular-nums text-text-primary">{mm}:{ss}</span>
+              <span className="font-mono text-[9px] font-bold mt-0.5 tabular-nums text-text-primary">{mm}:{ss}</span>
             )}
           </div>
         )}

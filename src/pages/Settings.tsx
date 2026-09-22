@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
-import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package, Bell, BellRing, Timer, Cloud } from 'lucide-react';
+import { Save, Download, Upload, Database, Palette, Info, Cpu, User, CheckCircle2, GraduationCap, Tags, Plus, Trash2, Pencil, Lock, Users, Shield, RefreshCw, ExternalLink, AlertCircle, Sparkles, FileSpreadsheet, Calendar, CloudUpload, Bug, Package, Bell, BellRing, Timer, Cloud, KeyRound, Crown, Wallet, MessageCircle, Copy } from 'lucide-react';
 import Modal from '@/components/Modal';
+import clsx from '../utils/clsx';
+import paymentWechatQr from '../assets/payment-wechat.png';
+import { PRICING } from '../config/pricing';
 import AboutPanel from '@/components/AboutPanel';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
@@ -1163,6 +1166,28 @@ export default function SettingsPage() {
         </div>
       </Section>
 
+      {/* v1.2.6：纯本地月卡（删除班级服务，删除服务端依赖） */}
+      <Section icon={<Crown size={14} />} title="月卡与付费（v1.2.6 离线版）">
+        <Row label="月付状态">
+          <PremiumStatusRow />
+        </Row>
+        <Row label="购买月卡">
+          <PurchaseMonthlyRow />
+        </Row>
+        <Row label="激活记录">
+          <ActivatedCodesRow />
+        </Row>
+        <div className="text-[11px] text-text-dim font-mono bg-ink-900/50 rounded p-2 border border-neon-green/10 mt-2">
+          · <strong className="text-neon-green">免费用户</strong>：单图 ≤{PRICING.FREE.imageSizeMB}MB
+          <br />
+          · <strong className="text-neon-yellow">月付会员</strong>（{PRICING.MONTHLY.days} 天）：单图 ≤{PRICING.MONTHLY.imageSizeMB}MB
+          <br />
+          · v1.2.6 起<strong>完全本地</strong>：月卡开通码为 16 位字符（XXXX-XXXX-XXXX-XXXX），HMAC 校验在本机进行，无任何云端通信
+          <br />
+          · <strong className="text-neon-yellow">防重放</strong>：每个码仅可激活 1 次（本机 UNIQUE 约束）。若激活记录出现非本人激活项，说明码已泄漏，请立即联系客服
+        </div>
+      </Section>
+
       {/* 软件更新 */}
       <Section icon={<RefreshCw size={14} />} title="软件更新">
         <Row label="当前版本">
@@ -1500,7 +1525,8 @@ export default function SettingsPage() {
         <AboutPanel appVersion={appInfo?.version || ''} />
       </Section>
 
-      <div className="fixed bottom-0 right-0 left-60 bg-ink-base/80 backdrop-blur p-3 border-t border-neon-green/15 flex justify-end">
+      {/* v1.2.5: fixed bottom-0 改为 bottom-24 让出 Pomodoro widget 位置（96px） */}
+      <div className="fixed bottom-24 right-4 left-64 bg-ink-base/80 backdrop-blur p-3 border-t border-neon-green/15 flex justify-end z-30">
         <button onClick={save} className="btn-neon"><Save size={14} /> 保存所有设置</button>
       </div>
 
@@ -1817,6 +1843,216 @@ function Field({ label, children }: any) {
     </label>
   );
 }
+
+// ============================================================
+// v1.2.6 月卡购买（收款码 + 我已付款 → 弹窗显示微信号 → 输入码激活）
+// ============================================================
+const WECHAT_ID = 'NRSG-Power';
+
+function PurchaseMonthlyRow() {
+  const [showPaidModal, setShowPaidModal] = useState(false);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const submit = async () => {
+    if (!code.trim()) return;
+    setBusy(true); setMsg(null);
+    const r = await window.taskAPI.billing.redeemMonthly(code.trim());
+    setBusy(false);
+    if (r.ok) {
+      setMsg({ ok: true, text: `激活成功！30 天月卡已生效` });
+      setCode('');
+      // 通知其他订阅者（顶部条 + 激活记录）
+      window.dispatchEvent(new CustomEvent('taskmanager-billing-updated'));
+    } else {
+      // 特殊处理：码已用过
+      if (r.errorCode === 'ALREADY_ACTIVATED') {
+        const used = r.activatedAtIso?.slice(0, 10) || '未知';
+        const exp = r.expiresAtIso?.slice(0, 10) || '未知';
+        setMsg({
+          ok: false,
+          text: `❌ 该月卡码已在本机使用过（${used} 激活 → ${exp} 到期）。每个码仅可激活 1 次。如非本人激活，请联系客服。`
+        });
+      } else {
+        setMsg({ ok: false, text: r.error || '激活失败' });
+      }
+    }
+  };
+
+  const copyWx = async () => {
+    try {
+      await navigator.clipboard.writeText(WECHAT_ID);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* 旧浏览器可能没权限 */ }
+  };
+
+  return (
+    <div className="flex items-start gap-4">
+      <img
+        src={paymentWechatQr}
+        alt="微信支付收款码"
+        className="w-40 h-40 rounded-lg border border-neon-green/30 bg-white object-contain shrink-0"
+        draggable={false}
+      />
+      <div className="flex-1 space-y-3">
+        <div className="text-xs font-mono text-text-secondary leading-relaxed">
+          <Wallet size={12} className="inline text-neon-green mr-1" />
+          微信扫码付款后，<strong className="text-neon-yellow">{PRICING.MONTHLY.days} 天</strong> 月卡
+          <span className="text-text-dim">（单图 ≤{PRICING.MONTHLY.imageSizeMB}MB）</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowPaidModal(true)}
+            className="btn-neon btn-neon-yellow text-xs"
+          >
+            <CheckCircle2 size={13} /> 我已付款
+          </button>
+          <span className="text-[10px] font-mono text-text-dim">
+            点此获取开通码（加客服微信）
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            value={code}
+            onChange={e => setCode(e.target.value.trim().toUpperCase())}
+            placeholder="粘贴 16 位月卡开通码（XXXX-XXXX-XXXX-XXXX）"
+            maxLength={19}
+            className="flex-1 bg-ink-900 border border-neon-green/20 rounded px-3 py-1.5 text-sm font-mono outline-none focus:border-neon-green"
+          />
+          <button onClick={submit} disabled={busy || !code.trim()} className="btn-neon btn-neon-yellow text-xs">
+            {busy ? '激活中…' : <><KeyRound size={13} /> 激活</>}
+          </button>
+        </div>
+        {msg && (
+          <div className={clsx('text-[10px] font-mono', msg.ok ? 'text-neon-green' : 'text-red-300')}>
+            {msg.text}
+          </div>
+        )}
+      </div>
+
+      {/* 我已付款 → 显示微信号 + 操作指引 */}
+      {showPaidModal && (
+        <Modal onClose={() => setShowPaidModal(false)} title="加客服微信获取开通码">
+          <div className="space-y-4">
+            <div className="bg-gradient-to-br from-neon-green/10 to-neon-yellow/10 border border-neon-green/30 rounded-lg p-4">
+              <div className="text-[11px] font-mono text-text-dim mb-1">客服微信号</div>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-bold font-mono text-neon-green tracking-wider select-all">
+                  {WECHAT_ID}
+                </span>
+                <button
+                  onClick={copyWx}
+                  className="btn-ghost text-xs px-2 py-1"
+                  title="复制微信号"
+                >
+                  {copied ? <><CheckCircle2 size={12} /> 已复制</> : <><Copy size={12} /> 复制</>}
+                </button>
+              </div>
+            </div>
+
+            <ol className="text-xs font-mono text-text-secondary space-y-2 list-decimal list-inside pl-1">
+              <li>微信扫一扫<strong>左侧收款码</strong>完成付款</li>
+              <li>付款成功后，添加上方客服微信 <strong className="text-neon-green">{WECHAT_ID}</strong></li>
+              <li>发送付款截图给客服</li>
+              <li>客服核对后会发送 <strong className="text-neon-yellow">16 位月卡开通码</strong></li>
+              <li>把开通码粘贴到上方输入框 → 点击 <strong className="text-neon-yellow">「激活」</strong></li>
+            </ol>
+
+            <div className="text-[10px] font-mono text-text-dim bg-ink-900/50 rounded p-2 border border-neon-green/10">
+              · 月卡激活后立即生效，{PRICING.MONTHLY.days} 个自然日后到期
+              <br />
+              · 每个开通码仅可在<strong>一台设备</strong>使用一次
+              <br />
+              · 校验完全在本机进行，<strong>无需联网</strong>
+            </div>
+
+            <div className="flex justify-end">
+              <button onClick={() => setShowPaidModal(false)} className="btn-neon text-xs px-3 py-1.5">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function PremiumStatusRow() {
+  const [status, setStatus] = useState<any>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await window.taskAPI.billing.status();
+        if (alive && r.ok) setStatus(r);
+      } catch { /* ignore */ }
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  if (!status) return <span className="text-text-dim font-mono text-xs">加载中…</span>;
+  if (status.isPremium) {
+    return (
+      <span className="font-mono text-xs">
+        <Crown size={13} className="inline text-neon-yellow mr-1" />
+        <strong className="text-neon-yellow">月付激活</strong>
+        <span className="text-text-dim ml-2">· 剩余 <strong>{status.remainingDays}</strong> 天</span>
+        <span className="text-text-dim ml-2">· 到期 {status.premiumUntilIso?.slice(0, 10)}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-xs">
+      <span className="text-text-dim">免费版</span>
+      <span className="text-text-dim ml-2">· 单图 ≤{PRICING.FREE.imageSizeMB}MB</span>
+    </span>
+  );
+}
+
+/** v1.2.6：展示本机已激活月卡码（mask 后）—— 用于用户自查是否被他人盗用
+ *  数据来源：billing:status.recentlyActivatedCodes（最近 5 条）
+ */
+function ActivatedCodesRow() {
+  const [status, setStatus] = useState<any>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await window.taskAPI.billing.status();
+        if (alive && r.ok) setStatus(r);
+      } catch { /* ignore */ }
+    };
+    load();
+    return () => { alive = false; };
+  }, []);
+  if (!status) return <span className="text-text-dim font-mono text-xs">加载中…</span>;
+  const list2 = status.recentlyActivatedCodes || [];
+  if (list2.length === 0) {
+    return <span className="text-text-dim font-mono text-xs">暂无激活记录</span>;
+  }
+  return (
+    <div className="space-y-1">
+      {list2.map((r: any, i: number) => (
+        <div key={i} className="flex items-center gap-3 font-mono text-[11px] py-1">
+          <span className="text-neon-green">{r.codeMasked}</span>
+          <span className="text-text-dim">·</span>
+          <span className="text-text-secondary">激活 {r.openedAtIso?.slice(0, 10)}</span>
+          <span className="text-text-dim">→</span>
+          <span className="text-text-secondary">到期 {r.expiresAtIso?.slice(0, 10)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// MonthlyRedeemRow 已被 PurchaseMonthlyRow 替换（v1.2.6 收款码 + 我已付款 + 客服微信流程）
 
 /** v1.3.0 缓存式增量更新按钮：
  *  - winner 现在直接携带 patches（主进程透传）

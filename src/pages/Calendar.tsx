@@ -222,17 +222,7 @@ export default function CalendarPage() {
         </span>
       </div>
 
-      {/* 浮动 + 按钮 */}
-      <button
-        onClick={() => openCreate()}
-        className="fixed right-8 bottom-8 z-30 w-14 h-14 rounded-full
-                   bg-neon-green/20 hover:bg-neon-green/30 border-2 border-neon-green
-                   text-neon-green shadow-neon-green-strong
-                   flex items-center justify-center transition-all hover:scale-110 active:scale-95"
-        title="新建事件（任意视图）"
-      >
-        <Plus size={26} />
-      </button>
+      {/* v1.2.5: 右下浮动「+」按钮移除——与右下 Pomodoro widget 重叠；新建事件已在顶部工具栏（185 行） */}
 
       {modalOpen && (
         <EventModal

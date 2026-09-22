@@ -20,12 +20,22 @@ out-app*/
 .screenshots/
 .workbuddy/
 .vs/
+.playwright-cli/
+preview-*.png
+staging/
 scripts/.input-test*/
 scripts/.asar-cache/
 scripts/_*.py
 scripts/_*.txt
 scripts/*.png
 scripts/*.ps1
+!scripts/issue-voucher.ps1
+!scripts/install-issue-voucher-shortcut.ps1
+!scripts/fix-server-encoding.ps1
+!scripts/build-server-zip.ps1
+scripts/*.bat
+scripts/*.mjs
+!scripts/build-voucher-codes.mjs
 *.log
 
 # ==================== 数据库 ====================
@@ -33,11 +43,17 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+# v1.2.6：月卡开通码库（敏感 —— 含 100 个有效码 + HMAC 摘要，禁止进版本库）
+data/voucher-codes*.txt
+data/*.txt
 
 # ==================== 本地环境配置（含 proxy / strict-ssl 等本机设置，不公开） ====================
 .npmrc
 .env
 .env.local
+settings.yaml
+snap-settings.yml
+server-build.txt
 
 # ==================== 编辑器 / 系统 ====================
 .DS_Store
@@ -86,3 +102,16 @@ electron/homework/_*.txt
 electron/updater/_*.ts
 scripts/_*.js
 .test-build/
+
+# ==================== 服务端（独立 Node 项目）====================
+# v1.2.6 起：付费体系彻底离线化，服务端代码不再维护；保留在工作区作历史存档，不进版本库
+server/
+server/node_modules/
+server/dist/
+server/data/
+server/uploads/
+server/logs/
+server/.env
+server/.env.local
+server/*.log
+server/.cache/

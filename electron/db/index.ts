@@ -526,6 +526,91 @@ function runMigrations(db: Database.Database) {
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (list_id) REFERENCES group_lists(id) ON DELETE CASCADE
     );
+
+    -- ============================================================
+    -- v1.2.5：班级系统（独立表；不动 group_lists，保留老小组作兼容）
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS classes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,                  -- 服务端班级 code
+      share_code TEXT NOT NULL UNIQUE,            -- 加入用分享码
+      name TEXT NOT NULL,
+      description TEXT,
+      owner_token TEXT,                           -- 服务端 device_token（创建者）；本地缓存
+      role TEXT DEFAULT 'owner',                  -- owner/admin/member（本地视角）
+      member_count INTEGER DEFAULT 1,
+      max_members INTEGER DEFAULT 50,
+      cloud_synced INTEGER DEFAULT 0,             -- 是否已成功同步到服务端
+      last_synced_at INTEGER,
+      joined_at INTEGER NOT NULL,
+      dissolved INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS class_announcements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      server_id INTEGER,                          -- 服务端 announcements.id
+      author_token TEXT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      images_json TEXT DEFAULT '[]',
+      pinned INTEGER DEFAULT 0,
+      read_count INTEGER DEFAULT 0,
+      is_read INTEGER DEFAULT 0,                  -- 当前 device 是否已读
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_class_ann_class ON class_announcements(class_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS class_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      server_id INTEGER,
+      author_token TEXT,
+      title TEXT NOT NULL,
+      body TEXT DEFAULT '',
+      images_json TEXT DEFAULT '[]',
+      due_at INTEGER,
+      status TEXT DEFAULT 'open',                 -- open / done / cancelled
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_class_tasks_class ON class_tasks(class_id, status, created_at DESC);
+
+    -- ============================================================
+    -- v1.2.5：付费体系（本地账本 + 服务端对账）
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS monthly_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      voucher_code TEXT NOT NULL,                 -- 月卡码（UNIQUE：每码在本机只能激活一次）
+      opened_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,                -- 到期时间戳
+      source TEXT DEFAULT 'manual',               -- manual / server
+      server_synced INTEGER DEFAULT 0
+    );
+    -- v1.2.6：月卡码防重放（一个码只能在本机激活一次）
+    -- 用 UNIQUE INDEX 而非表内 UNIQUE 约束，避免破坏已存在的老库结构
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_subscriptions_voucher
+      ON monthly_subscriptions(voucher_code);
+
+    CREATE TABLE IF NOT EXISTS voucher_purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,                  -- 基础开通码
+      plan TEXT DEFAULT 'BASIC',
+      redeemed_at INTEGER,                        -- 服务端激活时间（null = 仅本地持有）
+      local_kept_at INTEGER NOT NULL              -- 首次记录时间
+    );
+
+    -- ============================================================
+    -- v1.2.5：本地设备档案（device_token + 昵称）
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS device_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),       -- 单行表
+      device_token TEXT NOT NULL,
+      nickname TEXT,
+      created_at INTEGER NOT NULL,
+      server_synced INTEGER DEFAULT 0
+    );
   `);
 
   // 作业周期任务：none(默认)/daily/weekly/biweekly，完成时自动生成下一轮

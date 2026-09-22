@@ -183,16 +183,6 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         upsert: (data: { course_id: number; date: string; status: string; note?: string }) => invoke('db:attendance:upsert', data),
         stats: (courseId?: number) => invoke('db:attendance:stats', courseId) as Promise<Record<string, number>>,
       },
-      groupLists: {
-        list: () => invoke('db:groupLists:list'),
-        delete: (id: number) => invoke('db:groupLists:delete', id),
-      },
-      groupListItems: {
-        list: (listId: number) => invoke('db:groupListItems:list', listId),
-        create: (data: any) => invoke('db:groupListItems:create', data),
-        update: (id: number, data: any) => invoke('db:groupListItems:update', id, data),
-        delete: (id: number) => invoke('db:groupListItems:delete', id),
-      },
     },
     // 微信小程序（预留接口）
     miniprogram: {
@@ -600,14 +590,47 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       }>,
     },
 
-    /** v1.2.3：小组共享清单（GitHub 远端同步，与作业同步共用令牌） */
-    groups: {
-      create: (name: string) => invoke('groups:create', name) as Promise<{ ok: boolean; id?: number; code?: string; name?: string; error?: string }>,
-      join: (code: string) => invoke('groups:join', code) as Promise<{ ok: boolean; id?: number; code?: string; name?: string; items?: number; error?: string }>,
-      pull: (listId: number) => invoke('groups:pull', listId) as Promise<{ ok: boolean; items?: number; updatedAt?: number; error?: string }>,
-      publish: (listId: number) => invoke('groups:publish', listId) as Promise<{ ok: boolean; items?: number; error?: string }>,
-      leave: (listId: number) => invoke('groups:leave', listId) as Promise<{ ok: boolean }>,
+    
+
+    /** v1.2.6：付费体系（纯本地月卡，30 天计时，无服务端依赖） */
+    billing: {
+      status: () => invoke('billing:status') as Promise<{
+        ok: boolean;
+        isPremium: boolean;
+        premiumUntil: number | null;
+        premiumUntilIso: string | null;
+        remainingDays: number;
+        activatedCount: number;
+        monthlyDays: number;
+        /** v1.2.6：最近 5 条已激活码（mask 后），用户自查是否被他人盗用 */
+        recentlyActivatedCodes?: Array<{
+          codeMasked: string;
+          openedAtIso: string;
+          expiresAtIso: string;
+        }>;
+        error?: string;
+      }>,
+      redeemMonthly: (code: string) => invoke('billing:redeemMonthly', code) as Promise<{
+        ok: boolean;
+        isPremium?: boolean;
+        premiumUntil?: number;
+        expiresAtIso?: string;
+        remainingDays?: number;
+        /** v1.2.6：码已用过的明确错误码 */
+        errorCode?: 'ALREADY_ACTIVATED';
+        activatedAtIso?: string;
+        error?: string;
+      }>,
+      redeemVoucher: (code: string) => invoke('billing:redeemVoucher', code) as Promise<{
+        ok: boolean;
+        plan?: 'BASIC' | 'MONTHLY';
+        error?: string;
+      }>,
+      /** v1.2.6 起无操作（保留入口以免渲染层报错） */
+      syncVouchers: () => invoke('billing:syncVouchers') as Promise<{ ok: boolean; activated: number; error?: string }>,
     },
+
+    // v1.2.6 起班级系统已下线（VPS 服务依赖已移除，纯本地版不再支持云端班级共享）
 
     /** v1.2.3：主进程推送事件（托盘 / 全局快捷键） */
     system: {

@@ -5,7 +5,8 @@ import { registerInputDiagIpc } from '../diag/inputDiag';
 import { registerAboutIpc as registerAbout } from '../about';
 import { softDeleteRow, registerCleanup } from '../cleanup';
 import { registerWebdav } from '../webdav';
-import { registerGroupSync } from '../grouplists';
+
+import { registerBilling } from '../billing';
 
 // ====== Courses ======
 function registerCourses(db: DB) {
@@ -930,41 +931,6 @@ function registerAttendance(db: DB) {
   });
 }
 
-// ====== v1.2.3：小组共享清单（本地镜像 CRUD；远端同步在 grouplists 模块） ======
-function registerGroupLists(db: DB) {
-  ipcMain.handle('db:groupLists:list', () =>
-    db.prepare('SELECT * FROM group_lists ORDER BY created_at DESC').all()
-  );
-  ipcMain.handle('db:groupLists:delete', (_e, id) => {
-    db.prepare('DELETE FROM group_list_items WHERE list_id = ?').run(id);
-    db.prepare('DELETE FROM group_lists WHERE id = ?').run(id);
-    return { ok: true };
-  });
-  ipcMain.handle('db:groupListItems:list', (_e, listId) =>
-    db.prepare('SELECT * FROM group_list_items WHERE list_id = ? ORDER BY sort_order ASC, id ASC').all(listId)
-  );
-  ipcMain.handle('db:groupListItems:create', (_e, data) => {
-    const info = db.prepare(
-      `INSERT INTO group_list_items (list_id, remote_key, title, assignee, status, due_date, sort_order, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      data.list_id, data.remote_key ?? null, data.title, data.assignee ?? null,
-      data.status ?? 'todo', data.due_date ?? null, data.sort_order ?? 0, Date.now()
-    );
-    return db.prepare('SELECT * FROM group_list_items WHERE id = ?').get(info.lastInsertRowid);
-  });
-  ipcMain.handle('db:groupListItems:update', (_e, id, data) => {
-    db.prepare(
-      `UPDATE group_list_items SET title=?, assignee=?, status=?, due_date=?, sort_order=?, updated_at=? WHERE id=?`
-    ).run(data.title, data.assignee ?? null, data.status ?? 'todo', data.due_date ?? null, data.sort_order ?? 0, Date.now(), id);
-    return db.prepare('SELECT * FROM group_list_items WHERE id = ?').get(id);
-  });
-  ipcMain.handle('db:groupListItems:delete', (_e, id) => {
-    db.prepare('DELETE FROM group_list_items WHERE id = ?').run(id);
-    return { ok: true };
-  });
-}
-
 // ====== v1.2.3：统计报表（周报 / 月报聚合） ======
 function registerStatsReport(db: DB) {
   ipcMain.handle('db:stats:report', (_e, from, to) => {
@@ -1053,15 +1019,15 @@ export function registerAllIpc(db: DB) {
   registerCanvases(db);
   registerCanvasNodes(db);
   registerCanvasEdges(db);
-  // v1.2.3 学业 / 专注 / 习惯 / 出勤 / 小组清单 / 统计报表
+  // v1.2.3 学业 / 专注 / 习惯 / 出勤 / 统计报表
   registerGrades(db);
   registerExams(db);
   registerPomodoro(db);
   registerHabits(db);
   registerAttendance(db);
-  registerGroupLists(db);
   registerStatsReport(db);
-  // v1.2.3 WebDAV 云同步 + 小组清单远端同步（GitHub）
+  // v1.2.3 WebDAV 云同步
   registerWebdav(db);
-  registerGroupSync(db);
+  // v1.2.6 付费体系（纯本地，月卡 30 天计时；v1.2.5 班级系统已删除）
+  registerBilling(db);
 }
