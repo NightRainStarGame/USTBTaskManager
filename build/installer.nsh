@@ -48,6 +48,20 @@
   ${if} ${FileExists} "$INSTDIR\resources\app\DawnWebGPUCache"
     RMDir /r "$INSTDIR\resources\app\DawnWebGPUCache"
   ${endif}
+  ; v1.2.7：清补丁 helper 留下的 .bak / .new 旁路文件（上一次更新若异常中断会留下）
+  ${if} ${FileExists} "$INSTDIR\resources\app.asar.bak"
+    Delete "$INSTDIR\resources\app.asar.bak"
+  ${endif}
+  ${if} ${FileExists} "$INSTDIR\resources\app.asar.new"
+    Delete "$INSTDIR\resources\app.asar.new"
+  ${endif}
+  ; v1.2.7：清用户数据目录残留的补丁状态文件（下次启动会误判「上次补丁未完成」）
+  ; 这里只清状态文件，userData 主体由用户卸载时决定（deleteAppDataOnUninstall=false）
+  SetShellVarContext all
+  ${if} ${FileExists} "$APPDATA\task-manager\patch-state.json"
+    Delete "$APPDATA\task-manager\patch-state.json"
+  ${endif}
+  SetShellVarContext current
 !macroend
 
 !macro customInstall
@@ -58,13 +72,18 @@
 ; customInit 钩子，我们直接挂 customInit 即可避免「Function .onInit already
 ; exists」报错。
 ;
-; 检测命令行：含 /S 视为「应用内主动更新调用」→ SetSilent silent，
-; 让 MUI_PAGE_WELCOME / DIRECTORY / INSTFILES / FINISH 全部隐藏。
-; 双击 Setup 时不走 /S，向导正常渲染（用户仍可手选目录）。
+; 流程：
+; 1) 解析命令行：含 /S → SetSilent silent（应用内主动更新调用，全屏）
+;    双击 Setup 不带 /S → 向导正常渲染
+; 2) 非静默模式下做磁盘空间预检查（<300MB 警告但允许继续）
 ;
 ; 注意 electron-builder 默认 SilentInstall=normal，理论上 /S 就该静默，
 ; 但实际渲染仍会闪 INSTFILES 进度页。SetSilent silent 是更激进的方案，
 ; 让所有页面 no-op，彻底「点一下就完事」。
+;
+; v1.2.7：磁盘空间预检查（Setup 93MB 解压后 ~250MB + userData 备份 50MB buffer = 300MB 自由）
+; 不够就 MessageBox 警告，但允许用户继续（避免强退打断用户）
+; 静默模式跳过（强制模式，磁盘真不够会自然失败）
 !macro customInit
   Push $R0
   Push $R1
@@ -78,6 +97,27 @@
   ${EndIf}
   Pop $R1
   Pop $R0
+
+  ; 非静默模式才检查磁盘
+  ${IfNot} ${Silent}
+    Push $0
+    Push $1
+    System::Alloc 64
+    Pop $0
+    System::Call 'kernel32::GetDiskFreeSpaceEx(t, p, p, p) i(m, $0, $0, $0)'
+    ${If} ${Errors}
+      ; API 失败（旧版 Windows？）→ 跳过检查
+    ${Else}
+      System::Call '*$0(i, i, i, i, i, i, i, i)(.r1, .r1, .r1, .r1, .r1, .r1, .r1, .r1)'
+      ; 取第二个参数（用户可用自由字节数），与 300MB (=314572800) 比较
+      IntCmpU $1 314572800 space_ok
+        MessageBox MB_ICONEXCLAMATION|MB_OK "磁盘可用空间不足 300 MB（当前 $1 字节），可能安装失败。建议清理后再装。"
+      space_ok:
+    ${EndIf}
+    System::Free $0
+    Pop $1
+    Pop $0
+  ${EndIf}
 !macroend
 
 ; 安装成功后自动拉起新版本。
