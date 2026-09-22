@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import clsx from '../../utils/clsx';
 import { useStore } from '@/store';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Requirement } from '@/types';
 import {
   DEFAULT_POS, DEFAULT_WORK_MIN, DEFAULT_BREAK_MIN, POS_STORAGE_KEY,
@@ -21,14 +22,6 @@ import { toast } from '../../utils/toast';
 
 const SS_STORAGE_KEY = 'pomodoro_widget_secs';
 
-function loadSecondsOffset(): number {
-  if (typeof window === 'undefined') return 0;
-  try {
-    const v = Number(localStorage.getItem(SS_STORAGE_KEY));
-    return Number.isFinite(v) ? v : 0;
-  } catch { return 0; }
-}
-
 export default function PomodoroWidget() {
   const requirements = useStore((s) => s.requirements);
   const settings = useStore((s) => s.settings);
@@ -37,8 +30,8 @@ export default function PomodoroWidget() {
   const workMinBase = Number(settings.pomodoro_work) || DEFAULT_WORK_MIN;
   const breakMinBase = Number(settings.pomodoro_break) || DEFAULT_BREAK_MIN;
 
-  // 秒偏移本地 ref（避免每滚一下都更新全局 store）
-  const secondsOffsetRef = useRef<number>(loadSecondsOffset());
+  // 秒偏移（v1.2.8 Q10：useLocalStorage 替代裸 try/catch）
+  const [secondsOffset, setSecondsOffset] = useLocalStorage<number>(SS_STORAGE_KEY, 0);
   const workMinRef = useRef<number>(workMinBase);
   workMinRef.current = workMinBase;
   const breakMinRef = useRef<number>(breakMinBase);
@@ -111,9 +104,8 @@ export default function PomodoroWidget() {
 
   // secondsOffset 是「时长预览偏移」，仅影响显示和下次启动后的 initial remaining 公式
   const onSecondsOffsetChange = useCallback((next: number) => {
-    secondsOffsetRef.current = next;
-    try { localStorage.setItem(SS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-  }, []);
+    setSecondsOffset(next);
+  }, [setSecondsOffset]);
 
   const handleFabClick = useCallback(() => {
     if (drag.didDragRef.current) return;
@@ -131,7 +123,7 @@ export default function PomodoroWidget() {
 
   const mm = String(Math.floor(state.remaining / 60)).padStart(2, '0');
   const ss = String(state.remaining % 60).padStart(2, '0');
-  const ssTotal = workMinRef.current * 60 + secondsOffsetRef.current;
+  const ssTotal = workMinRef.current * 60 + secondsOffset;
 
   // 首次启动计时（提供 UI 反馈）
   useEffect(() => {
@@ -154,7 +146,7 @@ export default function PomodoroWidget() {
           dispatch={dispatch}
           workMin={workMinRef.current}
           breakMin={breakMinRef.current}
-          secondsOffset={secondsOffsetRef.current}
+          secondsOffset={secondsOffset}
           ssTotal={ssTotal}
           onSecondsOffsetChange={onSecondsOffsetChange}
           onWorkMinChange={onWorkMinChange}
