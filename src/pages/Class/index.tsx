@@ -459,23 +459,57 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
       </>
     }>
       <div className="space-y-4 text-left">
-        {/* GitHub PAT */}
+        {/* GitHub 写入通道 */}
         <div className="border border-neon-green/15 rounded p-3">
-          <div className="font-mono text-xs text-neon-green mb-2">📦 GitHub PAT（主源，写操作必须）</div>
-          <input
-            type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)}
-            className="input-neon font-mono text-xs" placeholder="ghp_xxxxxxxx 或 github_pat_xxxxxxxx"
-          />
+          <div className="font-mono text-xs text-neon-green mb-2">📦 GitHub 写入通道（主源）</div>
+          {/* v1.2.9 R9：通道状态一目了然——不静默 */}
+          {cfg?.usingFallbackToken ? (
+            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
+              ✅ 内置公共写入通道已启用（开箱即用，无需配置）
+              <span className="text-text-dim"> · 高峰期可能限流，可填个人令牌用独立配额</span>
+            </div>
+          ) : cfg?.tokenSet ? (
+            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
+              ✅ 个人令牌已配置（优先使用你的独立配额）
+            </div>
+          ) : (
+            <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-yellow">
+              ⚠ 没有可用的写入令牌：公告/接龙/投票只存本机，其他人看不到
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)}
+              className="input-neon font-mono text-xs flex-1" placeholder="个人 PAT（可选）ghp_xxxx / github_pat_xxxx"
+            />
+            {cfg?.tokenSet && (
+              <button
+                onClick={async () => {
+                  try {
+                    await window.taskAPI.class.saveAuth('');
+                    const next = await window.taskAPI.class.config();
+                    setGhToken('');
+                    toast.success('已清除个人令牌' + (next.usingFallbackToken ? '（回落内置公共通道）' : ''));
+                    onSaved(next);
+                  } catch (e: any) { toast.error(e?.message || String(e)); }
+                }}
+                className="btn-ghost text-[10px] px-2 py-1 shrink-0"
+                title="清除已保存的个人令牌，回落内置公共通道"
+              >
+                清除
+              </button>
+            )}
+          </div>
           <div className="text-[10px] font-mono text-text-dim mt-1">
-            需要对 <span className="text-neon-green">NightRainStarGame/USTBTaskManager</span> 的 Contents 读写权限
-            <br />留空 = 仅拉取（其他成员看不到你的发布）
+            需要对 <span className="text-neon-green">{cfg?.repo || 'NightRainStarGame/USTBTaskManager-Class'}</span> 的 Contents 读写权限
+            <br />留空 = 用内置公共通道（或保持现状）
           </div>
         </div>
 
-        {/* 北科云盘 */}
+        {/* 北科云盘（可选备源） */}
         <div className="border border-neon-green/15 rounded p-3">
           <div className="font-mono text-xs text-neon-green mb-2 flex items-center gap-2">
-            ☁️ 北科云盘（备源，镜像写入）
+            ☁️ 北科云盘（备源，可选）
             <label className="flex items-center gap-1 text-[10px] text-text-dim ml-auto">
               <input type="checkbox" checked={cloudEnabled} onChange={(e) => setCloudEnabled(e.target.checked)} />
               启用
@@ -483,14 +517,14 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
           </div>
           <input
             value={cloudUrl} onChange={(e) => setCloudUrl(e.target.value)}
-            className="input-neon text-xs mb-2" placeholder="https://yunpan.ustb.edu.cn/link/XXXXX…"
+            className="input-neon text-xs mb-2" placeholder="https://yunpan.ustb.edu.cn/link/XXXXX…（自建分享链）"
           />
           <input
             type="password" value={cloudPassword} onChange={(e) => setCloudPassword(e.target.value)}
             className="input-neon text-xs" placeholder="提取码"
           />
           <div className="text-[10px] font-mono text-text-dim mt-1">
-            仅校园网内可达；不填也能加入（GitHub 主源已够用）
+            仅校园网内可达的可选备份；不填也能用（GitHub 主源已保证可用）
           </div>
         </div>
 

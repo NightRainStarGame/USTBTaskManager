@@ -636,15 +636,19 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       syncVouchers: () => invoke('billing:syncVouchers') as Promise<{ ok: boolean; activated: number; error?: string }>,
     },
 
-    // v1.2.7 起 P2P 班级复活（GitHub raw 主写 + 北科云盘备；无 VPS 依赖）
+    // v1.2.7 起 P2P 班级复活（v1.2.9 R9：独立仓库 + 内置公共写入令牌；北科云盘降为可选备源）
     class: {
       config: () => invoke('class:config') as Promise<{
         ok: boolean; repo: string; branch: string; repoUrl: string;
         tokenSet: boolean; cloudSourceEnabled: boolean;
+        /** v1.2.9 R9：内置公共写入通道是否已内置（true = 无需个人 PAT 即可写云端） */
+        fallbackTokenAvailable?: boolean;
+        /** 当前是否正在用内置公共令牌（个人 PAT 未配置） */
+        usingFallbackToken?: boolean;
         cloud: { baseUrl: string; linkId: string; password: string; enabled: boolean } | null;
         localAlias: string;
       }>,
-      saveAuth: (token: string) => invoke('class:saveAuth', token) as Promise<{ ok: boolean; tokenSet?: boolean; error?: string }>,
+      saveAuth: (token: string) => invoke('class:saveAuth', token) as Promise<{ ok: boolean; tokenSet?: boolean; usingFallbackToken?: boolean; error?: string }>,
       saveCloud: (cfg: { url?: string; password?: string; enabled?: boolean }) => invoke('class:saveCloud', cfg) as Promise<{
         ok: boolean; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean }; error?: string;
       }>,

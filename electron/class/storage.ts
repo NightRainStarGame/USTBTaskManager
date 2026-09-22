@@ -1,23 +1,30 @@
 /**
- * 班级系统存储适配器（v1.2.7 P2P 班级）
+ * 班级系统存储适配器（v1.2.7 P2P 班级；v1.2.9 R9 改独立仓库 + 内置公共写入令牌）
  *
  * 设计：
- *   主源 = GitHub Contents API（开发者公共仓库，可写可读）
- *   备源 = 北科云盘（AnyShare）匿名分享（写权限受限于 link 设置）
- *   本机缓存 = SQLite classes/class_announcements/class_tasks 表（最终一致性兜底）
+ *   主源 = GitHub（**独立数据仓库 USTBTaskManager-Class**，与主仓库隔离）
+ *          读走 raw CDN（免鉴权、无限速）；写走 Contents API
+ *          写令牌优先级：用户个人 PAT → 内置公共令牌（开箱即用）
+ *   备源 = 北科云盘（AnyShare）匿名分享（可选，用户自行配置；仅校园网可达）
+ *   本机缓存 = SQLite classes/class_announcements/class_chains/class_polls 表
+ *
+ * 为什么独立仓库（v1.2.9 R9）：
+ *   · 内置公共令牌可能被提取（源码公开 + asar 可逆）——fine-grained PAT 只授权
+ *     本仓库 Contents 读写，泄露的爆炸半径 = 班级数据被污染（git 可回滚），
+ *     动不了主仓库的 latest.json / homework（否则可推送恶意更新，不可接受）
+ *   · 班级高频写入（接龙/投票）不再污染主仓库提交历史
  *
  * 文件协议：
  *   class/<inviteCode>/
- *     ├── manifest.json           班级核心：成员列表 + last_ann_id + last_task_id + sig
+ *     ├── manifest.json           班级核心：成员列表 + 显式条目索引 + sig
  *     ├── announcements/<annId>.json   单条公告（含 body + sig）
- *     └── tasks/<taskId>.json         单条班级作业（含 body + sig）
+ *     ├── tasks/<taskId>.json         单条班级作业（v1.2.9 保留 API 兼容）
+ *     ├── chains/<chainId>.json       接龙（items 多端 union）
+ *     └── polls/<pollId>.json         投票（votes 多端 union）
  *
- * 为什么用 inviteCode 而不是 classCode 作为路径前缀：
- *   · inviteCode 12 位自带 HMAC 校验位，普通用户手抄不易出错
- *   · 与作业同步的 syncCode 8 位兼容 → 复用 randomCode 字符表
- *   · 安全上等价（HMAC 是公开的，但路径前缀不影响保密）
- *
- * GitHub 写入需要 PAT（设置 → 班级 → GitHub 令牌），没有 PAT 也能拉取（只读模式）。
+ * GitHub 写入令牌（设置 → 班级 → GitHub 令牌）：
+ *   个人 PAT 优先（独立配额）；未配置时用内置公共令牌（共享配额，写频率低足够用）。
+ *   读路径全部走 raw CDN，不消耗 Contents API 配额（公共令牌 5000 req/h 全留给写）。
  */
 import { net } from 'electron';
 import { createHmac } from 'node:crypto';
@@ -29,17 +36,38 @@ import {
 import { CLASS_SECRET } from './crypto';
 
 export const CLASS_REPO_OWNER = 'NightRainStarGame';
-export const CLASS_REPO_NAME = 'USTBTaskManager';
+export const CLASS_REPO_NAME = 'USTBTaskManager-Class';
 export const CLASS_BRANCH = 'main';
 export const CLASS_DIR = 'class';
 
-/** 默认 AnyShare 配置：班级系统共享（与 homework 独立，避免互相干扰） */
+// ── v1.2.9 R9：内置公共写入令牌（fine-grained PAT，仅本仓库 Contents 读写）──
+// 拆段 base64 只为防 grep/OCR 直提；源码公开的前提下防不住有心人，安全边界
+// 靠 fine-grained PAT 的仓库级授权（泄露 SOP：GitHub 吊销 → 换新段 → 发版）。
+// 创建步骤见 docs/CLASS-P2P.md「内置公共写入令牌」节。
+const FALLBACK_TOKEN_B64: string[] = [
+  // 待填：豆芽创建 fine-grained PAT 后，按段 base64 填入（scripts/encode-class-token.cjs）
+];
+export const CLASS_FALLBACK_TOKEN: string =
+  FALLBACK_TOKEN_B64.map((p) => Buffer.from(p, 'base64').toString('utf8')).join('');
+
+/** AnyShare 备源默认配置（v1.2.9 R9：不再内置假占位链——之前那个 linkId 从未在
+ *  云盘上创建过，导致「北科云盘也不好使」；现在默认关闭，用户自己配置才启用） */
 export const DEFAULT_CLASS_ANYSHARE: AnyShareConfig & { enabled: boolean } = {
   baseUrl: 'https://yunpan.ustb.edu.cn',
-  linkId: 'AADAAEF94FBE6B4435B8D14A236FAC6470',  // ← 待填：班级专用共享链（部署时改）
-  password: 'kc27',                                  // ← 待填：班级专用提取码
-  enabled: true,
+  linkId: '',
+  password: '',
+  enabled: false,
 };
+
+// v1.2.9 R9：运行时生效的 AnyShare 配置（registerClass / saveCloud 时从 settings 注入）
+// 之前 storage 层所有函数硬编码读 DEFAULT_CLASS_ANYSHARE，用户在设置里配的链接被无视——
+// 这是「云盘配置了也不通」的第二个根因。
+let activeAnyShareCfg: AnyShareConfig & { enabled: boolean } = { ...DEFAULT_CLASS_ANYSHARE };
+
+export function setClassAnyShareConfig(cfg: AnyShareConfig & { enabled: boolean }) {
+  activeAnyShareCfg = { ...cfg };
+  asRootCache.clear();
+}
 
 const API = `https://api.github.com/repos/${CLASS_REPO_OWNER}/${CLASS_REPO_NAME}`;
 const RAW_BASE = `https://raw.githubusercontent.com/${CLASS_REPO_OWNER}/${CLASS_REPO_NAME}/${CLASS_BRANCH}/${CLASS_DIR}`;
@@ -216,11 +244,26 @@ export interface ClassSource {
 export const githubSource: ClassSource = {
   name: 'github',
   async fetchManifest(inviteCode) {
-    const filePath = `${ghFilePath(inviteCode, 'manifest.json')}`;
-    let lastErr: any = null;
-    // 先试 Contents API（拿 etag，下次 If-None-Match 可省流量）
+    // v1.2.9 R9：raw CDN 优先（免鉴权无限速；不占共享令牌的 Contents API 配额——
+    // 内置公共令牌 5000 req/h 全部留给写路径，读全走 raw）
+    // ?t= 随机参数绕 CDN 缓存，保证读到刚 push 的版本
+    let rawNotFound = false;
     try {
-      const r = await ghFetch(`/contents/${filePath}?ref=${CLASS_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+      const r = await ghFetch(`${ghRawUrl(inviteCode, 'manifest.json')}?t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { raw: true });
+      if (r.ok) {
+        try {
+          const m = JSON.parse(r.text) as ClassManifest;
+          if (m && m.classCode && m.inviteCode) return m;
+        } catch {}
+      } else if (r.status === 404) {
+        // raw 说没有 → Contents API 复核一次（刚创建的班级，raw 可能有秒级传播延迟）
+        rawNotFound = true;
+      }
+    } catch {}
+    // 降级 Contents API（raw 异常时的兜底；未认证 60 req/h，仅低频命中）
+    const filePath = `${ghFilePath(inviteCode, 'manifest.json')}`;
+    try {
+      const r = await ghFetch(`/contents/${filePath}?ref=${CLASS_BRANCH}&t=${Date.now()}`);
       if (r.status === 404) return null;
       if (r.ok) {
         try {
@@ -229,17 +272,9 @@ export const githubSource: ClassSource = {
           if (m && m.classCode && m.inviteCode) return m;
         } catch {}
       }
-      lastErr = new Error(`GitHub Contents 返回 ${r.status}`);
-    } catch (e: any) { lastErr = e; }
-    // 降级 raw CDN
-    try {
-      const r = await ghFetch(`${ghRawUrl(inviteCode, 'manifest.json')}`, { raw: true });
-      if (r.ok) {
-        const m = JSON.parse(r.text) as ClassManifest;
-        if (m && m.classCode && m.inviteCode) return m;
-      }
     } catch {}
-    throw lastErr || new Error('GitHub 班级 manifest 拉取失败');
+    if (rawNotFound) return null;  // raw 与 Contents 都确认不存在
+    throw new Error('GitHub 班级 manifest 拉取失败');
   },
 };
 
@@ -247,8 +282,8 @@ export const anyshareSource: ClassSource = {
   name: 'anyshare',
   async fetchManifest(inviteCode) {
     // 路径：class-manifests/<inviteCode>/manifest.json
-    const cfg = DEFAULT_CLASS_ANYSHARE;
-    if (!cfg?.enabled) return null;
+    const cfg = activeAnyShareCfg;
+    if (!cfg?.linkId || !cfg?.enabled) return null;
     const root = await getRootDocid(cfg);
     const classDir = await ensureShareDir(cfg, root.docid, 'class-manifests');
     const classDir2 = await ensureShareDir(cfg, classDir.docid, inviteCode);
@@ -277,8 +312,8 @@ export async function fetchAnnouncement(inviteCode: string, annId: number, sourc
     return null;
   }
   // AnyShare
-  const cfg = DEFAULT_CLASS_ANYSHARE;
-  if (!cfg?.enabled) return null;
+  const cfg = activeAnyShareCfg;
+  if (!cfg?.linkId || !cfg?.enabled) return null;
   try {
     const root = await getRootDocid(cfg);
     const classDir = await ensureShareDir(cfg, root.docid, 'class-manifests');
@@ -305,8 +340,8 @@ export async function fetchClassTask(inviteCode: string, taskId: number, source:
     }
     return null;
   }
-  const cfg = DEFAULT_CLASS_ANYSHARE;
-  if (!cfg?.enabled) return null;
+  const cfg = activeAnyShareCfg;
+  if (!cfg?.linkId || !cfg?.enabled) return null;
   try {
     const root = await getRootDocid(cfg);
     const classDir = await ensureShareDir(cfg, root.docid, 'class-manifests');
@@ -473,11 +508,11 @@ export async function ghPut(inviteCode: string, relPath: string[], content: stri
   }
 }
 
-/** GitHub 读取 sha（用于更新时避开 409 冲突） */
-export async function ghGetSha(inviteCode: string, relPath: string[]): Promise<string | null> {
+/** GitHub 读取 sha（用于更新时避开 409 冲突；带 token 走认证配额 5000/h） */
+export async function ghGetSha(inviteCode: string, relPath: string[], token?: string): Promise<string | null> {
   try {
     const filePath = ghFilePath(inviteCode, ...relPath);
-    const r = await ghFetch(`/contents/${filePath}?ref=${CLASS_BRANCH}`);
+    const r = await ghFetch(`/contents/${filePath}?ref=${CLASS_BRANCH}`, { token });
     if (r.status === 404) return null;
     if (r.ok) {
       const m = JSON.parse(r.text);
@@ -506,8 +541,8 @@ export async function ghDelete(inviteCode: string, relPath: string[], token: str
 
 /** AnyShare 发布一条公告/任务/manifest */
 export async function asPut(inviteCode: string, relPath: string[], content: string): Promise<void> {
-  const cfg = DEFAULT_CLASS_ANYSHARE;
-  if (!cfg?.enabled) throw new Error('AnyShare 未启用');
+  const cfg = activeAnyShareCfg;
+  if (!cfg?.linkId || !cfg?.enabled) throw new Error('AnyShare 备源未配置（班级 → 配置 → 云盘分享链接）');
   const root = await getRootDocid(cfg);
   const classDir = await ensureShareDir(cfg, root.docid, 'class-manifests');
   const classDir2 = await ensureShareDir(cfg, classDir.docid, inviteCode);

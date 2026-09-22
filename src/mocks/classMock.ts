@@ -36,10 +36,12 @@ export function createClassMockApi() {
   return {
     config: async () => ({
       ok: true,
-      repo: 'NightRainStarGame/USTBTaskManager',
+      repo: 'NightRainStarGame/USTBTaskManager-Class',
       branch: 'main',
-      repoUrl: 'https://github.com/NightRainStarGame/USTBTaskManager/tree/main/class',
+      repoUrl: 'https://github.com/NightRainStarGame/USTBTaskManager-Class/tree/main/class',
       tokenSet: false,
+      fallbackTokenAvailable: false,
+      usingFallbackToken: false,
       cloudSourceEnabled: false,
       cloud: null,
       localAlias: mockLocalAlias,

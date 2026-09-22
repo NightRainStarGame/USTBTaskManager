@@ -1,4 +1,4 @@
-# 班级 P2P 架构文档（v1.2.7）
+# 班级 P2P 架构文档（v1.2.7 起；v1.2.9 R9 大改：独立仓库 + 内置公共写入令牌）
 
 > "P2P" 在这里指**没有中心服务器**——所有数据落在共享云盘（GitHub raw + 北科云盘），客户端持密钥自验证。
 
@@ -190,28 +190,76 @@ useEffect(() => {
 
 ### 实际上如何"权威"
 
-- publish 走 GitHub Contents API PUT，需要 `owner` 角色 + 对应 PAT 权限
-- PAT 在 GitHub Settings → Developer settings → Personal access tokens 创建
-- 用户在「班级 → 配置」填一次即可
+- publish 走 GitHub Contents API PUT，需要写令牌
+- **v1.2.9 R9 起令牌双通道**：个人 PAT（优先，独立配额）→ 内置公共令牌（自动降级兜底）
+- 用户什么都不配置也能发布公告/接龙/投票（开箱即用）
+
+## 内置公共写入令牌（v1.2.9 R9）
+
+### 设计
+
+- **独立数据仓库** `NightRainStarGame/USTBTaskManager-Class`：班级数据与主仓库隔离。
+  内置令牌即使被提取，泄露的爆炸半径 = 班级数据被污染（git 可回滚），**动不了主仓库的
+  `latest.json` / `homework/`**（否则可推送恶意更新给全体用户，不可接受）
+- **fine-grained PAT**：只授权这一个仓库的 Contents 读写，无其他任何权限
+- **读路径全走 raw CDN**（免鉴权无限速），共享令牌的 5000 req/h API 配额全部留给写
+- **写频率评估**：公告/接龙/投票均为低频操作；几十人班级峰值写请求 << 5000/h
+- **个人 PAT 优先**：配置了个人令牌的用户走独立配额，公共通道只在个人令牌
+  401/403/429（无效/无权限/限流）时自动降级接手
+
+### 令牌创建步骤（豆芽操作，一次性）
+
+1. 打开 https://github.com/NightRainStarGame/USTBTaskManager-Class 确认仓库存在
+2. GitHub → 右上头像 → **Settings** → 左栏最底 **Developer settings** →
+   **Personal access tokens → Fine-grained tokens** → **Generate new token**
+3. 配置（只有两处要动）：
+   - **Repository access** → *Only select repositories* → 选 `USTBTaskManager-Class`
+   - **Permissions → Repository permissions → Contents** → **Read and write**
+   - 其他权限一律 *No access*；过期时间建议 1 年（到期前换新 + 发版）
+4. Generate → 复制 `github_pat_` 开头的令牌（只显示一次）
+5. 本地执行：`node scripts/encode-class-token.cjs github_pat_XXXX`
+6. 把输出的 4 段 base64 粘进 `electron/class/storage.ts` 的 `FALLBACK_TOKEN_B64`
+7. `npm run build` 验证 + 发版
+
+### 泄露 SOP
+
+拆段 base64 只防 grep/OCR 直提，防不住有心人（源码公开）。若发现公共通道被滥用：
+
+1. GitHub → Developer settings → 删除该 fine-grained token（立即失效）
+2. `git revert` 清理 Class 仓库的垃圾提交
+3. 重新走「令牌创建步骤」→ 换新段 → 发版
+4. 期间用户可自行配置个人 PAT 不受影响
+
+### 为什么北科云盘降为可选（v1.2.9 R9）
+
+- 之前内置的班级共享链（`...FAC6470`/`kc27`）是**从未在云盘上创建过的占位符**——
+  发布必失败，纯噪音
+- storage 层曾硬编码读默认配置，用户在设置里配的链接被无视（v1.2.9 R9 已修：
+  `setClassAnyShareConfig` 注入运行时配置）
+- AnyShare 匿名链**无删除能力**（公告撤回的 tombstone 无法传播）、无 sha 冲突检测
+  （接龙/投票的多写合并没法做）、仅校园网可达——只能当公告/作业的只读备份
+- GitHub 独立仓库已保证可用性，云盘仅剩「校园网内加速」价值 → 默认关闭，自配自用
 
 ## 已知限制与未来改进
 
-| 限制 | 影响 | 改进计划 |
+| 限制 | 影响 | 状态 |
 |---|---|---|
-| 实时推送 | 新公告要等 30 秒轮询 | v1.2.8 加 WebSocket 或长轮询 |
-| 图片附件 | manifest `images: []` 永远空 | v1.2.8 加图片上传（GitHub LFS） |
-| owner 转让 | owner 离开 → 班级解散 | v1.2.8 admin promote |
-| 冲突合并 | 两台电脑同时 publish 撞 409 | v1.2.8 加 CRDT 风格合并 |
-| 成员上限 | manifest 限制 50 人 | v1.2.8 manifest 限流 + sharding |
-| 加密传输 | 云盘管理员能看到内容 | 不解决（设计取舍） |
+| 实时推送 | 新公告要等 30 秒轮询 | 接受（课堂场景够用） |
+| 公共令牌共享配额 | 高峰期写操作可能 429 | 个人 PAT 独立配额分流；读路径已全走 raw CDN |
+| 冲突合并 | 两台电脑同时 publish 撞 409 | v1.2.9 已做：接龙/投票 fetch→merge→PUT sha→409 重试 |
+| 图片附件 | `images: []` 占位 | 未做（GitHub LFS 成本考量） |
+| 成员上限 | manifest 限制 50 人 | 接受（班级规模） |
+| 加密传输 | 仓库公开可读 | 设计取舍（HMAC 防篡改，不防偷看） |
+| AnyShare 删除 | 匿名链无删除 API | 公告撤回走 GitHub tombstone；云盘副本残留可接受 |
 
 ## 文件清单
 
 | 文件 | 作用 |
 |---|---|
 | `electron/class/crypto.ts` | HMAC 派生 + 签名工具 |
-| `electron/class/storage.ts` | GitHub raw + AnyShare 多源适配器 |
-| `electron/class/index.ts` | 10+ IPC handlers |
-| `src/pages/Class/index.tsx` | 班级列表页 |
-| `src/pages/Class/ClassDetail.tsx` | 班级详情页 |
-| `src/mocks/browserApi.ts` | 浏览器 mock（识别 DEMO 前缀） |
+| `electron/class/storage.ts` | GitHub（独立仓库）+ AnyShare 多源适配器、内置公共令牌 |
+| `electron/class/index.ts` | 20+ IPC handlers、令牌降级写、tombstone/成员管理/接龙/投票 |
+| `src/pages/Class/index.tsx` | 班级列表页 + 配置弹窗（通道状态可视化） |
+| `src/pages/Class/ClassDetail.tsx` | 班级详情页（5 tab） |
+| `src/mocks/classMock.ts` | 浏览器 mock（识别 DEMO 前缀） |
+| `scripts/encode-class-token.cjs` | 内置令牌编码辅助（拆段 base64） |

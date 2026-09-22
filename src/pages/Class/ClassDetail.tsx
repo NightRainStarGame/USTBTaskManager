@@ -660,14 +660,17 @@ function PublishAnnouncementModal({ classId, onClose, onPublished }: any) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
 
   const submit = async () => {
     if (!title.trim()) { setErr('请输入标题'); return; }
     setBusy(true); setErr(null);
     try {
       const r = await window.taskAPI.class.publishAnnouncement(classId, { title: title.trim(), body: body.trim() });
-      if (r.ok) { setWarnings(r.warnings || []); onPublished(); }
+      if (r.ok) {
+        // v1.2.9 R9：警告必须让用户看见（之前 setWarnings 后立刻关弹窗 = 静默吞掉）
+        if (r.warnings?.length) toast.warn(r.warnings.join('；'), 8000);
+        onPublished();
+      }
       else setErr(r.error || '发布失败');
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setBusy(false); }
@@ -694,14 +697,6 @@ function PublishAnnouncementModal({ classId, onClose, onPublished }: any) {
           />
         </div>
         {err && <div className="text-red-400 font-mono text-xs">❌ {err}</div>}
-        {warnings.length > 0 && (
-          <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-xs font-mono">
-            <div className="text-neon-yellow mb-1">⚠ 部分源发布失败：</div>
-            <ul className="list-disc list-inside space-y-1 text-text-secondary">
-              {warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
-            </ul>
-          </div>
-        )}
       </div>
     </Modal>
   );
