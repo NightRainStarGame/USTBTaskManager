@@ -630,7 +630,46 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       syncVouchers: () => invoke('billing:syncVouchers') as Promise<{ ok: boolean; activated: number; error?: string }>,
     },
 
-    // v1.2.6 起班级系统已下线（VPS 服务依赖已移除，纯本地版不再支持云端班级共享）
+    // v1.2.7 起 P2P 班级复活（GitHub raw 主写 + 北科云盘备；无 VPS 依赖）
+    class: {
+      config: () => invoke('class:config') as Promise<{
+        ok: boolean; repo: string; branch: string; repoUrl: string;
+        tokenSet: boolean; cloudSourceEnabled: boolean;
+        cloud: { baseUrl: string; linkId: string; password: string; enabled: boolean } | null;
+        localAlias: string;
+      }>,
+      saveAuth: (token: string) => invoke('class:saveAuth', token) as Promise<{ ok: boolean; tokenSet?: boolean; error?: string }>,
+      saveCloud: (cfg: { url?: string; password?: string; enabled?: boolean }) => invoke('class:saveCloud', cfg) as Promise<{
+        ok: boolean; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean }; error?: string;
+      }>,
+      saveLocalAlias: (alias: string) => invoke('class:saveLocalAlias', alias) as Promise<{ ok: boolean; localAlias?: string; error?: string }>,
+      list: () => invoke('class:list') as Promise<{ ok: boolean; classes: any[] }>,
+      info: (classId: number) => invoke('class:info', classId) as Promise<{ ok: boolean; [k: string]: any }>,
+      create: (payload: { name: string; description?: string; alias?: string }) => invoke('class:create', payload) as Promise<{
+        ok: boolean; warnings?: string[]; error?: string; errorCode?: string; hint?: string;
+        id?: number; classCode?: string; inviteCode?: string; ownerToken?: string;
+      }>,
+      join: (payload: { inviteCode: string; alias?: string }) => invoke('class:join', payload) as Promise<{
+        ok: boolean; source?: 'github' | 'anyshare'; error?: string; errorCode?: string;
+        classId?: number; className?: string; role?: string; memberCount?: number;
+      }>,
+      leave: (classId: number) => invoke('class:leave', classId) as Promise<{ ok: boolean; error?: string }>,
+      listAnnouncements: (classId: number) => invoke('class:listAnnouncements', classId) as Promise<{ ok: boolean; announcements: any[] }>,
+      listTasks: (classId: number) => invoke('class:listTasks', classId) as Promise<{ ok: boolean; tasks: any[] }>,
+      publishAnnouncement: (classId: number, payload: { title: string; body: string }) =>
+        invoke('class:publishAnnouncement', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; annId?: number; error?: string }>,
+      publishTask: (classId: number, payload: { title: string; body?: string; dueAt?: number }) =>
+        invoke('class:publishTask', classId, payload) as Promise<{ ok: boolean; warnings?: string[]; taskId?: number; error?: string }>,
+      markAnnouncementRead: (classId: number, annId: number) =>
+        invoke('class:markAnnouncementRead', classId, annId) as Promise<{ ok: boolean }>,
+      completeTask: (classId: number, taskId: number, status: 'open' | 'done' | 'cancelled') =>
+        invoke('class:completeTask', classId, taskId, status) as Promise<{ ok: boolean }>,
+      sync: (classId: number) => invoke('class:sync', classId) as Promise<{
+        ok: boolean; source?: 'github' | 'anyshare';
+        newAnnouncements?: number; newTasks?: number;
+        manifest?: any; error?: string;
+      }>,
+    },
 
     /** v1.2.3：主进程推送事件（托盘 / 全局快捷键） */
     system: {
