@@ -1,15 +1,15 @@
 {
-  "version": "1.2.8",
-  "notes": "# v1.2.8 — 全面 Bug 修复 + 模块化重构\r\n\r\n> 一句话：**v1.2.8 把 1.2.7 之后积攒的隐患全部修掉，并把几个核心模块拆好（动画/滚轮/自动合并/规范）**。\r\n\r\n---\r\n\r\n## 🐛 关键 Bug 修复\r\n\r\n### Pomodoro 番茄钟\r\n- **C-1 修复 finishPhase 双触发**：React 18 strict mode 下 setInterval 跑两次导致计时快1倍、落库双倍统计；现在用 `finishedThisTickRef` 守卫 + setTimeout cleanup\r\n- **H-1 修复 FAB 拖出屏**：拖动不再累加到 view 之外（viewport clamp）\r\n- **H-2 修复 todayMinutes 重复加载**：依赖只挂 `[open]`，phase 切换不重置 setInterval\r\n- **H-3 修复 setTimeout 泄漏**：finishPhase 的 pending callback 会被组件卸载清理\r\n\r\n### 主进程 / 更新通道\r\n- **H-4 修复 splash setTimeout 链不可中断**：fadeStep 现在持有 timer id，destroy 前清理；hideSplashAndShowMain 重入安全\r\n- **H-5 清理 @ts-ignore**：patchApply.ts 改用 `(res.body as unknown as ReadableStream).getReader()` 类型守卫\r\n- **H-9 ipcSafe 包装器**：5 个 `ipcMain.handle` 之前直接强转 `db as DB`，db 为 null 时 NPE → 渲染进程 IPC 永久 pending；现在统一包一层 `ipcSafe(fn)`，异常返回 `{ok:false,error}` + 写 `taskmanager-ipc-error.log`\r\n\r\n### 其他\r\n- 增量补丁重启不生效（块 I，1.2.7 → 1.2.8 必装）\r\n- 100MB 安装包风险预案（GitHub Releases 主源 + jsDelivr 备援）\r\n\r\n---\r\n\r\n## 🆕 新功能\r\n\r\n### 番茄钟（Pomodoro）滚轮调时间\r\n- 鼠标悬浮在 mm/ss 上，**滚轮上下滑动**就能调整时间\r\n  - mm：±1 分钟，范围 1~120\r\n  - ss：±5 秒（步长 5），范围 0~55\r\n- 键鼠双控：键盘 ↑/↓/Home/End 也能调\r\n- 仅 idle 阶段可调（work/break 锁定避免误改）\r\n- 改动自动持久化到 settings.pomodoro_work\r\n- 数字 bounce 动画 + ↑↗/↓↘ 浮标反馈\r\n\r\n### 班级 P2P 增强（块 O）\r\n- **30s 后台轮询**：所有未解散班级自动 sync（教室下课前常常实时发布作业，及时同步比手动点 sync 体验好）\r\n- **自动合并**：远端修改能传到本地（之前 sync 只 INSERT 新的，已存在的即使云端改了也不更新本地）\r\n  - 例外：本地 `is_read` / `status` 永远以本地为准（不被云端覆盖）\r\n- **图片附件**：班级公告 / 作业发布支持附加图片 URL（最多 9 张，API 已就位）\r\n- **admin promote**：owner 可调整成员角色（admin / member），API 已就位，UI 留作 v1.2.9\r\n\r\n---\r\n\r\n## 🎨 动画 / UI 升级（块 P）\r\n\r\n不引入 framer-motion（避免 50KB 依赖），统一 CSS / Tailwind 工具类：\r\n\r\n- **panel-spring**：面板展开 `cubic-bezier(0.22, 1, 0.36, 1)` 240ms\r\n- **digit-bounce**：调整数字时 220ms scale + translateY 回弹\r\n- **ease-spring**：FAB transition timing-function 统一\r\n- **progress ring**：stroke-dashoffset 1s linear → 800ms cubic-bezier\r\n- **FAB 拖动**：拖动时禁用 transition，松手 200ms 回弹\r\n\r\n---\r\n\r\n## 🏗️ 架构重构（块 K / L / N）\r\n\r\n### 模块化拆分\r\n- **Pomodoro**（src/features/pomodoro/）：332 行 → 10 文件\r\n  - types / useDragPosition（通用）/ usePomodoro（reducer）/ TimerRing / TimeDigits / TaskPicker / PomodoroPanel / PomodoroFab / PomodoroWidget / index\r\n  - 抽出来的 `useDragPosition` 可复用于 PatchPanel / PlusMenu 等可拖动浮窗\r\n- **Courses**（src/pages/Courses/）：1397 行 → 13 文件\r\n  - TimetableView（独立可复用）/ CourseDrawer / 各 Tab / 通用 Field / 常量\r\n- **browserApi**（src/mocks/browserApi/）：781 行 → 6 文件（共享 data 容器 + 5 个 db domain 拆）\r\n- **src/mocks/classMock.ts**（块 L）：班级 mock 独立\r\n\r\n### 规范化\r\n- 全局 Toast 系统（13 处 console.error → toast）\r\n- `useLocalStorage` 通用 hook（跨标签页同步 + SSR 安全 + 自动 try/catch）\r\n- `useReducer` 替代 Pomodoro `useState × 9`\r\n- magic number 全部提取到 `constants.ts` / `types.ts`\r\n\r\n### 向后兼容\r\n- `src/components/Pomodoro.tsx` / `src/pages/Courses.tsx` 变成 re-export 壳，import 路径零迁移\r\n\r\n---\r\n\r\n## 📊 改动量\r\n\r\n| 维度 | 数据 |\r\n|---|---|\r\n| 新增 commit | 12 |\r\n| 新增文件 | 33（features/pomodoro + pages/Courses + mocks/browserApi） |\r\n| 移除行数 | ~1700（Pomodoro 旧版 + Courses 旧版 + browserApi 旧版） |\r\n| 新增行数 | ~2400 |\r\n| Bug 修复 | 11（C-1 / H-1~9 / 块 I） |\r\n| 体验升级 | 5（滚轮 / 自动合并 / 后台轮询 / 动画 / admin） |\r\n\r\n---\r\n\r\n## ⚠️ 升级注意\r\n\r\n- **从 1.2.7 升级必装**：块 I 修复增量补丁重启不生效\r\n- **DB 路径无变化**：`%APPDATA%\\task-manager\\task-manager.db` 直接迁移\r\n- **设置项无变化**：pomodoro_work / pomodoro_break 在 Settings 主题里仍可手动改\r\n\r\n---\r\n\r\n## 🔮 v1.2.9 路线（未做项）\r\n\r\n- admin 角色 UI（API 已就位）\r\n- 班级图片附件 UI（API 已就位）\r\n- store 拆 slice（settingsSlice / dataSlice / uiSlice + `useShallow` 优化）\r\n- 班主任禁言 / 退出班级 等班级治理 UI",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.8/TaskManager-Setup-1.2.8.exe",
+  "version": "1.2.9",
+  "notes": "# v1.2.9 — 班级模块全面重做 + 开箱即用\r\n\r\n> 一句话：**v1.2.9 把班级模块从根上重做——P2P 同步四大根因修复、接龙/投票/成员管理全新上线、零配置开箱即用**。\r\n\r\n---\r\n\r\n## 🎉 最重要的变化：开箱即用\r\n\r\n**新用户装完就能用班级功能，什么都不用配。**\r\n\r\n- 内置公共写入通道已启用（详见下方 R9）\r\n- 创建班级、发公告、接龙、投票、成员同步全部直接工作\r\n- 不再需要「先去申请 GitHub 令牌」这道门槛\r\n\r\n---\r\n\r\n## 🏗️ 数据通道重构（R9）\r\n\r\n### 独立数据仓库\r\n- 班级数据搬到独立仓库 **USTBTaskManager-Class**（与主程序更新清单完全隔离）\r\n- 读：raw CDN 直连（cache-bust 防缓存脏读）\r\n- 写：GitHub Contents API（PUT sha + 409 冲突重试）\r\n\r\n### 令牌三级策略\r\n1. **个人 PAT**（可选）：独立配额，更快\r\n2. **内置公共令牌**（默认）：个人令牌缺失/失效/限流（401/403/429）时自动降级\r\n3. 通道状态三态显示：✅ 个人 / ✅ 内置 / ⚠️ 不可用\r\n\r\n### 安全边界（已实测验证）\r\n- 内置令牌是 fine-grained PAT：**只能**读写班级数据仓库\r\n- 对主仓库写入返回 403——即使泄露，更新机制不受影响，班级数据可 git 回滚\r\n- 云盘（AnyShare）降级为可选备源，默认关闭；修复了配置后反而不读云端的失联 bug\r\n\r\n---\r\n\r\n## 🐛 P2P 同步四大根因修复（R1）\r\n\r\n| # | 根因 | 修复 |\r\n|---|---|---|\r\n| 1 | sync 时序错乱（先读后写顺序导致覆盖新数据） | 重写 syncCore：严格 fetch → merge → publish 顺序 |\r\n| 2 | 依赖 GitHub dir API 列文件（会漏、会限流） | manifest 显式索引（不参与签名） |\r\n| 3 | 文件名隐式生成（同名校验碰撞） | 显式 `id` + `author_alias` 命名 |\r\n| 4 | join 不写云端（成员列表只存在本地） | join 时同步写云端 members |\r\n\r\n另有：公告删除走 **tombstone**（软删除标记，防止删除被旧节点复活）；后台轮询修复 `last_synced_at` 字段名错误（此前每 30s 静默抛错）。\r\n\r\n---\r\n\r\n## 🆕 新功能\r\n\r\n### 成员管理（R3）\r\n- 班主任/管理员可 **调整角色**（admin / member）\r\n- **移除成员**（踢人）+ 被移除方自动检测（下次同步发现 `member_synced` 失效，班级自动消失并提示）\r\n\r\n### 接龙（R4）\r\n- 发布接龙（截止时间、名额上限可选）\r\n- 参加接龙 / 结束接龙\r\n- **多写冲突合并**：两个人同时报名最后一条——fetch → merge → PUT，409 自动重试，不再互相覆盖\r\n\r\n### 投票（R5）\r\n- 发起投票（多选项、单/多选、截止时间）\r\n- 投票 / 结束投票\r\n- 同样带多写冲突合并（两人同时投不同选项都能保留）\r\n\r\n### 公告增强（R2）\r\n- 公告支持删除（tombstone）\r\n- 原「作业发布」合并进公告（**作业 tab 已移除**，PublishTaskModal 退役）\r\n\r\n---\r\n\r\n## 🎨 UI 重构（R6/R7）\r\n\r\n### ClassDetail 五 Tab\r\n1. **总览**：班级统计（人数、公告数、进行中接龙/投票）\r\n2. **公告**：列表 + 发布 + 删除\r\n3. **接龙**：进行中/已结束分组\r\n4. **投票**：实时票数 + 进度条\r\n5. **成员**：角色管理 + 移除\r\n\r\n### Settings\r\n- 月卡订阅区 **锚点滚动 + 高亮**，从更新弹窗点「查看月卡」直达\r\n\r\n---\r\n\r\n## 📊 改动量\r\n\r\n| 维度 | 数据 |\r\n|---|---|\r\n| 重写模块 | electron/class/（index.ts 核心重写 + storage.ts 通道重构） |\r\n| 新增 IPC | deleteAnnouncement / promoteMember / removeMember / 接龙 ×4 / 投票 ×4 |\r\n| UI 重构 | ClassDetail 5 tab（删作业 tab + PublishTaskModal） |\r\n| 数据仓库 | 新建 USTBTaskManager-Class（独立、隔离、可回滚） |\r\n\r\n---\r\n\r\n## ⚠️ 升级注意\r\n\r\n- **DB 自动迁移**：新增表/列（接龙、投票、tombstone、author_alias、member_synced）首次启动自动完成\r\n- **旧班级数据兼容**：v1.2.8 及以前的本地班级在首次同步后自动迁移到新索引结构\r\n- **作业功能**：并入公告 tab；原有作业数据以公告形式保留\r\n- 作业 tab / PublishTaskModal 移除不影响主程序其他模块\r\n\r\n---\r\n\r\n## 🔮 v1.3.0 路线（草案）\r\n\r\n- 班级图片附件 UI（API 已就位）\r\n- 班主任禁言 / 班级治理增强\r\n- store 拆 slice（settingsSlice / dataSlice / uiSlice + useShallow 优化）\r\n- 接龙/投票的更新推送（本地通知）",
+  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.9/TaskManager-Setup-1.2.9.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.2",
-  "sha256": "f1f58e6cb650b247082672dd65d9f2da74deb18117f2f50c68127e34a5164d05",
-  "size": 97360824,
-  "fileName": "TaskManager-Setup-1.2.8.exe",
+  "sha256": "1955fec11d24cf7dfca71429a8f041bef29f2c6238939449f91ed46ac8b82062",
+  "size": 97371318,
+  "fileName": "TaskManager-Setup-1.2.9.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-22T11:39:52.898Z",
-  "asarSha256": "b6fd75cd44ba73da831263ac56cbac0be64d10189101a27a238f676f4093518a",
-  "asarSize": 75192064,
+  "releaseDate": "2026-09-22T14:39:13.000Z",
+  "asarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
+  "asarSize": 75256027,
   "patches": [
     {
       "fromVersion": "1.1.9",
@@ -102,10 +102,25 @@
       "appAsarSha256": "b6fd75cd44ba73da831263ac56cbac0be64d10189101a27a238f676f4093518a",
       "appAsarSize": 75192064,
       "createdAt": "2026-09-22T11:39:48.256Z"
+    },
+    {
+      "fromVersion": "1.2.8",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.9/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip",
+      "urlMirrors": [
+        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip",
+        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.8-to-1.2.9.zip"
+      ],
+      "sha256": "de5f9bcf8428c4c089677060e7f2de0f26db2617a3fe6ef718765a525bd545ad",
+      "size": 23064198,
+      "baseAsarSha256": "b6fd75cd44ba73da831263ac56cbac0be64d10189101a27a238f676f4093518a",
+      "baseAsarSize": 75192064,
+      "appAsarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
+      "appAsarSize": 75256027,
+      "createdAt": "2026-09-22T14:39:11.542Z"
     }
   ],
   "urlMirrors": [
-    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.8.exe",
-    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.8.exe"
+    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.9.exe",
+    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.9.exe"
   ]
 }
