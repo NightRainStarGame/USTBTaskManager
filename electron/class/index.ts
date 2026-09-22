@@ -23,7 +23,7 @@
  *   - NOT_OWNER            非 owner 试图发布
  *   - TOKEN_REQUIRED       GitHub 写入需要 PAT
  */
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
 import type { DB } from '../db/index';
 import {
   generateClassCode, generateOwnerToken, deriveInviteCode,
@@ -154,6 +154,136 @@ async function getAsRoot(cfg: { baseUrl: string; linkId: string; password: strin
 // ============================================================
 export function registerClass(db: DB) {
   _db = db;
+
+  // v1.2.8 块 O：UPSERT helper（自动合并：已存在的条目更新 content，保留本地 status / is_read）
+  function upsertAnnouncement(classId: number, e: AnnouncementEntry): 'new' | 'updated' {
+    const exist = db.prepare('SELECT id FROM class_announcements WHERE class_id = ? AND id = ?').get(classId, e.id);
+    if (exist) {
+      db.prepare(
+        `UPDATE class_announcements
+         SET title = ?, body = ?, images_json = ?, pinned = ?
+         WHERE class_id = ? AND id = ?`
+      ).run(e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, classId, e.id);
+      return 'updated';
+    }
+    db.prepare(
+      `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`
+    ).run(classId, e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.createdAt);
+    return 'new';
+  }
+  function upsertTask(classId: number, e: ClassTaskEntry): 'new' | 'updated' {
+    const exist = db.prepare('SELECT id FROM class_tasks WHERE class_id = ? AND id = ?').get(classId, e.id);
+    if (exist) {
+      db.prepare(
+        `UPDATE class_tasks
+         SET title = ?, body = ?, images_json = ?, due_at = ?
+         WHERE class_id = ? AND id = ?`
+      ).run(e.title, e.body, JSON.stringify(e.images || []), e.dueAt, classId, e.id);
+      return 'updated';
+    }
+    db.prepare(
+      `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'open', ?)`
+    ).run(classId, e.title, e.body, JSON.stringify(e.images || []), e.dueAt, e.createdAt);
+    return 'new';
+  }
+  // 暴露给 sync handler 复用（避免 4 处重复 INSERT/UPDATE）
+  (db as any).__classUpsertAnnouncement = upsertAnnouncement;
+  (db as any).__classUpsertTask = upsertTask;
+
+  // v1.2.8 块 O：30s 后台轮询（所有 class 自动 sync）
+  // - 教室下课前常常实时发布作业，及时同步比手动点 sync 体验好
+  // - 关闭 app 时清理定时器，避免泄漏
+  const bgTimer = setInterval(async () => {
+    if (!db) return;
+    try {
+      const rows = db.prepare('SELECT id, last_sync_at FROM classes WHERE dissolved = 0').all() as Array<{ id: number; last_sync_at: number | null }>;
+      for (const r of rows) {
+        // 60s 内同步过的跳过（避免与前台 sync 重复）
+        if (r.last_sync_at && Date.now() - r.last_sync_at < 60_000) continue;
+        try { await syncClassCore(r.id); }
+        catch { /* 单个班级失败不影响其他班级 */ }
+      }
+    } catch { /* 静默 */ }
+  }, 30_000);
+  bgTimer.unref?.();
+  // 退出清理
+  app.on('will-quit', () => clearInterval(bgTimer));
+
+  /** 同步核心：拉取云端 manifest + 公告/作业，自动合并到本地。
+   *  sync IPC 和 30s 后台轮询 都调它。 */
+  async function syncClassCore(classId: number): Promise<{ ok: boolean; error?: string; source?: string; newAnnouncements?: number; updatedAnnouncements?: number; newTasks?: number; updatedTasks?: number; manifest?: any }> {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+
+    let lastError = '';
+    try {
+      const snap = await fetchClassSnapshot(
+        row.invite_code,
+        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
+        'github',
+      );
+      if (!snap) {
+        lastError = 'GitHub 拉取返回 null';
+      } else {
+        if (snap.manifest.sig !== signManifest(snap.manifest)) {
+          return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
+        }
+        let newAnn = 0, updatedAnn = 0;
+        for (const e of snap.announcements) {
+          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
+          const r = upsertAnnouncement(classId, e);
+          if (r === 'new') newAnn++; else updatedAnn++;
+        }
+        let newTask = 0, updatedTask = 0;
+        for (const e of snap.tasks) {
+          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
+          const r = upsertTask(classId, e);
+          if (r === 'new') newTask++; else updatedTask++;
+        }
+        updateMembersCache(classId, snap.manifest.members);
+        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
+        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
+        return { ok: true, source: snap.source, newAnnouncements: newAnn, updatedAnnouncements: updatedAnn, newTasks: newTask, updatedTasks: updatedTask, manifest: snap.manifest };
+      }
+    } catch (e: any) {
+      lastError = `GitHub 同步失败：${e?.message || e}`;
+    }
+    // 降级到 AnyShare
+    try {
+      const snap = await fetchClassSnapshot(
+        row.invite_code,
+        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
+        'anyshare',
+      );
+      if (snap) {
+        if (snap.manifest.sig !== signManifest(snap.manifest)) {
+          return { ok: false, error: 'AnyShare manifest 签名校验失败' };
+        }
+        let newAnn = 0, updatedAnn = 0, newTask = 0, updatedTask = 0;
+        for (const e of snap.announcements) {
+          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
+          const r = upsertAnnouncement(classId, e);
+          if (r === 'new') newAnn++; else updatedAnn++;
+        }
+        for (const e of snap.tasks) {
+          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
+          const r = upsertTask(classId, e);
+          if (r === 'new') newTask++; else updatedTask++;
+        }
+        updateMembersCache(classId, snap.manifest.members);
+        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
+        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
+        return { ok: true, source: 'anyshare', newAnnouncements: newAnn, updatedAnnouncements: updatedAnn, newTasks: newTask, updatedTasks: updatedTask, manifest: snap.manifest };
+      }
+    } catch (e: any) {
+      return { ok: false, error: `${lastError}；AnyShare 兜底也失败：${e?.message || e}` };
+    }
+    return { ok: false, error: lastError || '两源都拉不到 manifest' };
+  }
+  // 给 IPC handler 用，避免重复实现
+  (db as any).__classSyncCore = syncClassCore;
 
   // ----------------- 配置类 -----------------
 
@@ -378,6 +508,26 @@ export function registerClass(db: DB) {
     return { ok: true };
   });
 
+  // v1.2.8 块 O：成员角色管理（owner 可将 member 提升为 admin 或降级；admin 不可晋升）
+  ipcMain.handle('class:promoteMember', (_e, classId: number, payload: { alias: string; role: 'owner' | 'admin' | 'member' }) => {
+    const row = fetchClassRow(classId);
+    if (!row) return { ok: false, error: '班级不存在' };
+    if (row.role !== 'owner') return { ok: false, error: '仅 owner 可调整成员角色', errorCode: 'NOT_OWNER' };
+    const alias = String(payload?.alias || '').trim();
+    if (!alias) return { ok: false, error: '请指定成员 alias' };
+    const target = payload.role;
+    if (!['owner', 'admin', 'member'].includes(target)) return { ok: false, error: '非法角色' };
+    const cur = db.prepare('SELECT role FROM class_members WHERE class_id = ? AND alias = ?').get(classId, alias) as { role: string } | undefined;
+    if (!cur) return { ok: false, error: '成员不存在' };
+    if (alias === row.owner_alias) return { ok: false, error: '不能调整 owner 本人' };
+    db.prepare('UPDATE class_members SET role = ? WHERE class_id = ? AND alias = ?').run(target, classId, alias);
+    // 本机视角同步：本机角色也更新（避免 UI 显示不一致）
+    if (alias === getLocalAlias(db)) {
+      db.prepare('UPDATE classes SET role = ? WHERE id = ?').run(target, classId);
+    }
+    return { ok: true, role: target };
+  });
+
   // ----------------- 公告 / 作业 列表 -----------------
 
   ipcMain.handle('class:listAnnouncements', (_e, classId: number) => {
@@ -416,7 +566,7 @@ export function registerClass(db: DB) {
 
   // ----------------- 发布 -----------------
 
-  ipcMain.handle('class:publishAnnouncement', async (_e, classId: number, payload: { title: string; body: string }) => {
+  ipcMain.handle('class:publishAnnouncement', async (_e, classId: number, payload: { title: string; body: string; images?: string[] }) => {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
     if (row.role !== 'owner') return { ok: false, error: '仅 owner 可发布公告', errorCode: 'NOT_OWNER' };
@@ -424,6 +574,7 @@ export function registerClass(db: DB) {
     const title = String(payload?.title || '').trim().slice(0, 80);
     const body = String(payload?.body || '').slice(0, 4000);
     if (!title) return { ok: false, error: '请输入公告标题' };
+    const images = Array.isArray(payload?.images) ? payload.images.filter((u) => typeof u === 'string' && u.trim()).slice(0, 9) : [];
 
     const alias = String(row.owner_alias || getLocalAlias(db));
     const now = Date.now();
@@ -431,15 +582,15 @@ export function registerClass(db: DB) {
     const sig = signEntry(row.code, 'announcement', annId, body);
 
     const entry: AnnouncementEntry = {
-      id: annId, authorAlias: alias, title, body, images: [], pinned: false,
+      id: annId, authorAlias: alias, title, body, images, pinned: false,
       createdAt: now, sig,
     };
 
     // 写本地
     db.prepare(
       `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
-       VALUES (?, ?, ?, '[]', 0, 1, ?)`
-    ).run(classId, title, body, now);
+       VALUES (?, ?, ?, ?, 0, 1, ?)`
+    ).run(classId, title, body, JSON.stringify(images), now);
 
     // 写远端：先 put announcement，再 update manifest（含新 lastAnnouncementId）
     const ghToken = getGitHubToken(db);
@@ -474,7 +625,7 @@ export function registerClass(db: DB) {
     return { ok: errors.length === 0, warnings: errors, annId };
   });
 
-  ipcMain.handle('class:publishTask', async (_e, classId: number, payload: { title: string; body?: string; dueAt?: number }) => {
+  ipcMain.handle('class:publishTask', async (_e, classId: number, payload: { title: string; body?: string; dueAt?: number; images?: string[] }) => {
     const row = fetchClassRow(classId);
     if (!row) return { ok: false, error: '班级不存在' };
     if (row.role !== 'owner') return { ok: false, error: '仅 owner 可发布作业', errorCode: 'NOT_OWNER' };
@@ -482,6 +633,7 @@ export function registerClass(db: DB) {
     const title = String(payload?.title || '').trim().slice(0, 80);
     const body = String(payload?.body || '').slice(0, 4000);
     if (!title) return { ok: false, error: '请输入作业标题' };
+    const images = Array.isArray(payload?.images) ? payload.images.filter((u) => typeof u === 'string' && u.trim()).slice(0, 9) : [];
 
     const alias = String(row.owner_alias || getLocalAlias(db));
     const now = Date.now();
@@ -489,15 +641,15 @@ export function registerClass(db: DB) {
     const sig = signEntry(row.code, 'task', taskId, body + (payload?.dueAt || 0));
 
     const entry: ClassTaskEntry = {
-      id: taskId, authorAlias: alias, title, body,
+      id: taskId, authorAlias: alias, title, body, images,
       dueAt: payload?.dueAt || null, status: 'open',
       createdAt: now, sig,
     };
 
     db.prepare(
       `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
-       VALUES (?, ?, ?, '[]', ?, 'open', ?)`
-    ).run(classId, title, body, entry.dueAt, now);
+       VALUES (?, ?, ?, ?, ?, 'open', ?)`
+    ).run(classId, title, body, JSON.stringify(images), entry.dueAt, now);
 
     const ghToken = getGitHubToken(db);
     const errors: string[] = [];
@@ -544,103 +696,7 @@ export function registerClass(db: DB) {
 
   // ----------------- 同步（拉取最新） -----------------
 
-  ipcMain.handle('class:sync', async (_e, classId: number) => {
-    const row = fetchClassRow(classId);
-    if (!row) return { ok: false, error: '班级不存在' };
-
-    let lastError = '';
-    try {
-      const snap = await fetchClassSnapshot(
-        row.invite_code,
-        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
-        'github',
-      );
-      if (!snap) {
-        lastError = 'GitHub 拉取返回 null';
-      } else {
-        // 校验 manifest
-        if (snap.manifest.sig !== signManifest(snap.manifest)) {
-          return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
-        }
-        // 写新公告
-        let newAnn = 0;
-        for (const e of snap.announcements) {
-          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;  // 跳过坏的
-          const exist = db.prepare('SELECT id FROM class_announcements WHERE class_id = ? AND id = ?').get(classId, e.id);
-          if (!exist) {
-            db.prepare(
-              `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
-               VALUES (?, ?, ?, ?, ?, 0, ?)`
-            ).run(classId, e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.createdAt);
-            newAnn++;
-          }
-        }
-        // 写新作业
-        let newTask = 0;
-        for (const e of snap.tasks) {
-          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
-          const exist = db.prepare('SELECT id FROM class_tasks WHERE class_id = ? AND id = ?').get(classId, e.id);
-          if (!exist) {
-            db.prepare(
-              `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
-               VALUES (?, ?, ?, '[]', ?, 'open', ?)`
-            ).run(classId, e.title, e.body, e.dueAt, e.createdAt);
-            newTask++;
-          }
-        }
-        // 更新成员列表 + last IDs
-        updateMembersCache(classId, snap.manifest.members);
-        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
-        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
-        return { ok: true, source: snap.source, newAnnouncements: newAnn, newTasks: newTask, manifest: snap.manifest };
-      }
-    } catch (e: any) {
-      lastError = `GitHub 同步失败：${e?.message || e}`;
-    }
-    // 降级到 AnyShare
-    try {
-      const snap = await fetchClassSnapshot(
-        row.invite_code,
-        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0 },
-        'anyshare',
-      );
-      if (snap) {
-        if (snap.manifest.sig !== signManifest(snap.manifest)) {
-          return { ok: false, error: 'AnyShare manifest 签名校验失败' };
-        }
-        let newAnn = 0, newTask = 0;
-        for (const e of snap.announcements) {
-          if (!verifyEntry(row.code, 'announcement', e.id, e.body, e.sig)) continue;
-          const exist = db.prepare('SELECT id FROM class_announcements WHERE class_id = ? AND id = ?').get(classId, e.id);
-          if (!exist) {
-            db.prepare(
-              `INSERT INTO class_announcements (class_id, title, body, images_json, pinned, is_read, created_at)
-               VALUES (?, ?, ?, ?, ?, 0, ?)`
-            ).run(classId, e.title, e.body, JSON.stringify(e.images), e.pinned ? 1 : 0, e.createdAt);
-            newAnn++;
-          }
-        }
-        for (const e of snap.tasks) {
-          if (!verifyEntry(row.code, 'task', e.id, e.body + (e.dueAt || 0), e.sig)) continue;
-          const exist = db.prepare('SELECT id FROM class_tasks WHERE class_id = ? AND id = ?').get(classId, e.id);
-          if (!exist) {
-            db.prepare(
-              `INSERT INTO class_tasks (class_id, title, body, images_json, due_at, status, created_at)
-               VALUES (?, ?, ?, '[]', ?, 'open', ?)`
-            ).run(classId, e.title, e.body, e.dueAt, e.createdAt);
-            newTask++;
-          }
-        }
-        updateMembersCache(classId, snap.manifest.members);
-        updateLastIds(classId, snap.manifest.lastAnnouncementId, snap.manifest.lastTaskId);
-        setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
-        return { ok: true, source: 'anyshare', newAnnouncements: newAnn, newTasks: newTask, manifest: snap.manifest };
-      }
-    } catch (e: any) {
-      return { ok: false, error: `${lastError}；AnyShare 兜底也失败：${e?.message || e}` };
-    }
-    return { ok: false, error: lastError || '两源都拉不到 manifest' };
-  });
+  ipcMain.handle('class:sync', async (_e, classId: number) => syncClassCore(classId));
 }
 
 function safeParseArr(s: string | null | undefined): string[] {

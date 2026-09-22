@@ -130,6 +130,8 @@ export interface ClassTaskEntry {
   authorAlias: string;
   title: string;
   body: string;
+  /** v1.2.8 块 O：图片附件 URL 列表（最多 9 张，与 AnnouncementEntry.images 同语义） */
+  images?: string[];
   dueAt: number | null;     // 截止时间（null = 无）
   status: 'open' | 'done' | 'cancelled';
   createdAt: number;
