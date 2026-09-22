@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, RotateCcw, Home } from 'lucide-react';
+import { toast } from '../utils/toast';
 
 interface Props { children: React.ReactNode }
 interface State { error: Error | null }
@@ -16,7 +17,12 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // v1.2.8 块 N：Toast 提示 + 保留 console 日志（便于本地导出诊断）
+    // eslint-disable-next-line no-console
     console.error('[TaskManager] 渲染崩溃已被 ErrorBoundary 捕获:', error, info.componentStack);
+    try {
+      toast.error(`界面崩溃：${error.message || '未知错误'}`, 8000);
+    } catch { /* 浏览器预览模式无 store，忽略 */ }
     try {
       const key = 'tm_crash_log';
       const prev = JSON.parse(localStorage.getItem(key) || '[]');

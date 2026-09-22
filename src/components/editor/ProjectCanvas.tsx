@@ -17,6 +17,7 @@ import { detectCycle } from './cycleDetect';
 import { getEntityOpenPath } from './nodeRegistry';
 import { History, reconcileToSnapshot, type ExportPayload } from './history';
 import { ExportButton, ImportModal } from './ImportExport';
+import { toast } from '../../utils/toast';
 
 const TYPE_META: Record<CanvasNodeType, { label: string; color: string }> = {
   task:     { label: '任务',   color: '#00FF88' },
@@ -109,7 +110,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
         setNodes(dbToFlowNodes(ns || []));
         setEdges(dbToFlowEdges(es || []));
       } catch (e) {
-        console.error('project canvas load failed:', e);
+        toast.exception(e, '画布加载失败');
       }
     })();
     return () => { alive = false; };
@@ -191,7 +192,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
           ),
         );
       } catch (e) {
-        console.error('connect failed:', e);
+        toast.exception(e, '连线失败');
       }
     },
     [currentCanvas, nodes, edges],
@@ -239,7 +240,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
           },
         ]);
       } catch (e) {
-        console.error('drop create failed:', e);
+        toast.exception(e, '创建节点失败');
       }
     },
     [currentCanvas, nodes, edges],
@@ -289,7 +290,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
           data: (edge.data as any) ?? {},
         });
       } catch (e) {
-        console.error('change edge type failed:', e);
+        toast.exception(e, '修改连线类型失败');
       }
       setContextMenu(null);
     },
@@ -304,7 +305,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
       try {
         await window.taskAPI.db.canvasEdges.delete(Number(edgeId));
       } catch (e) {
-        console.error('delete edge failed:', e);
+        toast.exception(e, '删除连线失败');
       }
       setContextMenu(null);
       setSelection(null);
@@ -335,7 +336,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
     try {
       await reconcileToSnapshot(currentCanvas.id, snap);
     } catch (e) {
-      console.error('undo reconcile failed:', e);
+      toast.exception(e, '撤销同步失败');
     } finally {
       setLoading(false);
     }
@@ -352,7 +353,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
     try {
       await reconcileToSnapshot(currentCanvas.id, snap);
     } catch (e) {
-      console.error('redo reconcile failed:', e);
+      toast.exception(e, '重做同步失败');
     } finally {
       setLoading(false);
     }
@@ -418,7 +419,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
         setNodes(dbToFlowNodes(ns || []));
         setEdges(dbToFlowEdges(es || []));
       } catch (e) {
-        console.error('import failed:', e);
+        toast.exception(e, '导入失败');
         window.alert('导入失败：' + (e as Error).message);
       }
     },
@@ -455,7 +456,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
           },
         });
       } catch (e) {
-        console.error(e);
+        toast.exception(e, '节点操作失败');
       }
     },
     [nodes, currentCanvas],
@@ -487,7 +488,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
           data: (edge.data as any) ?? {},
         });
       } catch (e) {
-        console.error('update edge failed:', e);
+        toast.exception(e, '更新连线失败');
       }
     },
     [nodes, edges, currentCanvas],
@@ -502,7 +503,7 @@ function ProjectCanvasInner({ project }: { project: Project }) {
       setEdges((prev) => prev.filter((e) => e.source !== String(id) && e.target !== String(id)));
       setSelection(null);
     } catch (e) {
-      console.error(e);
+      toast.exception(e, '删除节点失败');
     }
   }, [nodes, edges]);
 

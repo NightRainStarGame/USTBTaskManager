@@ -13,6 +13,7 @@ import AcademicPage from './pages/Academic';
 import HabitsPage from './pages/Habits';
 import StatsPage from './pages/Stats';
 import UpdateNotification from './components/UpdateNotification';
+import { ToastContainer } from './components/ToastContainer';
 import { useStore } from './store';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useInputDiag } from './hooks/useInputDiag';
@@ -59,6 +60,8 @@ export default function App() {
       </Routes>
       {/* 全局启动时更新通知（监听主进程推送 + 渲染层 store） */}
       <UpdateNotification externalTrigger={updateInfo} />
+      {/* v1.2.8 块 N：全局 Toast 通知（替代 console.error） */}
+      <ToastContainer />
     </>
   );
 }

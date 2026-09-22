@@ -11,6 +11,7 @@ import {
   Crown, Shield, User as UserIcon, Trash2, Settings as SettingsIcon,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
+import { toast } from '@/utils/toast';
 
 export default function ClassListPage() {
   const nav = useNavigate();
@@ -27,7 +28,7 @@ export default function ClassListPage() {
       const r = await window.taskAPI.class.list();
       if (r.ok) setList(r.classes);
     } catch (e) {
-      console.error('class list failed', e);
+      toast.exception(e, '班级列表加载失败');
     } finally { setLoading(false); }
   };
 
