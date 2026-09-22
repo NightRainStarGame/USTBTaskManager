@@ -1,14 +1,15 @@
 /**
  * v1.2.7：增量补丁面板（独立组件，原 Settings.tsx:2062-2206）
  *
- * 含两个子组件：
+ * 含三个子组件：
  *   PatchUpdateButton —— 「检查更新」后自动浮现的「下载补丁」按钮
  *   PatchCacheCard    —— 持久缓存（zip+manifest）的「应用/清除」卡
+ *   PatchStateCard    —— 上次补丁的结果（applied / pendingSidecar / failed） + 立即重试
  *
  * 调用方：Settings.tsx 渲染位置 + 透传 onMessage / onProgress 回调
  */
 import { useEffect, useState } from 'react';
-import { Package, Trash2 } from 'lucide-react';
+import { Package, Trash2, AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
 
 export function PatchUpdateButton({
   aggregate, appVersion, onMessage, onProgress,
@@ -149,6 +150,81 @@ export function PatchCacheCard({ appVersion, onMessage }: { appVersion: string; 
         </button>
         <button onClick={clear} className="btn-ghost text-xs py-1 text-text-dim">
           <Trash2 size={12} /> 清除缓存
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** v1.2.7：上次补丁状态卡（applied / pendingSidecar / failed）—— 让用户看到上次重启后
+ *  补丁到底成功了没，如果 .new 旁路残留还能一键重试 */
+export function PatchStateCard({ onMessage }: { onMessage: (m: string) => void }) {
+  const [st, setSt] = useState<{
+    applied?: boolean; failed?: boolean; pendingSidecar?: boolean;
+    baseline?: { expected: string; actual: string }; message?: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    try { setSt(await window.taskAPI.updater.patchState()); } catch { /* ignore */ }
+  };
+  useEffect(() => { void refresh(); }, []);
+
+  if (!st || (!st.applied && !st.failed && !st.pendingSidecar)) return null;
+
+  const retry = async () => {
+    setBusy(true);
+    try {
+      if (st.pendingSidecar) {
+        // v1.2.7：spawn helper with mode='takeover-sidecar'，helper 接管 + relaunch
+        const r = await window.taskAPI.updater.patchTakeoverSidecar();
+        if (!r.ok) {
+          onMessage('接管 .new 失败：' + (r.error || 'unknown'));
+          setBusy(false);
+          return;
+        }
+        onMessage('已启动 helper 接管 .new 旁路；App 即将退出并重启为新版本');
+      } else {
+        // failed = 重新走缓存式补丁流程（如果缓存还在就直接 apply，否则重新下载）
+        const r = await window.taskAPI.updater.patchApplyCached();
+        if (!r.ok) onMessage('立即重试失败：' + (r.error || 'unknown'));
+        else onMessage('补丁已启动；App 即将退出并重启');
+      }
+    } catch (e: any) {
+      onMessage(String(e?.message || e));
+      setBusy(false);
+    }
+  };
+
+  const color = st.applied ? 'neon-green' : st.pendingSidecar ? 'neon-yellow' : 'neon-danger';
+  const Icon = st.applied ? CheckCircle2 : AlertTriangle;
+  const title = st.applied ? '✓ 上次补丁已成功应用' :
+                st.pendingSidecar ? '⚠ 补丁有 .new 旁路残留（未接管）' :
+                '✗ 上次补丁应用失败';
+  return (
+    <div className={`mt-3 p-3 rounded-lg border border-${color}/30 bg-${color}/5 space-y-2`}>
+      <div className="flex items-center gap-2 font-mono text-xs">
+        <Icon size={14} className={`text-${color}`} />
+        <span className={`text-${color}`}>{title}</span>
+      </div>
+      {st.message && (
+        <div className={`font-mono text-[10px] text-${color}/80 break-all bg-ink-base/40 rounded p-2 border border-${color}/10`}>
+          {st.message}
+        </div>
+      )}
+      {st.baseline && !st.applied && (
+        <div className="font-mono text-[10px] text-text-dim">
+          期望基线 <code>{st.baseline.expected.slice(0, 16)}…</code> · 实际 <code>{st.baseline.actual.slice(0, 16)}…</code>
+        </div>
+      )}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex-1" />
+        {!st.applied && (
+          <button onClick={retry} disabled={busy} className={`btn-neon text-xs py-1`}>
+            <RotateCcw size={12} /> {busy ? '处理中…' : st.pendingSidecar ? '重启 App 并接管' : '立即重试'}
+          </button>
+        )}
+        <button onClick={refresh} className="btn-ghost text-xs py-1 text-text-dim">
+          刷新状态
         </button>
       </div>
     </div>

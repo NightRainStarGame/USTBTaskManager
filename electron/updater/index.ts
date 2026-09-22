@@ -875,10 +875,22 @@ export function registerUpdater(db: DB | null) {
   // 清空补丁缓存
   ipcMain.handle('update:patch:clearCache', () => patchApply.clearPatchCache());
 
+  // v1.2.7：用户主动接管 .new 旁路（PatchStateCard 重试按钮触发）
+  ipcMain.handle('update:patch:takeoverSidecar', () => {
+    const r = patchApply.takeoverSidecarPatch();
+    if (!r.ok) return r;
+    // 600ms 后主进程退出，让 helper 完成接管
+    setTimeout(() => {
+      try { app.exit(0); } catch {}
+    }, 600);
+    return { ok: true, helperPid: r.helperPid };
+  });
+
   ipcMain.handle('update:patch:state', () => {
     const r = patchApply.checkPatchStateOnBoot();
     let message: string | undefined;
     if (r.applied) message = '上次补丁已成功应用';
+    else if (r.pendingSidecar) message = '上次补丁有 .new 旁路残留（helper 启动时会自动接管），如未生效可点「立即重试补丁」';
     else if (r.failed) message = `上次补丁未应用：基线或落盘失败（期望 ${r.baseline?.expected.slice(0, 8)}…，实际 ${r.baseline?.actual.slice(0, 8)}…），下次检查更新会走整装`;
     return { ...r, message };
   });

@@ -319,7 +319,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         }>,
       /** v1.1.6 块 4b：校验上次补丁是否应用成功（启动时调一次） */
       patchState: () => invoke('update:patch:state') as Promise<{
-        applied?: boolean; failed?: boolean;
+        applied?: boolean; failed?: boolean; pendingSidecar?: boolean;
         baseline?: { expected: string; actual: string };
         message?: string;
       }>,
@@ -341,6 +341,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       }>,
       /** v1.3.0：清空补丁缓存 */
       patchClearCache: () => invoke('update:patch:clearCache') as Promise<{ ok: boolean }>,
+      /** v1.2.7：用户主动接管 .new 旁路（PatchStateCard 重试按钮触发），主进程会退出 */
+      patchTakeoverSidecar: () => invoke('update:patch:takeoverSidecar') as Promise<{
+        ok: boolean; error?: string; helperPid?: number;
+      }>,
       /** 兼容旧 API：用单源替换（保留旧行为） */
       setSource: (source: string) => invoke('update:setSource', source) as Promise<{ ok: boolean; source: string; sources: UpdateSourceDTO[] }>,
       /** 新 API：整体保存多源 + 切换主源 */

@@ -176,20 +176,21 @@ export function spawnPatchHelper(zipPath: string, manifest: PatchEntry, opts?: {
       ELECTRON_RUN_AS_NODE: '1',
       TASKMGR_PATCH_JSON: payload,
     };
-    delete env.ELECTRON_RUN_AS_NODE; // 上一行已设了，但要确保不会被子进程继承其他模式
-    env.ELECTRON_RUN_AS_NODE = '1';
     const child = spawn(process.execPath, [helper.path, '--patch-helper', payload], {
       detached: true,
       stdio: 'ignore',
       env,
       windowsHide: true,
+      // v1.2.7：helper 进程需要 cwd = app 所在目录，否则 relaunch 时 spawn 找不到资源路径
+      cwd: app.isPackaged ? path.dirname(process.execPath) : undefined,
     });
     child.unref();
-    // 落状态文件：让下次启动自检
+    // 落状态文件：让下次启动自检（v1.2.7 加 phase 字段：pending → applied/failed）
     try {
       fs.writeFileSync(STATE_FILE(), JSON.stringify({
         zipPath,
         manifest,
+        phase: 'pending',
         startedAt: Date.now(),
         helperPid: child.pid,
         expectedToSha: manifest.appAsarSha256,
@@ -201,11 +202,17 @@ export function spawnPatchHelper(zipPath: string, manifest: PatchEntry, opts?: {
   }
 }
 
-/** 下次启动自检：如果检测到 patch 状态文件 + 当前 asar 哈希未对齐，清掉状态走全量 */
+/** 下次启动自检：如果检测到 patch 状态文件 + 当前 asar 哈希未对齐，清掉状态走全量
+ *  v1.2.7：同时探测 app.asar.new 残留（helper rename 失败时写的旁路）—— helper 启动时
+ *  会自动接管，但为了 UX，把 .new 残留信息也透传给 UI 提示用户 */
 export function checkPatchStateOnBoot(): {
   applied?: boolean;
   failed?: boolean;
   baseline?: { expected: string; actual: string } | null;
+  /** v1.2.7：helper 已成功落 .new 旁路但没接管（罕见的 AV 锁文件场景），下次启动 helper 会自动接管 */
+  pendingSidecar?: boolean;
+  /** v1.2.7：.new 残留的 sha（如果存在），用于 UI 调试展示 */
+  sidecarSha?: string;
 } {
   const f = STATE_FILE();
   if (!fs.existsSync(f)) return {};
@@ -221,15 +228,79 @@ export function checkPatchStateOnBoot(): {
   })();
   if (!cur) return {};
   const expected = (state.expectedToSha || '').toLowerCase();
+  // v1.2.7：检测 app.asar.new 残留
+  const sidecarPath = currentAsarPath() + '.new';
+  let sidecarSha: string | undefined;
+  if (fs.existsSync(sidecarPath)) {
+    try { sidecarSha = sha256Hex(fs.readFileSync(sidecarPath)); } catch {}
+  }
   if (expected && cur === expected) {
     // 成功：删状态
     try { fs.unlinkSync(f); } catch {}
     return { applied: true };
   }
+  if (sidecarSha && state.phase === 'pending') {
+    // .new 残留说明上次 rename 失败，helper 启动后会自己接管，主进程不需要做任何事
+    return {
+      failed: false,
+      pendingSidecar: true,
+      baseline: { expected: expected || '?', actual: cur || '?' },
+      sidecarSha,
+    };
+  }
   return {
     failed: true,
     baseline: { expected: expected || '?', actual: cur || '?' },
   };
+}
+
+/** v1.2.7：仅接管 .new 旁路（用于用户在 Settings → PatchStateCard 里看到 pendingSidecar 时点重试）
+ *  不依赖 patch-info.json，直接 spawn helper with mode='takeover-sidecar' payload */
+export function takeoverSidecarPatch(): { ok: boolean; error?: string; helperPid?: number } {
+  const sidecar = currentAsarPath() + '.new';
+  if (!fs.existsSync(sidecar)) return { ok: false, error: '没有 .new 旁路残留' };
+  const helper = helperScriptPath();
+  if (!fs.existsSync(helper.path)) {
+    return { ok: false, error: `helper 脚本不存在：${helper.path}` };
+  }
+  let sidecarSha = '';
+  try { sidecarSha = sha256Hex(fs.readFileSync(sidecar)); } catch {}
+  const payload = JSON.stringify({
+    mode: 'takeover-sidecar',
+    appAsarPath: currentAsarPath(),
+    sidecarSha,
+    relaunch: true,
+    mainPid: process.pid,
+    timeoutMs: 30_000,
+  });
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      TASKMGR_PATCH_JSON: payload,
+    };
+    const child = spawn(process.execPath, [helper.path, '--patch-helper', payload], {
+      detached: true,
+      stdio: 'ignore',
+      env,
+      windowsHide: true,
+      cwd: app.isPackaged ? path.dirname(process.execPath) : undefined,
+    });
+    child.unref();
+    // 更新 patch-state.json 标记为 takeover 模式
+    try {
+      const f = STATE_FILE();
+      let prev: any = {};
+      try { prev = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+      prev.phase = 'pending';
+      prev.takenoverByUser = Date.now();
+      prev.expectedToSha = sidecarSha || prev.expectedToSha;
+      fs.writeFileSync(f, JSON.stringify(prev, null, 2));
+    } catch {}
+    return { ok: true, helperPid: child.pid };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 /** 强制走「补丁通道」的入口（含 UI 确认 + 自动重启） */

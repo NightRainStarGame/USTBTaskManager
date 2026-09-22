@@ -156,15 +156,114 @@ function extractAsarFromZip(zipPath, outPath) {
 
 /** 真正的活：解压 + 校验 + rename 落盘 */
 async function apply(opts) {
-  const { zipPath, appAsarPath, manifest, relaunch } = opts;
+  const { zipPath, appAsarPath, manifest, relaunch, mode } = opts;
   const expectedToSha = (manifest && manifest.appAsarSha256 || '').toLowerCase();
   const expectedBaseSha = (manifest && manifest.baseAsarSha256 || '').toLowerCase();
+  const sidecar = appAsarPath + '.new';
+  const backup = appAsarPath + '.bak';
 
   log('=== patch helper start ===');
-  log(`zipPath=${zipPath} target=${appAsarPath} relaunch=${!!relaunch}`);
+  log(`mode=${mode || 'normal'} zipPath=${zipPath} target=${appAsarPath} relaunch=${!!relaunch}`);
+
+  // 0) v1.2.7：先接管上次的 .new 旁路残留（rename 失败时被写入，主进程下次启动自检时
+  //    只看 app.asar 的 sha，没看 .new，所以必须由 helper 显式接管）。如果 .new sha
+  //    等于期望的新版 sha → 直接 rename 接管 + 删 patch-state.json + 重启，跳过基线校验。
+  //    takeover-sidecar 模式（用户手动重试）：没有 manifest 时也按 .new 直接接管。
+  if (fs.existsSync(sidecar)) {
+    try {
+      const sideSha = sha256File(sidecar);
+      const sidecarSize = fs.statSync(sidecar).size;
+      // 接管阈值 = 至少 1MB（避免把空文件 / 损坏文件当 .new 接管）+ sidecarSha 与预期匹配
+      const looksValid = sidecarSize > 1024 * 1024;
+      const shouldTakeover = looksValid && (
+        (expectedToSha && sideSha === expectedToSha) ||
+        (mode === 'takeover-sidecar')
+      );
+      if (shouldTakeover) {
+        // 优先用 rename，失败再 copyFileSync（覆盖原 asar）
+        try {
+          try { fs.unlinkSync(appAsarPath); } catch {}
+          fs.renameSync(sidecar, appAsarPath);
+        } catch {
+          fs.copyFileSync(sidecar, appAsarPath);
+          try { fs.unlinkSync(sidecar); } catch {}
+        }
+        log(`✓ 已接管 .new 旁路残留 mode=${mode || 'normal'} sha256=${sideSha.slice(0, 16)}…`);
+        if (relaunch) {
+          log('拉起新版本应用');
+          try {
+            spawn(process.execPath, [], {
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: true,
+              cwd: path.dirname(process.execPath),
+              env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
+            }).unref();
+          } catch (e) { log(`[!] relaunch 失败：${e.message}`); }
+        }
+        log('=== patch helper done (接管 .new) ===');
+        return;
+      } else if (mode === 'takeover-sidecar') {
+        // takeover 模式但 .new 不合法（size < 1MB）→ 不接管
+        throw new Error(`takeover 模式但 .new 不合法（size=${sidecarSize}），删除后请重新走补丁流程`);
+      } else {
+        // 残留 .new sha 不匹配 = 上次失败的产物，清掉走正常流程
+        log(`[!] 残留 .new sha 不匹配（${sideSha.slice(0, 16)}… vs ${expectedToSha || '?'}），清掉重试`);
+        try { fs.unlinkSync(sidecar); } catch {}
+      }
+    } catch (e) {
+      log(`[!] 检测 .new 残留失败：${e.message}`);
+      if (mode === 'takeover-sidecar') throw e;
+    }
+  }
+
+  // takeover-sidecar 模式走到这里说明 .new 不存在 → 报错让用户走完整流程
+  if (mode === 'takeover-sidecar') {
+    throw new Error('takeover-sidecar 模式：未检测到 .new 旁路残留');
+  }
 
   if (!fs.existsSync(zipPath)) throw new Error(`zipPath 不存在 ${zipPath}`);
   if (!fs.existsSync(appAsarPath)) throw new Error(`app.asar 路径不存在 ${appAsarPath}`);
+
+  // 0) v1.2.7：先接管上次的 .new 旁路残留（rename 失败时被写入，主进程下次启动自检时
+  //    只看 app.asar 的 sha，没看 .new，所以必须由 helper 显式接管）。如果 .new sha
+  //    等于期望的新版 sha → 直接 rename 接管 + 删 patch-state.json + 重启，跳过基线校验。
+  if (fs.existsSync(sidecar)) {
+    try {
+      const sideSha = sha256File(sidecar);
+      if (expectedToSha && sideSha === expectedToSha) {
+        // 优先用 rename，失败再 copyFileSync（覆盖原 asar）
+        try {
+          try { fs.unlinkSync(appAsarPath); } catch {}
+          fs.renameSync(sidecar, appAsarPath);
+        } catch {
+          fs.copyFileSync(sidecar, appAsarPath);
+          try { fs.unlinkSync(sidecar); } catch {}
+        }
+        log(`✓ 已接管 .new 旁路残留 sha256=${sideSha.slice(0, 16)}…`);
+        if (relaunch) {
+          log('拉起新版本应用');
+          try {
+            spawn(process.execPath, [], {
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: true,
+              cwd: path.dirname(process.execPath),
+              env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
+            }).unref();
+          } catch (e) { log(`[!] relaunch 失败：${e.message}`); }
+        }
+        log('=== patch helper done (接管 .new) ===');
+        return;
+      } else {
+        // 残留 .new sha 不匹配 = 上次失败的产物，清掉走正常流程
+        log(`[!] 残留 .new sha 不匹配（${sideSha.slice(0, 16)}… vs ${expectedToSha.slice(0, 16) || '?'}），清掉重试`);
+        try { fs.unlinkSync(sidecar); } catch {}
+      }
+    } catch (e) {
+      log(`[!] 检测 .new 残留失败：${e.message}`);
+    }
+  }
 
   // 1) 校验基线（升级前客户端 asar 哈希匹配 manifest.baseAsarSha256）
   if (expectedBaseSha) {
@@ -187,15 +286,29 @@ async function apply(opts) {
     }
     log(`解压校验通过 sha256=${newSha.slice(0, 16)}… size=${fs.statSync(extractedAsar).size}`);
 
-    // 3) rename 旧 asar → app.asar.bak；再写新 asar
-    const backup = appAsarPath + '.bak';
+    // 3) rename 旧 asar → app.asar.bak；再写新 asar（v1.2.7：AV 锁文件常见，加 retry）
     try { fs.unlinkSync(backup); } catch {}
-    try { fs.renameSync(appAsarPath, backup); } catch (e) {
-      log(`[!] rename 旧 asar 失败：${e.message} —— 尝试用 .new 旁路落盘`);
-      // 旁路：app.asar.new 不冲突 + 主进程启动自检会发现 sha256 不对走全量
-      const sidecar = appAsarPath + '.new';
+    let renamed = false;
+    let lastRenameErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        fs.renameSync(appAsarPath, backup);
+        renamed = true;
+        if (attempt > 0) log(`rename retry 第 ${attempt} 次成功`);
+        break;
+      } catch (e) {
+        lastRenameErr = e;
+        // AV/Defender 锁文件时常见：等几百毫秒再试
+        const wait = 400 * (attempt + 1);
+        log(`[!] rename 旧 asar 第 ${attempt + 1} 次失败：${e.message}，等待 ${wait}ms 后重试`);
+        const until = Date.now() + wait;
+        while (Date.now() < until) { /* busy wait */ }
+      }
+    }
+    if (!renamed) {
+      log(`[!] rename 全部失败：${lastRenameErr?.message} —— 写 .new 旁路`);
       fs.copyFileSync(extractedAsar, sidecar);
-      log(`已写出 ${sidecar}，主进程下次启动自检自动接管`);
+      log(`已写出 ${sidecar}，下次启动 helper 会自动接管`);
       return;
     }
     fs.copyFileSync(extractedAsar, appAsarPath);
@@ -209,11 +322,17 @@ async function apply(opts) {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
 
-  // 4) 可选：重新拉起
+  // 4) 可选：重新拉起（v1.2.7：加 cwd + windowsHide，避免 spawn 失败或弹出 cmd 窗口）
   if (relaunch) {
     log('拉起新版本应用');
     try {
-      spawn(process.execPath, [], { detached: true, stdio: 'ignore', env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' } }).unref();
+      spawn(process.execPath, [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        cwd: path.dirname(process.execPath),
+        env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
+      }).unref();
     } catch (e) {
       log(`[!] relaunch 失败：${e.message}`);
     }

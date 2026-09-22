@@ -7,7 +7,7 @@ import paymentWechatQr from '../assets/payment-wechat.png';
 import { PRICING } from '../config/pricing';
 import AboutPanel from '@/components/AboutPanel';
 import DiagPanel from '@/components/DiagPanel';
-import { PatchUpdateButton, PatchCacheCard } from '@/components/PatchPanel';
+import { PatchUpdateButton, PatchCacheCard, PatchStateCard } from '@/components/PatchPanel';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
 
@@ -1348,6 +1348,9 @@ export default function SettingsPage() {
 
         {/* v1.3.0：已下载的增量补丁（zip + manifest 缓存，随时应用） */}
         <PatchCacheCard appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} />
+
+        {/* v1.2.7：上次补丁的结果（applied / pendingSidecar / failed） + 立即重试 */}
+        <PatchStateCard onMessage={setUpdateMsg} />
 
         {/* 下载进度 */}
         {dl && (
