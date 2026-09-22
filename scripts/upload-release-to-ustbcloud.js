@@ -135,7 +135,9 @@ async function upload(root, name, buf) {
   const jsonObj = JSON.parse(jsonRaw);
   // 匿名不能覆盖：安装包按 "<basename>-<ts>.exe" 上传，latest.json 里 url 改成 basename（不带 ts），
   // App 端 resolveDownloadUrl 按 base 前缀找最新一份换签名直链
-  const baseExeName = path.basename(exePath).replace(/\.exe$/i, '') + '.exe';
+  // （--only-patches 时不重传 exe，basename 从现有 manifest url 提取）
+  const exeUrlBase = exePath ? path.basename(exePath) : path.basename(String(jsonObj.url || jsonObj.fileName || ''));
+  const baseExeName = exeUrlBase.replace(/\.exe$/i, '') + '.exe';
   jsonObj.url = baseExeName;
   jsonObj.fileName = baseExeName;
   if (!jsonObj.page) jsonObj.page = 'https://github.com/NightRainStarGame/USTBTaskManager/releases';
