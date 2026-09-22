@@ -72,35 +72,54 @@ export default function PomodoroWidget() {
     return () => window.removeEventListener('keydown', h);
   }, [open]);
 
-  // 今日专注时长（面板打开时刷新）
+  // 今日专注时长（面板打开时刷新；phase 切换单独触发刷新，避免定时器重建）
+  const refreshToday = useRef<() => Promise<void>>(async () => {});
+  refreshToday.current = async () => {
+    try {
+      const dayStart = dayjs().startOf('day').valueOf();
+      const stats = await window.taskAPI.db.pomodoro.stats(dayStart, Date.now());
+      const m = stats.byDay.find(d => d.day === dayjs().format('YYYY-MM-DD'));
+      setTodayMinutes(m?.minutes ?? 0);
+    } catch { /* ignore */ }
+  };
   useEffect(() => {
     if (!open) return;
-    const load = async () => {
-      try {
-        const dayStart = dayjs().startOf('day').valueOf();
-        const stats = await window.taskAPI.db.pomodoro.stats(dayStart, Date.now());
-        const m = stats.byDay.find(d => d.day === dayjs().format('YYYY-MM-DD'));
-        setTodayMinutes(m?.minutes ?? 0);
-      } catch { /* ignore */ }
-    };
-    load();
-    const t = setInterval(load, 30_000);
+    refreshToday.current();
+    const t = setInterval(() => refreshToday.current(), 30_000);
     return () => clearInterval(t);
-  }, [open, phase]);
-
-  // 计时（finishPhase 经 ref 调用，避免 interval 闭包捕获旧 phase）
+  }, [open]);
+  // phase 切换后立即刷新一次（让面板看到「专注 N 分钟」的实时增长）
   useEffect(() => {
+    if (open) refreshToday.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // 计时：finishPhase 经 ref 调用，避免 interval 闭包捕获旧 phase；
+  // 用 finishedThisTickRef 防止 React 18 strict mode 双重挂载 / 多 setTimeout 触发同一收尾
+  const finishedThisTickRef = useRef(false);
+  const finishTimeoutRef = useRef<number | null>(null);
+  useEffect(() => {
+    finishedThisTickRef.current = false;
     if (phase === 'idle' || paused) return;
     const t = setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) {
-          setTimeout(() => finishPhaseRef.current(), 0);
+          if (!finishedThisTickRef.current) {
+            finishedThisTickRef.current = true;
+            finishTimeoutRef.current = window.setTimeout(() => finishPhaseRef.current(), 0);
+          }
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      if (finishTimeoutRef.current !== null) {
+        clearTimeout(finishTimeoutRef.current);
+        finishTimeoutRef.current = null;
+      }
+    };
   }, [phase, paused]);
 
   const startWork = () => {
@@ -150,7 +169,19 @@ export default function PomodoroWidget() {
   const finishPhaseRef = useRef<() => void>(() => {});
   useEffect(() => { finishPhaseRef.current = finishPhase; });
 
-  // 拖动：仅浮动按钮本体可拖；面板展开后不可拖
+  // 拖动：仅浮动按钮本体可拖；面板展开后不可拖；
+  // pos 是 bottom-6 right-6 锚点上的像素偏移，按钮 48px、上下左右各留 6 (24px) 边界
+  const WIDGET_SIZE = 48;
+  const WIDGET_MARGIN = 6; // Tailwind bottom-6 right-6 ≈ 24px
+  const posClamp = (next: { x: number; y: number }): { x: number; y: number } => {
+    if (typeof window === 'undefined') return next;
+    const maxX = Math.max(0, Math.floor(window.innerWidth - WIDGET_SIZE - WIDGET_MARGIN * 4));
+    const maxY = Math.max(0, Math.floor(window.innerHeight - WIDGET_SIZE - WIDGET_MARGIN * 4));
+    return {
+      x: Math.min(maxX, Math.max(-Math.floor(window.innerWidth - WIDGET_SIZE - WIDGET_MARGIN * 4), next.x)),
+      y: Math.min(maxY, Math.max(-Math.floor(window.innerHeight - WIDGET_SIZE - WIDGET_MARGIN * 4), next.y)),
+    };
+  };
   useEffect(() => {
     if (!dragging) return;
     const onMove = (e: MouseEvent) => {
@@ -159,10 +190,10 @@ export default function PomodoroWidget() {
       const dy = e.clientY - dragStartRef.current.startY;
       // 阈值 > 3px 才算"真拖动"，避免误判点击
       if (!didDragRef.current && Math.hypot(dx, dy) > 3) didDragRef.current = true;
-      const next = {
+      const next = posClamp({
         x: dragStartRef.current.origX + dx,
         y: dragStartRef.current.origY + dy,
-      };
+      });
       posRef.current = next;
       setPos(next);
     };
