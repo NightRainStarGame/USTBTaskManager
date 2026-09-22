@@ -298,6 +298,16 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'course_requirements', 'completed_at', 'INTEGER');
   addColumnIfMissing(db, 'project_tasks', 'done_at', 'INTEGER');
   addColumnIfMissing(db, 'projects', 'completed_at', 'INTEGER');
+
+  // v1.2.7：P2P 班级复活（去 VPS 化）— 扩 classes 表 + 加字段
+  addColumnIfMissing(db, 'classes', 'alias', "TEXT DEFAULT ''");            // 我在班级的昵称
+  addColumnIfMissing(db, 'classes', 'invite_code', 'TEXT');                 // 12 位邀请码
+  addColumnIfMissing(db, 'classes', 'owner_alias', "TEXT DEFAULT ''");      // 创建者本机昵称
+  addColumnIfMissing(db, 'classes', 'description', 'TEXT');
+  addColumnIfMissing(db, 'classes', 'last_announcement_id', 'INTEGER DEFAULT 0');  // 本机已知最新公告 ID（增量）
+  addColumnIfMissing(db, 'classes', 'last_task_id', 'INTEGER DEFAULT 0');          // 本机已知最新作业 ID（增量）
+  addColumnIfMissing(db, 'classes', 'manifest_sha', 'TEXT');                        // GitHub Contents API sha（If-None-Match 用）
+  addColumnIfMissing(db, 'classes', 'members_json', "TEXT DEFAULT '[]'");          // 本机缓存的成员列表（manifest.members）
   // 存量 done 行回填：作业用 created_at（历史完成时间近似）；任务表无时间列用迁移时刻
   db.exec(`
     UPDATE course_requirements SET completed_at = created_at
