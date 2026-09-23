@@ -115,3 +115,7 @@ server/.env
 server/.env.local
 server/*.log
 server/.cache/
+
+# 探针/临时诊断脚本与截图（不进仓库）
+scripts/tmp-*.cjs
+scripts/shots/
