@@ -12,6 +12,10 @@ import { PatchUpdateButton, PatchCacheCard, PatchStateCard } from '@/components/
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
 
+/** 移动端（Android 壳）无应用内更新通道：安装包制 + child_process 不可用，
+ *  检查到新版本也装不了 → 隐藏更新操作区，提示去 GitHub Releases 下载 APK */
+const IS_MOBILE = !!(window as any).__MOBILE__;
+
 interface UpdateSource {
   name: string;
   url: string;
@@ -1329,6 +1333,7 @@ export default function SettingsPage() {
           </div>
         </Row>
 
+        {!IS_MOBILE && (
         <Row label="启动时自动检查">
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" checked={updateAuto} onChange={(e) => toggleAutoCheck(e.target.checked)} className="accent-[#00FF88]" />
@@ -1337,7 +1342,9 @@ export default function SettingsPage() {
             </span>
           </label>
         </Row>
+        )}
 
+        {!IS_MOBILE ? (
         <div className="flex flex-wrap gap-2 pt-1">
           <button onClick={checkUpdate} disabled={updateChecking} className="btn-neon">
             <RefreshCw size={14} className={updateChecking ? 'animate-spin' : ''} /> {updateChecking ? '检查中…' : '检查更新'}
@@ -1365,6 +1372,21 @@ export default function SettingsPage() {
             <ExternalLink size={14} /> GitHub 源打不开？点这
           </button>
         </div>
+        ) : (
+          <div className="flex items-start gap-2 p-3 rounded-md border border-neon-yellow/30 bg-neon-yellow/5 font-mono text-xs text-neon-yellow/90">
+            <ExternalLink size={14} className="shrink-0 mt-0.5" />
+            <span>
+              移动端不支持应用内更新。新版本 APK 请到 GitHub Releases 下载：
+              github.com/NightRainStarGame/USTBTaskManager/releases
+              <button
+                onClick={() => { try { window.open('https://github.com/NightRainStarGame/USTBTaskManager/releases', '_blank'); } catch { /* ignore */ } }}
+                className="ml-2 underline underline-offset-2 hover:text-neon-green"
+              >
+                打开发布页
+              </button>
+            </span>
+          </div>
+        )}
 
         {/* v1.3.0：已下载的增量补丁（zip + manifest 缓存，随时应用） */}
         <PatchCacheCard appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} />

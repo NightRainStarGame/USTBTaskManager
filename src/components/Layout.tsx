@@ -14,6 +14,7 @@ export default function Layout() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const setAppInfo = useStore(s => s.setAppInfo);
   const setUpdateInfo = useStore(s => s.setUpdateInfo);
   useShortcuts(() => setPlusOpen(true), () => setSearchOpen(true));
@@ -32,6 +33,10 @@ export default function Layout() {
         const info = await window.taskAPI.app.info();
         if (alive) setAppInfo(info);
       } catch { /* 浏览器 mock 不可用时忽略 */ }
+
+      // 移动端无更新通道（安装包制 + child_process 不可用），
+      // 跳过检查：避免无意义的跨域请求与「检查到更新却装不了」的误导
+      if ((window as any).__MOBILE__) return;
 
       try {
         const cfg = await window.taskAPI.updater.config();
@@ -59,14 +64,15 @@ export default function Layout() {
         />
       </div>
 
-      {/* 侧边栏 */}
-      <Sidebar />
+      {/* 侧边栏（手机=抽屉 / 平板=图标窄栏 / 桌面=全宽） */}
+      <Sidebar mobileOpen={menuOpen} onMobileClose={() => setMenuOpen(false)} />
 
       {/* 主区域 */}
       <div className="relative z-10 flex-1 flex flex-col min-w-0">
         <TopBar
           onPlus={() => setPlusOpen(true)}
           onSearch={() => setSearchOpen(true)}
+          onMenu={() => setMenuOpen(true)}
         />
         <main className="flex-1 overflow-auto">
           <Outlet />

@@ -190,13 +190,13 @@ function KanbanView({ project, tasks, onChange }: any) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         {cols.map(c => {
           const items = tasks.filter((t: ProjectTask) => t.status === c.key);
           return (
             <div
               key={c.key}
-              className="bg-ink-base/40 border border-neon-green/10 rounded-lg p-3 min-h-[300px]"
+              className="bg-ink-base/40 border border-neon-green/10 rounded-lg p-3 min-h-[140px] md:min-h-[300px]"
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => { if (drag) move(drag, c.key); setDrag(null); }}
             >
@@ -550,7 +550,7 @@ function ProjectModal({ project, onClose, onSaved }: any) {
       <div className="space-y-3">
         <Field label="项目名称 *"><input value={name} onChange={(e) => setName(e.target.value)} className="input-neon" /></Field>
         <Field label="描述"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="input-neon" /></Field>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Field label="状态">
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-neon">
               <option value="active">进行中</option>

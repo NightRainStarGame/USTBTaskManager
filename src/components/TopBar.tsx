@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Minus, Square, X, Maximize2 } from 'lucide-react';
+import { Plus, Search, Minus, Square, X, Maximize2, Menu } from 'lucide-react';
 import { useStore } from '@/store';
 import dayjs from 'dayjs';
 
 interface Props {
   onPlus: () => void;
   onSearch: () => void;
+  /** 手机（<768px）呼出侧栏抽屉 */
+  onMenu?: () => void;
 }
 
-export default function TopBar({ onPlus, onSearch }: Props) {
+export default function TopBar({ onPlus, onSearch, onMenu }: Props) {
   const stats = useStore(s => s.stats);
   const [now, setNow] = useState(dayjs());
   const [maximized, setMaximized] = useState(false);
@@ -19,27 +21,36 @@ export default function TopBar({ onPlus, onSearch }: Props) {
   }, []);
 
   useEffect(() => {
-    window.taskAPI.window.isMaximized().then(setMaximized);
+    // 移动端无窗口控制 IPC，reject 时静默（按钮本就隐藏）
+    window.taskAPI.window.isMaximized().then(setMaximized).catch(() => {});
   }, []);
 
   const handleMax = async () => {
     await window.taskAPI.window.maximize();
-    setMaximized(await window.taskAPI.window.isMaximized());
+    setMaximized(await window.taskAPI.window.isMaximized().catch(() => false));
   };
 
   return (
     <header
-      className="relative h-14 flex items-center gap-3 px-4 bg-ink-900/60 backdrop-blur-md border-b border-neon-green/15 select-none"
+      className="relative h-14 flex items-center gap-2 px-2 md:gap-3 md:px-4 bg-ink-900/60 backdrop-blur-md border-b border-neon-green/15 select-none"
     >
-      {/* 左侧：加号 + 搜索（可交互，非拖拽区） */}
-      <div className="flex items-center gap-2">
+      {/* 左侧：菜单（手机）+ 加号 + 搜索 */}
+      <div className="flex items-center gap-1 md:gap-2">
+        <button
+          onClick={onMenu}
+          className="md:hidden w-9 h-9 rounded flex items-center justify-center text-text-secondary hover:text-neon-green hover:bg-neon-green/10 transition-colors"
+          title="菜单"
+          aria-label="打开菜单"
+        >
+          <Menu size={20} />
+        </button>
         <button onClick={onPlus} className="btn-neon py-1.5 px-3" title="新建 (Ctrl+N)">
           <Plus size={16} />
         </button>
         <button onClick={onSearch} className="btn-ghost" title="全局搜索 (Ctrl+K)">
           <Search size={15} />
           <span className="hidden md:inline">搜索</span>
-          <span className="font-mono text-[10px] text-text-dim ml-1 px-1.5 py-0.5 rounded border border-text-dim/30">⌘K</span>
+          <span className="hidden lg:inline font-mono text-[10px] text-text-dim ml-1 px-1.5 py-0.5 rounded border border-text-dim/30">⌘K</span>
         </button>
       </div>
 
@@ -58,15 +69,15 @@ export default function TopBar({ onPlus, onSearch }: Props) {
 
       <div className="flex-1 h-full" style={{ WebkitAppRegion: 'drag' } as any} />
 
-      {/* 右侧：时钟 + 窗口控制（可交互） */}
-      <div className="flex items-center gap-3">
+      {/* 右侧：时钟 + 窗口控制（移动端隐藏窗口控制） */}
+      <div className="flex items-center gap-2 md:gap-3">
         <div className="flex flex-col items-end leading-none font-mono">
-          <span className="text-sm text-neon-green text-glow-green tracking-widest">
+          <span className="text-xs md:text-sm text-neon-green text-glow-green tracking-widest">
             {now.format('HH:mm:ss')}
           </span>
-          <span className="text-[10px] text-text-dim mt-0.5">{now.format('YYYY-MM-DD ddd')}</span>
+          <span className="hidden sm:block text-[10px] text-text-dim mt-0.5">{now.format('YYYY-MM-DD ddd')}</span>
         </div>
-        <div className="flex items-center gap-1 ml-2">
+        <div className="hidden md:flex items-center gap-1 ml-2">
           <WindowBtn onClick={() => window.taskAPI.window.minimize()} title="最小化">
             <Minus size={14} />
           </WindowBtn>
