@@ -139,6 +139,9 @@ export class Database {
   db: SqlJsDb;
   private path: string;
   closed = false;
+  /** 事务嵌套深度（transaction 嵌套时降级为 SAVEPOINT） */
+  txDepth = 0;
+  private txSeq = 0;
 
   constructor(path: string) {
     if (!SQL_LIB) throw new Error('sql.js 未初始化：先 await initSqlJsRuntime()');
@@ -159,13 +162,57 @@ export class Database {
     this.markDirty();
   }
 
+  /**
+   * better-sqlite3 风格事务：`transaction(fn)` 返回可调用包装，
+   * 调用时 BEGIN → fn() → COMMIT，抛错则 ROLLBACK；嵌套自动降级为 SAVEPOINT。
+   *
+   * 必需性：db/index.ts 的迁移与多个 ipc handler 直接调用 db.transaction(...)，
+   * 缺此方法会在迁移阶段抛 TypeError（与 no such table 同级的启动阻断）。
+   */
+  transaction<T extends (...args: any[]) => any>(fn: T): T {
+    const owner = this;
+    const wrapped = function (this: any, ...args: any[]): any {
+      const nested = owner.txDepth > 0;
+      const sp = `tm_sp_${++owner.txSeq}`;
+      owner.txDepth++;
+      owner.db.exec(nested ? `SAVEPOINT ${sp}` : 'BEGIN');
+      try {
+        const out = fn.apply(this, args);
+        owner.db.exec(nested ? `RELEASE ${sp}` : 'COMMIT');
+        owner.markDirty();
+        return out;
+      } catch (err) {
+        try {
+          owner.db.exec(nested ? `ROLLBACK TO ${sp}` : 'ROLLBACK');
+          if (nested) owner.db.exec(`RELEASE ${sp}`);
+        } catch { /* 回滚失败不覆盖原始异常 */ }
+        throw err;
+      } finally {
+        owner.txDepth--;
+      }
+    };
+    return wrapped as unknown as T;
+  }
+
+  /** better-sqlite3 的 db.backup(path)：导出当前内存库快照并落盘（备份模块 await 它） */
+  async backup(destPath: string): Promise<void> {
+    const bytes = this.db.export() as Uint8Array;
+    writeFileSync(destPath, bytes);
+    idbSet(`tmfile:${destPath}`, bytes.slice());
+  }
+
   /** better-sqlite3 的 pragma()：含 '=' 视为设置（内存库 no-op），否则查询 */
-  pragma(str: string): any {
+  pragma(str: string, opts?: { simple?: boolean }): any {
     if (str.includes('=')) {
       // journal_mode / synchronous / busy_timeout 等对内存库无意义，静默接受
       return [];
     }
-    return new Statement(this, `PRAGMA ${str}`).all();
+    const rows = new Statement(this, `PRAGMA ${str}`).all();
+    if (opts?.simple) {
+      const first = rows[0] as Record<string, any> | undefined;
+      return first ? Object.values(first)[0] : undefined;
+    }
+    return rows;
   }
 
   close(): void {

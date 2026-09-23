@@ -558,7 +558,16 @@ function runMigrations(db: Database.Database) {
       cloud_synced INTEGER DEFAULT 0,             -- 是否已成功同步到服务端
       last_synced_at INTEGER,
       joined_at INTEGER NOT NULL,
-      dissolved INTEGER DEFAULT 0
+      dissolved INTEGER DEFAULT 0,
+      -- v1.2.7+ 迁移列：老库由 addColumnIfMissing 补，全新库在此一次建全
+      alias TEXT DEFAULT '',                      -- 我在班级的昵称
+      invite_code TEXT,                           -- 12 位邀请码
+      owner_alias TEXT DEFAULT '',                -- 创建者本机昵称
+      last_announcement_id INTEGER DEFAULT 0,     -- 本机已知最新公告 ID（增量）
+      last_task_id INTEGER DEFAULT 0,             -- 本机已知最新作业 ID（增量）
+      manifest_sha TEXT,                          -- GitHub Contents API sha（If-None-Match 用）
+      members_json TEXT DEFAULT '[]',             -- 本机缓存的成员列表（manifest.members）
+      member_synced INTEGER DEFAULT 0             -- 本机昵称已写入云端成员列表的标记
     );
 
     CREATE TABLE IF NOT EXISTS class_announcements (
@@ -573,6 +582,7 @@ function runMigrations(db: Database.Database) {
       read_count INTEGER DEFAULT 0,
       is_read INTEGER DEFAULT 0,                  -- 当前 device 是否已读
       created_at INTEGER NOT NULL,
+      author_alias TEXT DEFAULT '',               -- v1.2.9 R1：云端条目作者别名
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_class_ann_class ON class_announcements(class_id, created_at DESC);
@@ -588,6 +598,7 @@ function runMigrations(db: Database.Database) {
       due_at INTEGER,
       status TEXT DEFAULT 'open',                 -- open / done / cancelled
       created_at INTEGER NOT NULL,
+      author_alias TEXT DEFAULT '',               -- v1.2.9 R1：云端条目作者别名
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_class_tasks_class ON class_tasks(class_id, status, created_at DESC);
@@ -700,6 +711,12 @@ function runMigrations(db: Database.Database) {
 
 function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  // 表尚不存在 → 直接跳过。
+  // runMigrations 是「先补列、后建表」的顺序（ALTER 在函数中段，CREATE TABLE 在后段），
+  // 全新库走到这里时 classes / class_announcements / class_tasks 还没建，
+  // 原先会执行 ALTER 并抛 `no such table: xxx`（首次启动即失败）。
+  // 这三张表的建表语句已包含全部迁移列，无需也不能在这里 ALTER。
+  if (cols.length === 0) return;
   if (cols.some((c) => c.name === column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
@@ -714,7 +731,10 @@ function seedDefaults(db: Database.Database) {
   const now = Date.now();
 
   // 默认设置（仅系统配置，不含任何演示内容）
-  const insertSet = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
+  // ⚠️ 必须幂等：runMigrations 在种子之前已写入 theme / semester_start（ON CONFLICT 写法），
+  // 裸 INSERT 会在全新库上抛 `UNIQUE constraint failed: settings.key`。
+  // 用 OR IGNORE 还保留了迁移写入的既有值（如 theme='aurora' 不被 'neon-green' 覆盖）。
+  const insertSet = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
   insertSet.run('seeded', '1');
   insertSet.run('theme', 'neon-green');
   insertSet.run('semester', '2026-Fall');

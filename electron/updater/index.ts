@@ -16,6 +16,11 @@ import {
   parseAnyShareUrl, downloadTextFile, findShareFile, findLatestByPrefix, getFileDownloadUrl,
   type AnyShareConfig,
 } from '../anyshare';
+// v1.2.9：改成静态 import。
+// 原先用 CJS `require('./patchApply')` 懒加载，在浏览器/WebView（移动端 bundle）里
+// 直接抛 `ReferenceError: require is not defined`，阻断移动端启动。
+// patchApply 不反向依赖本模块，无循环依赖；其顶层只有定义无副作用，静态引入安全。
+import * as patchApply from './patchApply';
 
 /** 内置更新源：默认三个公开源（GitHub raw + jsdelivr CDN 备援 + 北科云盘）。
  *  v1.2.7：加 jsdelivr CDN 作纯 latest.json 备援（jsdelivr 50MB 限制，setup 92.85MB 不适用，
@@ -465,7 +470,6 @@ export async function checkForUpdate(
   let hasUpdate = compareVersions(manifest.version, currentVersion) > 0;
   // v1.2.1 重发场景：同版本号但 asar 内容不同 → 视为有更新（走 1.2.1→1.2.1 补丁）
   if (!hasUpdate && manifest.version === currentVersion && manifest.asarSha256 && !skipped) {
-    const patchApply = require('./patchApply') as typeof import('./patchApply');
     const cur = await patchApply.currentAsarSha256();
     if (cur && cur !== manifest.asarSha256.toLowerCase()) {
       hasUpdate = true;
@@ -827,8 +831,6 @@ export function registerUpdater(db: DB | null) {
       return { ok: true, enabled };
     })
   );
-
-  const patchApply = require('./patchApply') as typeof import('./patchApply');
 
   ipcMain.handle('update:patch:preview', async (_e, manifest: any, currentVersion: string) => {
     const m: import('./patchApply').ManifestLite = manifest && typeof manifest === 'object' ? manifest : {};

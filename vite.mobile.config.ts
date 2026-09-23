@@ -37,6 +37,9 @@ export default defineConfig({
       https: r('./src/mobile/shims/https.ts'),
       'node:http': r('./src/mobile/shims/http.ts'),
       http: r('./src/mobile/shims/http.ts'),
+      // 不该被外部化：updater/patchApply 静态 import { spawn }，外部化的空模块会让 Rollup 构建失败
+      'node:child_process': r('./src/mobile/shims/child_process.ts'),
+      child_process: r('./src/mobile/shims/child_process.ts'),
     },
   },
   define: {

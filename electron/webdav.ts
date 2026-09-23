@@ -4,7 +4,7 @@
  * 纯标准 HTTP（PUT/GET/DELETE + Basic Auth），不引入额外依赖。
  */
 import type { DB } from './db/index';
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { buildPayload, validatePayload, restorePayload } from './backup/core';
 import { safetyBackup } from './backup/index';
 
@@ -125,7 +125,6 @@ export function registerWebdav(db: DB) {
     const cfg = readConfig(db);
     if (!cfg) return { ok: false, error: '请先配置 WebDAV' };
     try {
-      const { app } = require('electron');
       const payload = buildPayload(db, app.getVersion());
       const text = JSON.stringify(payload);
       const put = await webdavFetch(fileUrl(cfg.url, REMOTE_FILE), cfg, {
