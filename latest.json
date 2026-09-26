@@ -7,7 +7,7 @@
   "size": 97386933,
   "fileName": "TaskManager-Setup-1.2.10.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-26T14:03:36.623Z",
+  "releaseDate": "2026-09-26T14:05:19.115Z",
   "asarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
   "asarSize": 75302318,
   "patches": [
@@ -132,6 +132,21 @@
       "appAsarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
       "appAsarSize": 75302318,
       "createdAt": "2026-09-26T14:03:33.693Z"
+    },
+    {
+      "fromVersion": "1.2.10",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.10/TaskManager-Patch-1.2.10-to-1.2.10.zip",
+      "urlMirrors": [
+        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.10-to-1.2.10.zip",
+        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.10-to-1.2.10.zip"
+      ],
+      "sha256": "fb90fca549712a46b7dd24b7dcf4094c3979bf6b1f1c456f589e0a0dbc9a8b6a",
+      "size": 23085526,
+      "baseAsarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
+      "baseAsarSize": 75302318,
+      "appAsarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
+      "appAsarSize": 75302318,
+      "createdAt": "2026-09-26T14:05:16.286Z"
     }
   ],
   "urlMirrors": [
