@@ -233,7 +233,13 @@ try {
     // v1.2.3 重发场景：同版本号重打包 —— 用重发前备份（<version>-pre）作基线生成补丁。
     // updater 已支持「同版本号但 asar 哈希不同 → 有更新」（d28d1eb），fromVersion 允许等于 version。
     const preInfo = asarPatch.readAsarInfo(`${version}-pre`);
-    if (preInfo && fs.existsSync(path.join(asarPatch.CACHE_DIR, `${version}-pre.asar`))) {
+    // v1.2.10 幂等修复：--resume 重跑时 prevDistVersion 已经等于自己，而 -pre 基线是
+    // 上一次运行刚备份的（哈希必然与新产物一致）→ 这只是重复执行，不是「同版本重打包」，
+    // 不能生成 fromVersion === toVersion 的自指补丁（它会污染更新清单，让客户端在最新版上
+    // 检测出一个自己到自己升级）。真正的重发场景：产物重建过，pre 哈希必然不同。
+    if (preInfo && newAsarInfo && preInfo.sha256 === newAsarInfo.sha256) {
+      console.log('    重跑且产物哈希未变（非同版本重发），跳过自指补丁');
+    } else if (preInfo && fs.existsSync(path.join(asarPatch.CACHE_DIR, `${version}-pre.asar`))) {
       const patchesDir = path.join(leastDir, 'patches');
       fs.mkdirSync(patchesDir, { recursive: true });
       const built = asarPatch.buildPatchZip({
@@ -301,7 +307,12 @@ latest.urlMirrors = setupMirrorUrls;                       // raw + jsdelivr 备
 latest.sha256 = sha256;
 latest.size = buf.length;
 latest.notes = notes;
-latest.releaseDate = new Date().toISOString();
+// v1.2.10 幂等修复：重跑同一版本时保留首次发布日期。以前每次 resume 都会把
+// releaseDate 刷成当前时间 → latest.json 永远有差异 → 每次重跑都多出一个空壳 release commit。
+latest.releaseDate =
+  String(prevDistVersion) === String(version) && latest.releaseDate
+    ? latest.releaseDate
+    : new Date().toISOString();
 if (newAsarInfo) {
   latest.asarSha256 = newAsarInfo.sha256;
   latest.asarSize = newAsarInfo.size;
