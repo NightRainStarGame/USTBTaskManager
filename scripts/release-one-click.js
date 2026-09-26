@@ -383,6 +383,19 @@ if (!NO_RELEASE_PAGE) {
         type: 'application/zip',
       });
     }
+    // v1.2.10 幂等修复：不能只依赖当次生成的 patchInfo —— 重跑（--resume）不会重建补丁，
+    // Release 里就会缺补丁附件，而 latest.json 的主源 URL 恰恰指向 Release 资源（会 404）。
+    // 改为从更新清单反查「本版 Release 该有哪些补丁」，漏了就补。
+    for (const p of Array.isArray(latest.patches) ? latest.patches : []) {
+      if (!p || !String(p.url || '').includes(`/download/v${version}/`)) continue;
+      const name = String(p.url).split('/').pop();
+      if (!name || assetsToUpload.some((a) => a.name === name)) continue;
+      assetsToUpload.push({
+        path: path.join(leastDir, 'patches', name),
+        name,
+        type: 'application/zip',
+      });
+    }
     for (const a of assetsToUpload) {
       if (!fs.existsSync(a.path)) {
         console.log(`    [!] 附件不存在，跳过 ${a.name}`);
