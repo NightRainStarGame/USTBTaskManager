@@ -1,15 +1,15 @@
 {
-  "version": "1.2.9",
-  "notes": "# v1.2.9 — 班级模块全面重做 + 开箱即用\r\n\r\n> 一句话：**v1.2.9 把班级模块从根上重做——P2P 同步四大根因修复、接龙/投票/成员管理全新上线、零配置开箱即用**。\r\n\r\n---\r\n\r\n## 🎉 最重要的变化：开箱即用\r\n\r\n**新用户装完就能用班级功能，什么都不用配。**\r\n\r\n- 内置公共写入通道已启用（详见下方 R9）\r\n- 创建班级、发公告、接龙、投票、成员同步全部直接工作\r\n- 不再需要「先去申请 GitHub 令牌」这道门槛\r\n\r\n---\r\n\r\n## 🏗️ 数据通道重构（R9）\r\n\r\n### 独立数据仓库\r\n- 班级数据搬到独立仓库 **USTBTaskManager-Class**（与主程序更新清单完全隔离）\r\n- 读：raw CDN 直连（cache-bust 防缓存脏读）\r\n- 写：GitHub Contents API（PUT sha + 409 冲突重试）\r\n\r\n### 令牌三级策略\r\n1. **个人 PAT**（可选）：独立配额，更快\r\n2. **内置公共令牌**（默认）：个人令牌缺失/失效/限流（401/403/429）时自动降级\r\n3. 通道状态三态显示：✅ 个人 / ✅ 内置 / ⚠️ 不可用\r\n\r\n### 安全边界（已实测验证）\r\n- 内置令牌是 fine-grained PAT：**只能**读写班级数据仓库\r\n- 对主仓库写入返回 403——即使泄露，更新机制不受影响，班级数据可 git 回滚\r\n- 云盘（AnyShare）降级为可选备源，默认关闭；修复了配置后反而不读云端的失联 bug\r\n\r\n---\r\n\r\n## 🐛 P2P 同步四大根因修复（R1）\r\n\r\n| # | 根因 | 修复 |\r\n|---|---|---|\r\n| 1 | sync 时序错乱（先读后写顺序导致覆盖新数据） | 重写 syncCore：严格 fetch → merge → publish 顺序 |\r\n| 2 | 依赖 GitHub dir API 列文件（会漏、会限流） | manifest 显式索引（不参与签名） |\r\n| 3 | 文件名隐式生成（同名校验碰撞） | 显式 `id` + `author_alias` 命名 |\r\n| 4 | join 不写云端（成员列表只存在本地） | join 时同步写云端 members |\r\n\r\n另有：公告删除走 **tombstone**（软删除标记，防止删除被旧节点复活）；后台轮询修复 `last_synced_at` 字段名错误（此前每 30s 静默抛错）。\r\n\r\n---\r\n\r\n## 🆕 新功能\r\n\r\n### 成员管理（R3）\r\n- 班主任/管理员可 **调整角色**（admin / member）\r\n- **移除成员**（踢人）+ 被移除方自动检测（下次同步发现 `member_synced` 失效，班级自动消失并提示）\r\n\r\n### 接龙（R4）\r\n- 发布接龙（截止时间、名额上限可选）\r\n- 参加接龙 / 结束接龙\r\n- **多写冲突合并**：两个人同时报名最后一条——fetch → merge → PUT，409 自动重试，不再互相覆盖\r\n\r\n### 投票（R5）\r\n- 发起投票（多选项、单/多选、截止时间）\r\n- 投票 / 结束投票\r\n- 同样带多写冲突合并（两人同时投不同选项都能保留）\r\n\r\n### 公告增强（R2）\r\n- 公告支持删除（tombstone）\r\n- 原「作业发布」合并进公告（**作业 tab 已移除**，PublishTaskModal 退役）\r\n\r\n---\r\n\r\n## 🎨 UI 重构（R6/R7）\r\n\r\n### ClassDetail 五 Tab\r\n1. **总览**：班级统计（人数、公告数、进行中接龙/投票）\r\n2. **公告**：列表 + 发布 + 删除\r\n3. **接龙**：进行中/已结束分组\r\n4. **投票**：实时票数 + 进度条\r\n5. **成员**：角色管理 + 移除\r\n\r\n### Settings\r\n- 月卡订阅区 **锚点滚动 + 高亮**，从更新弹窗点「查看月卡」直达\r\n\r\n---\r\n\r\n## 📊 改动量\r\n\r\n| 维度 | 数据 |\r\n|---|---|\r\n| 重写模块 | electron/class/（index.ts 核心重写 + storage.ts 通道重构） |\r\n| 新增 IPC | deleteAnnouncement / promoteMember / removeMember / 接龙 ×4 / 投票 ×4 |\r\n| UI 重构 | ClassDetail 5 tab（删作业 tab + PublishTaskModal） |\r\n| 数据仓库 | 新建 USTBTaskManager-Class（独立、隔离、可回滚） |\r\n\r\n---\r\n\r\n## ⚠️ 升级注意\r\n\r\n- **DB 自动迁移**：新增表/列（接龙、投票、tombstone、author_alias、member_synced）首次启动自动完成\r\n- **旧班级数据兼容**：v1.2.8 及以前的本地班级在首次同步后自动迁移到新索引结构\r\n- **作业功能**：并入公告 tab；原有作业数据以公告形式保留\r\n- 作业 tab / PublishTaskModal 移除不影响主程序其他模块\r\n\r\n---\r\n\r\n## 🔮 v1.3.0 路线（草案）\r\n\r\n- 班级图片附件 UI（API 已就位）\r\n- 班主任禁言 / 班级治理增强\r\n- store 拆 slice（settingsSlice / dataSlice / uiSlice + useShallow 优化）\r\n- 接龙/投票的更新推送（本地通知）",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.9/TaskManager-Setup-1.2.9.exe",
+  "version": "1.2.10",
+  "notes": "# v1.2.10 — 更新终于靠谱了 + 冷启动提速 + 云端规范化\r\n\r\n> 一句话：**v1.2.10 把「增量更新总报错」从根上修掉，顺手让启动快了一截，并把作业数据搬进了独立数据仓。**\r\n\r\n---\r\n\r\n## 🎉 最重要的变化：增量更新不再中途暴毙\r\n\r\n以前「下载补丁失败」往往是两种独立的故障，以前都表现为一句糊涂账：\r\n\r\n| 现象 | 真实根因 | 现在的行为 |\r\n|---|---|---|\r\n| `HTTP 404` 直接失败 | 补丁只认**一个**下载地址（全量包本来就有镜像链，补丁偏偏没有） | 主地址失败后**自动依次回退镜像**；全部挂了才转提示适用完整安装包 |\r\n| 进度条走完，重启后版本没变 | 辅助进程写完旁路文件就退出，没重启；失败原因只躺在临时日志里 | 辅助进程把结果和原因**写回状态文件**，写完旁路必定重启；UI 直接告诉你为什么没装上 |\r\n| 莫名其妙的 `ENOENT` | 读不到 `app.asar`（杀软占用 / 外接硬盘掉线） | 明确归类为 `asar-unreadable`，给出可操作的建议 |\r\n| 跳版本升级后装不上 | 基线哈希对不上 | 归类为 `baseline-mismatch`，引导走完整安装包 |\r\n\r\n另外：一周以上的旧失败记录会自动销账，不再反复打扰。\r\n\r\n---\r\n\r\n## ⚡ 启动更快，交互更顺\r\n\r\n- **单实例锁**：以前双击图标会开出第二个完整进程（两个进程同时初始化数据库、互抢全局快捷键），现在直接聚焦已有窗口\r\n- **按需加载**：设置、项目、课程等页面拆成独立分片，首屏不再背它们一起解析\r\n- **更新检查延后**：启动时不再立刻并发打三个更新源跟首屏抢带宽，由主进程稍后推送\r\n- **动效统一**：补了一套统一的缓动/时长令牌（那种「快起慢收」的手感），顺手修掉了一个到处在用却从未定义的动画类\r\n- 尊重系统的「减少动态效果」设置\r\n\r\n---\r\n\r\n## ☁️ 云端规范化：作业数据搬到数据仓\r\n\r\n- 作业同步的数据仓库迁移到 **USTBTaskManager-Class**，与班级模块共用同一个数据仓\r\n- 令牌优先级：个人令牌 > 内置公共令牌 → **不用再去 GitHub 申请令牌，装完就能用**\r\n- 迁移前发出去的老同步码**继续可用**（旧仓库的历史数据保留为只读兜底）\r\n- 安全边界实测：内置令牌对数据仓写入正常，**对主仓库写入返回 403**，源码与更新清单不受影响\r\n\r\n---\r\n\r\n## 📱 移动端\r\n\r\n- **作业同步在手机上开放**（此前被误判为不可用而隐藏了入口）\r\n- 新增 Android 原生网络通道：装上官方 HTTP 插件后，贝壳课表等跨域场景即可使用；未安装时自动回退，不影响其他功能\r\n- 设置里对手机不支持的功能（北科云盘）给出了明确提示\r\n\r\n---\r\n\r\n## 🧹 移除小程序\r\n\r\n删除了小程序模块（2 个文件、约 430 行、28 处关联），连带清理了 5 处数据库级联。相关功能早已迁到别处，这次是彻底收尾。\r\n\r\n---\r\n\r\n## ⚠️ 已知限制\r\n\r\n- 北科云盘（AnyShare）仍然依赖 Node 原生网络栈，**手机端不可用**；作业同步走 GitHub 源不受影响\r\n- 贝壳课表依赖校园教务系统的跨域许可，手机上需要额外的原生通道才能完全打通\r\n\r\n---\r\n\r\n## 🔧 技术备注\r\n\r\n- 桌面端：Electron + React 全量构建通过，零类型错误\r\n- 移动端：Capacitor 构建通过\r\n- 完整变更见提交历史 `4aab205`",
+  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.10/TaskManager-Setup-1.2.10.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.2",
-  "sha256": "1955fec11d24cf7dfca71429a8f041bef29f2c6238939449f91ed46ac8b82062",
-  "size": 97371318,
-  "fileName": "TaskManager-Setup-1.2.9.exe",
+  "sha256": "33e7ab1e1a742db48a96ed629ce467c7445d2514bc7ed4397443e682378b8bef",
+  "size": 97386933,
+  "fileName": "TaskManager-Setup-1.2.10.exe",
   "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-22T14:39:13.000Z",
-  "asarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
-  "asarSize": 75256027,
+  "releaseDate": "2026-09-26T14:03:36.623Z",
+  "asarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
+  "asarSize": 75302318,
   "patches": [
     {
       "fromVersion": "1.1.9",
@@ -117,10 +117,25 @@
       "appAsarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
       "appAsarSize": 75256027,
       "createdAt": "2026-09-22T14:39:11.542Z"
+    },
+    {
+      "fromVersion": "1.2.9",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.10/TaskManager-Patch-1.2.9-to-1.2.10.zip",
+      "urlMirrors": [
+        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.9-to-1.2.10.zip",
+        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.9-to-1.2.10.zip"
+      ],
+      "sha256": "a058e6f0b58156a4ff5ddb4bb7cc5baa9ee1afe15e00b8ade6264cb96a07fe27",
+      "size": 23085570,
+      "baseAsarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
+      "baseAsarSize": 75256027,
+      "appAsarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
+      "appAsarSize": 75302318,
+      "createdAt": "2026-09-26T14:03:33.693Z"
     }
   ],
   "urlMirrors": [
-    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.9.exe",
-    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.9.exe"
+    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.10.exe",
+    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.10.exe"
   ]
 }
