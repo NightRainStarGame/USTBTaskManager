@@ -119,3 +119,6 @@ server/.cache/
 # 探针/临时诊断脚本与截图（不进仓库）
 scripts/tmp-*.cjs
 scripts/shots/
+
+# v1.2.10：根目录临时文件（前一次 git add -A 把临时提交说明误纳了进来）
+.tmp-*.txt
