@@ -329,7 +329,15 @@ ok(`version=${version} url=${latest.url} mirrors=${setupMirrorUrls.length} patch
 
 step('git 提交推送');
 run('git', ['add', '-A']);
-run('git', ['commit', '-m', `release: v${version}\n\n${notes.split('\n')[0]}`]);
+// v1.2.10：幂等重跑时可能没有任何东西可提交，git commit 会以 exit 1 告终并通过
+// execFileSync 直接抛错，把整条发版流程拦腰截断（后面的 Release 页面 / 云盘就没机会跑了）。
+// 「没有变更」在这里是正常状态，跳过即可。
+const stagedFiles = String(run('git', ['diff', '--cached', '--name-only']) || '').trim();
+if (stagedFiles) {
+  run('git', ['commit', '-m', `release: v${version}\n\n${notes.split('\n')[0]}`]);
+} else {
+  console.log('    无待提交变更（幂等重跑），跳过 commit');
+}
 const pushOut = run('git', ['push', 'origin', 'main']);
 ok(`push 完成${pushOut.includes('up to date') ? '（无变更）' : ''}`);
 
