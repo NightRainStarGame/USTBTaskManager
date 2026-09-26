@@ -120,5 +120,6 @@ server/.cache/
 scripts/tmp-*.cjs
 scripts/shots/
 
-# v1.2.10：根目录临时文件（前一次 git add -A 把临时提交说明误纳了进来）
+# v1.2.10：根目录临时文件（前几次 git add -A 把临时说明/核验产物误纳了进来）
 .tmp-*.txt
+rel-check.json
