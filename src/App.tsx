@@ -1,22 +1,41 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import ClassListPage from './pages/Class';
-import ClassDetailPage from './pages/Class/ClassDetail';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, lazy, Suspense } from 'react';
 import Layout from './components/Layout';
+// 首页（Dashboard）保持静态：它是冷启动首屏，不能被 Suspense 挂起来
 import Dashboard from './pages/Dashboard';
-import CalendarPage from './pages/Calendar';
-import CoursesPage from './pages/Courses';
-import ProjectsPage from './pages/Projects';
-import SettingsPage from './pages/Settings';
-import MiniProgramPage from './pages/MiniProgram';
-import AcademicPage from './pages/Academic';
-import HabitsPage from './pages/Habits';
-import StatsPage from './pages/Stats';
 import UpdateNotification from './components/UpdateNotification';
 import { ToastContainer } from './components/ToastContainer';
 import { useStore } from './store';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useInputDiag } from './hooks/useInputDiag';
+
+/**
+ * v1.2.10：其余页面改为按需加载。
+ * 以前全部静态 import，Settings(108KB) / ClassDetail(39KB) / HomeworkModals(39KB)
+ * 等全部打进首包 —— 它们直接决定了 renderer ready 的那 1.5 秒白屏。
+ * 现在首包只剩 Dashboard + Layout + 公共组件。
+ */
+const ClassListPage = lazy(() => import('./pages/Class'));
+const ClassDetailPage = lazy(() => import('./pages/Class/ClassDetail'));
+const CalendarPage = lazy(() => import('./pages/Calendar'));
+const CoursesPage = lazy(() => import('./pages/Courses'));
+const ProjectsPage = lazy(() => import('./pages/Projects'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const AcademicPage = lazy(() => import('./pages/Academic'));
+const HabitsPage = lazy(() => import('./pages/Habits'));
+const StatsPage = lazy(() => import('./pages/Stats'));
+
+/** 切页时的骨架占位（避免路由切换那一瞬的空白闪一下） */
+function PageLoading() {
+  return (
+    <div className="h-full w-full flex items-center justify-center p-8">
+      <div className="flex flex-col items-center gap-3 animate-page-in">
+        <div className="w-6 h-6 border-2 border-neon-green/25 border-t-neon-green rounded-full animate-spin" />
+        <p className="font-mono text-xs text-text-dim">加载中…</p>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const refreshAll = useStore((s) => s.refreshAll);
@@ -42,22 +61,24 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/courses" element={<CoursesPage />} />
-          <Route path="/academic" element={<AcademicPage />} />
-          <Route path="/habits" element={<HabitsPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/stats" element={<StatsPage />} />
-          <Route path="/miniprogram" element={<MiniProgramPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/class" element={<ClassListPage />} />
-          <Route path="/class/:id" element={<ClassDetailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      {/* v1.2.10：Suspense 兜住按需加载的页面，避免切页时白屏 */}
+      <Suspense fallback={<PageLoading />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/courses" element={<CoursesPage />} />
+            <Route path="/academic" element={<AcademicPage />} />
+            <Route path="/habits" element={<HabitsPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/stats" element={<StatsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/class" element={<ClassListPage />} />
+            <Route path="/class/:id" element={<ClassDetailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
       {/* 全局启动时更新通知（监听主进程推送 + 渲染层 store） */}
       <UpdateNotification externalTrigger={updateInfo} />
       {/* v1.2.8 块 N：全局 Toast 通知（替代 console.error） */}

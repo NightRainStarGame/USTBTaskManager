@@ -51,8 +51,30 @@ export default {
         'pulse-glow': 'pulseGlow 2.4s ease-in-out infinite',
         'flicker': 'flicker 4s linear infinite',
         'data-flow': 'dataFlow 8s linear infinite',
+        // v1.2.10：统一动效时长/曲线令牌 —— 以前各处手写 cubic-bezier，动画风格不统一
+        'page-in': 'pageIn 260ms var(--ease-expo-out) both',
+        'panel-in': 'panelIn 240ms var(--ease-expo-out) both',
+        'fade-in': 'fadeIn 200ms var(--ease-expo-out) both',
+      },
+      // v1.2.10：缓动令牌（ease-expo-out = OKX 官网那种"快起慢收"的手感）
+      transitionTimingFunction: {
+        'expo-out': 'var(--ease-expo-out)',
+        'spring-out': 'var(--ease-spring)',
       },
       keyframes: {
+        // v1.2.10：页面切换（轻微上移 + 淡入，走合成层不触发 layout）
+        pageIn: {
+          '0%': { opacity: '0', transform: 'translate3d(0, 8px, 0)' },
+          '100%': { opacity: '1', transform: 'translate3d(0, 0, 0)' },
+        },
+        panelIn: {
+          '0%': { opacity: '0', transform: 'translate3d(0, 6px, 0) scale(0.985)' },
+          '100%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
+        },
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
         scanLine: {
           '0%': { transform: 'translateY(-100%)' },
           '100%': { transform: 'translateY(100vh)' },

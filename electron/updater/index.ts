@@ -849,6 +849,8 @@ export function registerUpdater(db: DB | null) {
         fromVersion: patch.fromVersion,
         toVersion: m.version || '',
         url: patch.url,
+        // v1.2.10：把镜像一并返回（前端会原样传回 apply/download）
+        urlMirrors: patch.urlMirrors || [],
         sha256: patch.sha256,
         size: patch.size,
         baseAsarSha256: patch.baseAsarSha256,
@@ -874,6 +876,7 @@ export function registerUpdater(db: DB | null) {
     const entry: import('./patchApply').PatchEntry = {
       fromVersion: patch.fromVersion,
       url: patchUrl,
+      urlMirrors: Array.isArray(patch.urlMirrors) ? patch.urlMirrors : [],
       sha256: (patch.sha256 || '').toLowerCase(),
       size: patch.size || 0,
       baseAsarSha256: (patch.baseAsarSha256 || '').toLowerCase(),
@@ -886,7 +889,8 @@ export function registerUpdater(db: DB | null) {
       }
     });
     if (!dl.ok) {
-      return { ok: false, error: dl.error || '下载补丁失败' };
+      // v1.2.10：所有源都挂了 → 告诉前端可以改走整装（以前只丢一句「下载补丁失败」）
+      return { ok: false, error: dl.error || '下载补丁失败', fallback: dl.fallback, noPatchAvailable: dl.fallback === 'full' };
     }
     const spawned = patchApply.spawnPatchHelper(dl.path!, entry, { relaunch: true });
     if (!spawned.ok) {
@@ -919,6 +923,7 @@ export function registerUpdater(db: DB | null) {
     const entry: import('./patchApply').PatchEntry = {
       fromVersion: patch.fromVersion,
       url: patchUrl,
+      urlMirrors: Array.isArray(patch.urlMirrors) ? patch.urlMirrors : [],
       sha256: (patch.sha256 || '').toLowerCase(),
       size: patch.size || 0,
       baseAsarSha256: (patch.baseAsarSha256 || '').toLowerCase(),
@@ -971,8 +976,13 @@ export function registerUpdater(db: DB | null) {
     const r = patchApply.checkPatchStateOnBoot();
     let message: string | undefined;
     if (r.applied) message = '上次补丁已成功应用';
-    else if (r.pendingSidecar) message = '上次补丁有 .new 旁路残留（helper 启动时会自动接管），如未生效可点「立即重试补丁」';
-    else if (r.failed) message = `上次补丁未应用：基线或落盘失败（期望 ${r.baseline?.expected.slice(0, 8)}…，实际 ${r.baseline?.actual.slice(0, 8)}…），下次检查更新会走整装`;
+    else if (r.pendingSidecar) message = r.error
+      ? `补丁已留在旁路待接管：${r.error}（重启或点「立即重试补丁」即可完成）`
+      : '上次补丁有 .new 旁路残留（helper 启动时会自动接管），如未生效可点「立即重试补丁」';
+    // v1.2.10：helper 现在会把真实原因写回状态文件，直接呈现给用户（以前只能看到一句糊涂账）
+    else if (r.failed) message = r.error
+      ? `上次补丁没装上（${r.reason || 'unknown'}）：${r.error}`
+      : `上次补丁未应用：基线或落盘失败（期望 ${r.baseline?.expected.slice(0, 8)}…，实际 ${r.baseline?.actual.slice(0, 8)}…），下次检查更新会走整装`;
     return { ...r, message };
   });
 }

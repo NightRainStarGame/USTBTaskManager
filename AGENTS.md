@@ -10,7 +10,7 @@
 
 - 仓库：`NightRainStarGame/USTBTaskManager`（main 分支，直接 push，无 PR 流程）
 - 作者（用户）：豆芽。用户偏好**教练启发式协作**：给方案要带多角度对比；进度和关键决策要有跨会话延续性
-- 当前最新版：**v1.2.0**（见 `git log` / GitHub Releases）
+- 当前最新版：**v1.2.10**（见 `git log` / GitHub Releases）
 
 ## 1. 技术栈与架构
 
@@ -72,7 +72,7 @@ node scripts/e2e-*.js    # 各 E2E（CDP + 真实事件 + 真实 SQLite 断言�
 
 - **courses.course_key**（v1.1.7 起）：`CK-` + SHA256(`name|teacher`) 映射到 32 字符字母表取 10 位（`db/index.ts computeCourseKey`）。同名同教师课程跨设备一致，是作业同步的课程匹配锚点；所有建课路径都要兜底刷新
 - **courses.guid**（v1.1.6 起）：本机课程唯一 ID（`C-` + 8 位，字符表 `23456789ABCDEFGHJKMNPQRSTUVWXYZ`），发布包携带，接收端优先 guid 精确挂载
-- 作业同步存储：GitHub `homework/<syncCode>.json`（git 提交）+ 云盘 `homework/<发布码>/<courseKey>-<ts>.json`（旧扁平路径回退兼容）
+- 作业同步存储：**数据仓 `USTBTaskManager-Class`**（v1.2.10 起，与班级共用同一 fine-grained PAT）`homework/<syncCode>.json`（git 提交）+ 云盘 `homework/<发布码>/<courseKey>-<ts>.json`（旧扁平路径回退兼容）。主仓库的同路径历史包会被读取兜底，不要再往主仓库写作业数据
 - 主题切换：`document.documentElement.dataset.theme`，白名单在 `useApplyTheme.ts`；新增主题 = index.css 加变量组 + 白名单 + Settings 下拉，三个文件
 
 ## 4. ⭐ 发版工作流（最重要的一条）

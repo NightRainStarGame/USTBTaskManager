@@ -90,7 +90,13 @@ parse(publishCode) -> syncCode | null
 
 ### 3.1 GitHub 源（第一源，已实现）
 
-仓库 `NightRainStarGame/USTBTaskManager`，分支 `main`：
+仓库 `NightRainStarGame/USTBTaskManager-Class`，分支 `main`：
+
+> **v1.2.10 迁移**：此前作业包写在主仓库 `USTBTaskManager`，与源码、`latest.json`
+> 更新清单混在一起，代价是发布作业必须依赖一张「对主仓库有写权限」的 PAT ——
+> 而这个令牌要内置在客户端里开箱即用，等于把源码写权限发给每个用户。
+> 迁到独立数据仓后与班级模块共用同一张 fine-grained PAT（仅本仓授权，写主仓库实测 403）。
+> 路径与格式完全不变；主仓库的历史包会被读取兜底，迁移前分发的老同步码继续可用。
 
 ```
 homework/<syncCode>.json     ← 作业包本体（一个码一个文件）

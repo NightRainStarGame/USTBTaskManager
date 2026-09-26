@@ -2,7 +2,8 @@
  * v1.2.8 块 K：Courses 拆分 — 共享常量 + 类型 + 工具
  */
 
-export type DrawerTab = 'info' | 'schedule' | 'reqs' | 'notes' | 'miniprogram';
+// v1.2.10：移除小程序 tab（miniprogram）
+export type DrawerTab = 'info' | 'schedule' | 'reqs' | 'notes';
 
 export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -11,12 +12,7 @@ export const HOURS = Array.from({ length: 14 }, (_, i) => i + 8);
 
 export const TAG_PRESETS = ['考研重点', '选修', '待补修', '核心课', '实验课', '双语'];
 
-export const MINI_APP_TYPES = [
-  { id: 'timetable', name: '课程表', desc: '可编辑、可导入的课表' },
-  { id: 'timer', name: '番茄钟', desc: '专注计时与统计' },
-  { id: 'calculator', name: '绩点计算器', desc: '成绩与学分计算' },
-  { id: 'notes', name: '课程笔记', desc: '快速记录课堂要点' },
-];
+// v1.2.10：MINI_APP_TYPES 随小程序模块一并删除
 
 /** 把后端存的 tags JSON 字符串还原成数组 */
 export function parseTags(tags?: string | null): string[] {

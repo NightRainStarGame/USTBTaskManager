@@ -40,7 +40,13 @@ export class CookieJar {
 
   /** 吸收响应里的 Set-Cookie */
   absorb(url: URL, res: Response): void {
-    const rawList: string[] = (res.headers as any).getSetCookie?.() ?? [];
+    let rawList: string[] = [];
+    try {
+      rawList = (res.headers as any).getSetCookie?.() ?? [];
+      // v1.2.10：原生 HTTP 通道把 Set-Cookie 转挂到自定义头（Response 规范禁止 JS 读 Set-Cookie）
+      const passthrough = res.headers.get('x-taskmgr-set-cookie');
+      if (!rawList.length && passthrough) rawList = JSON.parse(passthrough);
+    } catch { rawList = []; }
     for (const raw of rawList) {
       const [pair, ...attrs] = raw.split(';');
       const eq = pair.indexOf('=');
@@ -97,6 +103,15 @@ const UA =
 /**
  * 发起请求：每跳吸收 Cookie；3xx 手动跟随（POST 之后的跳转一律转 GET）。
  */
+/**
+ * v1.2.10：移动端可能注入了原生 HTTP 通道（见 src/mobile/nativeHttp.ts），绕过 webview 的
+ * CORS 限制。必须在**调用时**读取而不是模块顶层捕获 —— bootstrap 的静态 import 先于
+ * installNativeHttpBridge() 求值，顶层捕获会永远拿到 webview fetch。
+ */
+function pickFetch(): typeof fetch {
+  return (globalThis as any).__TASKMGR_FETCH__ ?? fetch;
+}
+
 export async function request(jar: CookieJar, url: string, opts: RequestOptions = {}): Promise<Response> {
   let current = url;
   const hops = opts.followRedirect === false ? 1 : opts.maxRedirects ?? 8;
@@ -116,7 +131,7 @@ export async function request(jar: CookieJar, url: string, opts: RequestOptions 
         body = new URLSearchParams(opts.form).toString();
       }
     }
-    res = await fetch(current, {
+    res = await pickFetch()(current, {
       method: hop === 0 ? opts.method ?? 'GET' : 'GET',
       headers,
       body,

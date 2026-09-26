@@ -7,7 +7,7 @@
  *   ├── dbCourses.ts  courses/requirements/events/categories
  *   ├── dbProjects.ts projects/tasks
  *   ├── dbCanvas.ts   canvases/canvasNodes/canvasEdges
- *   ├── dbSettings.ts settings/userProfiles/courseNotes/miniPrograms
+ *   ├── dbSettings.ts settings/userProfiles/courseNotes
  *   └── dbMisc.ts     stats/grades/exams/pomodoro/habits/attendance
  *
  * 浏览器预览模式共享同一份 MockData 实例，所有 mock 数据由 createBrowserApi() 创建。
@@ -99,15 +99,7 @@ export function createBrowserApi() {
       ...createSettingsApi(data),
       ...createMiscApi(data),
     },
-    // 微信小程序（浏览器模式占位）
-    miniprogram: {
-      open: async (appId: string) => ({ ok: false, reason: 'browser-preview', appId }),
-      isReady: async () => false,
-      config: {
-        get: async () => ({ enabled: false, apps: [] }),
-        set: async (cfg: any) => ({ ok: false, reason: 'browser-preview', cfg }),
-      },
-    },
+    // v1.2.10：miniprogram 命名空间随小程序模块移除
     // 贝壳课表（浏览器预览：模拟 USTB 扫码登录 + BYYT 课表导入流程）
     ustb: {
       status: async () => {
@@ -258,7 +250,7 @@ export function createBrowserApi() {
           categories: [...data.categories],
           course_requirements: [...data.requirements],
           course_notes: [...data.courseNotes],
-          course_miniprograms: [...data.miniPrograms],
+
           events: [...data.events],
           projects: [...data.projects],
           project_tasks: [...data.tasks],
@@ -297,7 +289,7 @@ export function createBrowserApi() {
         data.categories = (t.categories ?? []) as any;
         data.requirements = (t.course_requirements ?? []) as any;
         data.courseNotes = (t.course_notes ?? []) as any;
-        data.miniPrograms = (t.course_miniprograms ?? []) as any;
+
         data.events = (t.events ?? []) as any;
         data.projects = (t.projects ?? []) as any;
         data.tasks = (t.project_tasks ?? []) as any;
@@ -318,7 +310,7 @@ export function createBrowserApi() {
             categories: data.categories.length,
             course_requirements: data.requirements.length,
             course_notes: data.courseNotes.length,
-            course_miniprograms: data.miniPrograms.length,
+
             events: data.events.length,
             projects: data.projects.length,
             project_tasks: data.tasks.length,

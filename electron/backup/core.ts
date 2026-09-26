@@ -15,7 +15,8 @@ export const BACKUP_TABLES = [
   'categories',
   'course_requirements',
   'course_notes',
-  'course_miniprograms',
+  // v1.2.10：course_miniprograms 随小程序模块移除，不再参与备份/恢复
+
   'events',
   'projects',
   'project_tasks',

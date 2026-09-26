@@ -34,6 +34,22 @@ if (process.argv.includes('--disable-gpu') || process.env.TASKMGR_SOFTWARE_RENDE
   bootLog('software rendering enabled');
 }
 
+/**
+ * v1.2.10：单实例锁。
+ * 以前没有这道锁，双击图标会开出第二个完整进程 —— 启动日志里所有里程碑成对出现，
+ * 两个实例同时初始化 DB、抢注册全局快捷键（Ctrl+Shift+A 注册失败就是这么来的），
+ * 冷启动自然更慢。现在第二个实例直接退出并聚焦已有窗口。
+ */
+if (!app.requestSingleInstanceLock()) {
+  bootLog('second instance detected → quit');
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    bootLog('second-instance: focusing existing window');
+    showMainWindow();
+  });
+}
+
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let splashHidden = false;

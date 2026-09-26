@@ -88,14 +88,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         update: (id: number, data: any) => invoke('db:courseNotes:update', id, data),
         delete: (id: number) => invoke('db:courseNotes:delete', id),
       },
-      miniPrograms: {
-        list: () => invoke('db:miniPrograms:list'),
-        getByCourse: (courseId: number) => invoke('db:miniPrograms:getByCourse', courseId),
-        getActive: () => invoke('db:miniPrograms:getActive'),
-        createOrUpdate: (data: any) => invoke('db:miniPrograms:createOrUpdate', data),
-        setActive: (id: number) => invoke('db:miniPrograms:setActive', id),
-        delete: (id: number) => invoke('db:miniPrograms:delete', id),
-      },
+      // v1.2.10：db.miniPrograms 命名空间随小程序模块一并移除
       projects: {
         list: () => invoke('db:projects:list'),
         get: (id: number) => invoke('db:projects:get', id),
@@ -184,15 +177,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         stats: (courseId?: number) => invoke('db:attendance:stats', courseId) as Promise<Record<string, number>>,
       },
     },
-    // 微信小程序（预留接口）
-    miniprogram: {
-      open: (appId: string) => invoke('miniprogram:open', appId),
-      isReady: () => invoke('miniprogram:isReady') as Promise<boolean>,
-      config: {
-        get: () => invoke('miniprogram:config:get'),
-        set: (cfg: any) => invoke('miniprogram:config:set', cfg),
-      },
-    },
+    // v1.2.10：miniprogram 命名空间已移除（微信小程序嵌套从未真正启用）
     // 贝壳课表（USTB SSO 扫码登录 + BYYT 教务课表导入）
     ustb: {
       status: () => invoke('ustb:status'),

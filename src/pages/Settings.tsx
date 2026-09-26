@@ -922,17 +922,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* 微信小程序嵌套 */}
-      <Section icon={<Cpu size={14} />} title="微信小程序嵌套">
-        <div className="p-3 rounded-md bg-neon-yellow/5 border border-neon-yellow/20 text-xs text-text-secondary">
-          <strong className="text-neon-yellow">说明：</strong>
-          当前采用「自制小程序 UI」方案（课程级课表工具），不依赖微信客户端。
-        </div>
-        <Row label="小程序配置入口">
-          <span className="text-sm text-text-secondary">前往「课程详情 → 上课时间」右侧的小程序抽屉</span>
-        </Row>
-      </Section>
-
+      {/* v1.2.10：微信小程序嵌套 Section 随小程序模块一并移除 */}
       {/* 数据 */}
       <Section icon={<Database size={14} />} title="数据管理">
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -941,7 +931,7 @@ export default function SettingsPage() {
           <Stat label="项目" value={stats?.activeProjects || 0} />
         </div>
         <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
-          <div>· 备份为单个 JSON 文件，包含<strong className="text-neon-green">全部 10 张表</strong>（课程/作业/日历/项目/账户/备注/小程序/设置），带 SHA-256 校验和，可跨设备迁移</div>
+          <div>· 备份为单个 JSON 文件，包含<strong className="text-neon-green">全部数据表</strong>（课程/作业/日历/项目/账户/备注/设置），带 SHA-256 校验和，可跨设备迁移</div>
           <div>· 每天首次启动自动滚动备份（保留最近 7 份）；导入前会再强制安全备份一份</div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1550,6 +1540,11 @@ export default function SettingsPage() {
             {hwCloudErr && (
               <div className="font-mono text-[10px] text-neon-danger">✗ {hwCloudErr}</div>
             )}
+            {IS_MOBILE && (
+              <div className="font-mono text-[10px] text-neon-yellow">
+                ⚠ 手机端不支持云盘（依赖 Node 原生 HTTPS）；作业同步走 GitHub 源即可，不受影响
+              </div>
+            )}
             <div className="font-mono text-[10px] text-text-dim">
               作业包存在云盘分享根目录（文件名 <code>&lt;同步码&gt;-&lt;时间戳&gt;.json</code>），接收方按前缀取最新一份。云盘里旧文件不会自动清理，可偶尔登录云盘手动删。
             </div>
@@ -1573,7 +1568,7 @@ export default function SettingsPage() {
       </Section>
 
       {/* v1.2.5: fixed bottom-0 改为 bottom-24 让出 Pomodoro widget 位置（96px） */}
-      <div className="fixed bottom-24 right-4 left-64 bg-ink-base/80 backdrop-blur p-3 border-t border-neon-green/15 flex justify-end z-30">
+      <div className="fixed bottom-24 right-4 left-64 bg-ink-900/95 p-3 border-t border-neon-green/15 flex justify-end z-30">
         <button onClick={save} className="btn-neon"><Save size={14} /> 保存所有设置</button>
       </div>
 

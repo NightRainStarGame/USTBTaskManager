@@ -69,13 +69,6 @@ export default function PlusMenu({ onClose }: Props) {
             onClick={() => go('/courses?action=req')}
             accent="yellow"
           />
-          <QuickCard
-            icon={<AppWindow size={20} />}
-            title="小程序中心"
-            desc="管理课程挂载的小工具"
-            onClick={() => go('/miniprogram')}
-            accent="green"
-          />
         </div>
 
         <div className="px-4 py-3 border-t border-neon-green/10 flex items-center justify-between">

@@ -7,7 +7,7 @@
  * - Type-only imports 提到顶部（防止循环依赖）
  */
 import type {
-  Course, Requirement, Category, CourseNote, CourseMiniProgram,
+  Course, Requirement, Category, CourseNote,
   UserProfile, Project, ProjectTask, Canvas, CanvasNode, CanvasEdge,
   Grade, Exam, PomodoroSession, Habit, Attendance,
 } from '@/types';
@@ -41,7 +41,7 @@ export interface MockData {
   settings: Record<string, any>;
   userProfiles: UserProfile[];
   courseNotes: CourseNote[];
-  miniPrograms: CourseMiniProgram[];
+
   grades: Grade[];
   exams: Exam[];
   pomodoros: PomodoroSession[];
@@ -108,7 +108,7 @@ export function createMockData(): MockData {
     settings: {},
     userProfiles: [],
     courseNotes: [],
-    miniPrograms: [],
+
     grades: [],
     exams: [],
     pomodoros: [],

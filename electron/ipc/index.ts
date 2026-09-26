@@ -39,7 +39,7 @@ function registerCourses(db: DB) {
     db.prepare('DELETE FROM events WHERE course_id = ?').run(id);
     db.prepare('DELETE FROM course_requirements WHERE course_id = ?').run(id);
     db.prepare('DELETE FROM course_notes WHERE course_id = ?').run(id);
-    db.prepare('DELETE FROM course_miniprograms WHERE course_id = ?').run(id);
+
     db.prepare('DELETE FROM courses WHERE id = ?').run(id);
     return { ok: true };
   });
@@ -426,38 +426,7 @@ function registerCourseNotes(db: DB) {
   });
 }
 
-function registerCourseMiniPrograms(db: DB) {
-  ipcMain.handle('db:miniPrograms:list', () => db.prepare('SELECT * FROM course_miniprograms ORDER BY updated_at DESC').all());
-  ipcMain.handle('db:miniPrograms:getByCourse', (_e, courseId: number) =>
-    db.prepare('SELECT * FROM course_miniprograms WHERE course_id = ?').get(courseId)
-  );
-  ipcMain.handle('db:miniPrograms:getActive', () =>
-    db.prepare('SELECT * FROM course_miniprograms WHERE active = 1 LIMIT 1').get()
-  );
-  ipcMain.handle('db:miniPrograms:createOrUpdate', (_e, data) => {
-    const now = Date.now();
-    const existing = db.prepare('SELECT id FROM course_miniprograms WHERE course_id = ?').get(data.course_id) as { id: number } | undefined;
-    if (existing) {
-      db.prepare(
-        `UPDATE course_miniprograms SET app_type=?, config_json=?, active=?, updated_at=? WHERE id=?`
-      ).run(data.app_type ?? 'timetable', JSON.stringify(data.config_json || {}), data.active ? 1 : 0, now, existing.id);
-      return db.prepare('SELECT * FROM course_miniprograms WHERE id = ?').get(existing.id);
-    }
-    const info = db.prepare(
-      `INSERT INTO course_miniprograms (course_id, app_type, config_json, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(data.course_id, data.app_type ?? 'timetable', JSON.stringify(data.config_json || {}), data.active ? 1 : 0, now, now);
-    return db.prepare('SELECT * FROM course_miniprograms WHERE id = ?').get(info.lastInsertRowid);
-  });
-  ipcMain.handle('db:miniPrograms:setActive', (_e, id: number) => {
-    db.prepare('UPDATE course_miniprograms SET active = 0').run();
-    db.prepare('UPDATE course_miniprograms SET active = 1 WHERE id = ?').run(id);
-    return db.prepare('SELECT * FROM course_miniprograms WHERE id = ?').get(id);
-  });
-  ipcMain.handle('db:miniPrograms:delete', (_e, id) => {
-    db.prepare('DELETE FROM course_miniprograms WHERE id = ?').run(id);
-    return { ok: true };
-  });
-}
+// v1.2.10：课程小程序模块已移除（注册函数一并删除）
 
 function registerStats(db: DB) {
   ipcMain.handle('db:stats:dashboard', () => {
@@ -481,25 +450,7 @@ function registerStats(db: DB) {
   });
 }
 
-// ====== MiniProgram（微信小程序嵌套接口预留） ======
-function registerMiniProgram() {
-  ipcMain.handle('miniprogram:open', (_e, appId: string) => {
-    // 预留：
-    // 方案 A：使用 Electron webview 加载 wx mini program 调试版 URL（需 WMPF）
-    // 方案 B：嵌入 H5 版本小程序的 URL
-    // 方案 C：调用微信开放平台 PC 小程序 API
-    // 当前实现：返回 appId，由渲染进程 webview 加载占位 UI
-    return { ok: true, appId, mode: 'placeholder' };
-  });
-  ipcMain.handle('miniprogram:isReady', () => true);
-  ipcMain.handle('miniprogram:config:get', () => ({
-    enabled: false,
-    appId: '',
-    mode: 'webview',
-    note: '微信小程序 PC 端嵌入需要：1) 小程序后台关联公众号；2) 配置业务域名白名单；3) 或使用 WMPF 扫码登录。当前版本为占位实现。',
-  }));
-  ipcMain.handle('miniprogram:config:set', (_e, cfg) => cfg);
-}
+// v1.2.10：微信小程序嵌套（miniprogram:*）接口预留已删除——始终返回占位值，从未被使用
 
 // ====== 贝壳课表（USTB SSO 扫码登录 + BYYT 教务课表导入） ======
 import { randomUUID } from 'node:crypto';
@@ -1002,10 +953,8 @@ export function registerAllIpc(db: DB) {
   registerSettings(db);
   registerUserProfiles(db);
   registerCourseNotes(db);
-  registerCourseMiniPrograms(db);
   registerStats(db);
   registerIcsExport();
-  registerMiniProgram();
   registerUstb(db);
   registerBackup(db, getDbPath());
   registerUpdater(db);

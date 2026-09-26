@@ -17,9 +17,9 @@ export default function Modal({ title, onClose, children, footer, width = 'max-w
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in" onClick={onClose}>
       <div
-        className={`w-full ${width} glass-panel overflow-hidden flex flex-col max-h-[90vh]`}
+        className={`w-full ${width} glass-panel overflow-hidden flex flex-col max-h-[90vh] animate-panel-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-neon-green/15">

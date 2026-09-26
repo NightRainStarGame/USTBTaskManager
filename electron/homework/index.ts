@@ -20,9 +20,22 @@ import {
   getShareRoot, ensureShareDir, listDir, listShareFiles, uploadTextFileToDir,
   type AnyShareConfig, type AnyShareFile,
 } from '../anyshare';
+// v1.2.10：复用班级那张 fine-grained PAT 作为作业同步的内置令牌（同仓库、同权限）
+import { CLASS_FALLBACK_TOKEN } from '../class/storage';
 
 export const HOMEWORK_REPO_OWNER = 'NightRainStarGame';
-export const HOMEWORK_REPO_NAME = 'USTBTaskManager';
+/**
+ * v1.2.10：作业数据迁到独立数据仓 USTBTaskManager-Class（与班级模块共用）。
+ *
+ * 为什么迁：主仓库 USTBTaskManager 里放着源码 + latest.json 更新清单，作业这种
+ * 用户数据混在里面的代价是——作业同步必须依赖一张「对主仓库有 Contents 写权限」
+ * 的 PAT，而这个令牌是要内置在客户端里开箱即用的，等于把源码写权限塞给每个用户。
+ * 迁走之后和班级共用同一张 fine-grained PAT：它只对 Class 仓库有读写授权，
+ * 泄露的爆炸半径锁在数据仓（主仓库写入实测 403），源码和更新清单改不动。
+ *
+ * 存储布局保持不变：`homework/<syncCode>.json`，只是换了仓库。
+ */
+export const HOMEWORK_REPO_NAME = 'USTBTaskManager-Class';
 export const HOMEWORK_BRANCH = 'main';
 export const HOMEWORK_DIR = 'homework';
 
@@ -45,6 +58,18 @@ const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
 const SETTING_CLOUD = 'homework_anyshare';
 /** v1.2.2：手动生成过的码对历史（JSON 数组，仅记 syncCode + 时间，publishCode 可 HMAC 派生） */
 const SETTING_MY_CODES = 'homework_my_codes';
+
+/**
+ * v1.2.10：令牌优先级 = 用户自己的 PAT > 内置公共令牌（与班级共用同一张，见 CLASS_FALLBACK_TOKEN）。
+ * 以前没个人令牌发布就硬失败，等于人人都得去 GitHub 开 PAT 才能用作业同步；
+ * 现在内置令牌兜底 → 开箱即用，想用自己的 PAT 仍可在设置里覆盖。
+ */
+function resolveToken(db: DB): string {
+  return resolveToken(db) || CLASS_FALLBACK_TOKEN || '';
+}
+
+/** v1.2.10 迁移兜底：老作业包还躺在主仓库 homework/ 下，只读不写 */
+const LEGACY_RAW_BASE = 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main';
 
 /** 北科云盘默认外链。仅在北京科技大学校园网内可达；用户可在设置里改/关 */
 export const DEFAULT_ANYSHARE_CONFIG: AnyShareConfig & { enabled: boolean } = {
@@ -276,6 +301,17 @@ export interface HomeworkSource {
 
 const RAW_BASE = `https://raw.githubusercontent.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}/${HOMEWORK_BRANCH}`;
 
+/** v1.2.10 迁移兼容：新仓在读不到时才去主仓库找历史作业包（只读，新发布一律写数据仓） */
+async function fetchLegacyBundle(syncCode: string): Promise<HomeworkFile | null> {
+  try {
+    const r = await ghFetch(`${LEGACY_RAW_BASE}/${HOMEWORK_DIR}/${syncCode}.json`, { raw: true });
+    if (!r.ok) return null;
+    const file = JSON.parse(r.text) as HomeworkFile;
+    if (file && Array.isArray(file.entries) && file.syncCode === syncCode) return file;
+  } catch { /* 主仓库不可达当作没有，不能把网络错误伪装成「码不存在」以外的东西 */ }
+  return null;
+}
+
 const githubSource: HomeworkSource = {
   name: 'github',
   async fetchBundle(syncCode, token) {
@@ -286,7 +322,11 @@ const githubSource: HomeworkSource = {
     let lastErr: any = null;
     try {
       const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
-      if (r.status === 404) return null;
+      if (r.status === 404) {
+        // v1.2.10：数据仓里没有 → 回退主仓库找历史包，保证迁移前发出去的老同步码继续可用
+        const legacy = await fetchLegacyBundle(syncCode);
+        return legacy ? { file: legacy } : null;
+      }
       if (r.ok) {
         try {
           const meta = JSON.parse(r.text);
@@ -696,8 +736,8 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   }
 
   // GitHub 目标
-  const token = getSetting(db, SETTING_TOKEN).trim();
-  if (!token) return { ok: false, error: '尚未配置 GitHub 发布令牌（第一次发布时填写，保存在本机）' };
+  const token = resolveToken(db);
+  if (!token) return { ok: false, error: '未找到 GitHub 发布令牌（内置令牌不可用，请在「设置 → 作业同步」填一张 PAT）' };
 
   let file: HomeworkFile;
   let sha: string | undefined;
@@ -845,7 +885,7 @@ function mergeEntry(
 export async function fetchRemoteEntries(db: DB, syncCode: string): Promise<{ ok: boolean; error?: string; entries: HomeworkEntry[]; courseName?: string }> {
   const code = normalizeSyncCode(syncCode);
   if (!code) return { ok: false, error: '同步作业码格式不对', entries: [] };
-  const token = getSetting(db, SETTING_TOKEN).trim();
+  const token = resolveToken(db);
   try {
     const hit = await fetchBundleFromAnySource(code, token || undefined);
     if (!hit) return { ok: true, entries: [], courseName: undefined };
@@ -869,7 +909,7 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
   }
   result.syncCode = syncCode;
 
-  const token = getSetting(db, SETTING_TOKEN).trim();
+  const token = resolveToken(db);
   let hit: { source: string; file: HomeworkFile } | null;
   try {
     hit = await fetchBundleFromAnySource(syncCode, token || undefined);
@@ -1056,7 +1096,7 @@ export function registerHomework(db: DB) {
       branch: HOMEWORK_BRANCH,
       dir: HOMEWORK_DIR,
       repoUrl: REPO_URL,
-      tokenSet: !!getSetting(db, SETTING_TOKEN).trim(),
+      tokenSet: !!resolveToken(db),
       publisher: getSetting(db, SETTING_PUBLISHER),
       lastSync: Number(getSetting(db, SETTING_LAST_SYNC)) || null,
       cloudSourceEnabled: !!(cloud && cloud.enabled),
@@ -1085,7 +1125,7 @@ export function registerHomework(db: DB) {
     }
     if (t) setSetting(db, SETTING_TOKEN, t);
     if ((publisher || '').trim()) setSetting(db, SETTING_PUBLISHER, publisher.trim());
-    return { ok: true, tokenSet: !!getSetting(db, SETTING_TOKEN).trim() };
+    return { ok: true, tokenSet: !!resolveToken(db) };
   });
 
   ipcMain.handle('homework:generateCodes', () => {

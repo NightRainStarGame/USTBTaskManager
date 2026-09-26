@@ -678,3 +678,33 @@
   /* 统一缓动（cubic-bezier 简写） */
   .ease-spring { transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
 }
+
+/* v1.2.10：全局缓动令牌（tailwind.config.js 的动画与组件都通过 var() 引用，风格统一） */
+:root {
+  /* 快起慢收 —— OKX 官网那种"轻盈地落到位"的手感 */
+  --ease-expo-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* v1.2.10：animate-in 以前是个「到处在用但没人定义」的空类（等于没有动画），这里补齐 */
+@keyframes anim-in {
+  from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-in { animation: anim-in 180ms var(--ease-expo-out) both; }
+
+/* 卡片/列表逐项入场（stagger）：配合 style 里的 animation-delay 用 */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.animate-stagger { animation: stagger-in 420ms var(--ease-expo-out) both; }
+
+/* 尊重系统「减少动态效果」设置，同时也让低端机更流畅 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

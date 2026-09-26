@@ -45,6 +45,42 @@ function sha256File(p) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+/**
+ * v1.2.10：把补丁结果写回主进程的状态文件。
+ * 以前 helper 只用 stdio:'ignore' 被 spawn，失败信息只进 tmp 日志没人读 →
+ * UI 永远显示「补丁已启动」，用户重启发现版本没变也不知道为什么。
+ * 现在每个终态都要落下 phase，主进程下次启动 / 设置页都能读到真实原因。
+ */
+function writePatchState(stateFile, patch) {
+  if (!stateFile) return;
+  try {
+    let prev = {};
+    try {
+      if (fs.existsSync(stateFile)) prev = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    } catch { /* 旧状态坏了就当没有 */ }
+    fs.writeFileSync(stateFile, JSON.stringify({ ...prev, ...patch }, null, 2));
+  } catch (e) {
+    log(`[!] 写补丁状态文件失败：${e.message}`);
+  }
+}
+
+/** 拉起新版本（三个分支共用） */
+function relaunchApp() {
+  try {
+    spawn(process.execPath, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      cwd: path.dirname(process.execPath),
+      env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
+    }).unref();
+    return true;
+  } catch (e) {
+    log(`[!] relaunch 失败：${e.message}`);
+    return false;
+  }
+}
+
 /** 解析传给 helper 的参数：argv[2]=--patch-helper + argv[3]=JSON or stdin */
 function parseArgs() {
   const argv = process.argv;
@@ -267,10 +303,25 @@ async function apply(opts) {
 
   // 1) 校验基线（升级前客户端 asar 哈希匹配 manifest.baseAsarSha256）
   if (expectedBaseSha) {
-    const currentBase = sha256File(appAsarPath);
+    let currentBase;
+    try {
+      currentBase = sha256File(appAsarPath);
+    } catch (e) {
+      // v1.2.10：以前这里直接抛裸 ENOENT（外接盘掉线 / 杀软占用时会命中），
+      // 用户完全不知道发生了什么。现在给出可诊断的文案。
+      const err = new Error(
+        `读不到当前 app.asar（${e.code || 'IO 错误'}：${appAsarPath}）。可能是因为文件被占用或安装盘不可读（外接硬盘掉线常见），建议重试或改用完整安装包。`,
+      );
+      err.reason = 'asar-unreadable';
+      throw err;
+    }
     if (currentBase !== expectedBaseSha) {
-      log(`[!] 基线漂移：expected=${expectedBaseSha.slice(0, 16)} actual=${currentBase.slice(0, 16)} → helper 不会写入，但允许解压并让主进程后续决定`);
-      throw new Error(`基线校验失败：当前 app.asar sha256 != manifest.baseAsarSha256`);
+      log(`[!] 基线漂移：expected=${expectedBaseSha.slice(0, 16)} actual=${currentBase.slice(0, 16)}`);
+      const err = new Error(
+        `基线校验失败：当前 app.asar sha256=${currentBase.slice(0, 12)}… 不等于补丁预期 ${expectedBaseSha.slice(0, 12)}…（通常是跳版本升级导致，请改用完整安装包）`,
+      );
+      err.reason = 'baseline-mismatch';
+      throw err;
     }
     log(`基线校验通过 sha256=${expectedBaseSha.slice(0, 16)}…`);
   }
@@ -308,7 +359,18 @@ async function apply(opts) {
     if (!renamed) {
       log(`[!] rename 全部失败：${lastRenameErr?.message} —— 写 .new 旁路`);
       fs.copyFileSync(extractedAsar, sidecar);
-      log(`已写出 ${sidecar}，下次启动 helper 会自动接管`);
+      log(`已写出 ${sidecar}`);
+      // v1.2.10：写旁路之后必须重启，否则用户重启看不到任何变化 —— 这就是以前
+      // 「补丁下载完了却永远装不上」的直接原因（helper 写 .new 后直接 return）。
+      writePatchState(opts.stateFile, {
+        phase: 'sidecar',
+        reason: 'rename-failed',
+        error: `旧 app.asar 无法重命名（可能被杀软占用）：${lastRenameErr?.message || ''}`,
+        sidecarPath: sidecar,
+        finishedAt: Date.now(),
+      });
+      if (relaunch) relaunchApp();
+      log('=== patch helper done (写 .new 旁路) ===');
       return;
     }
     fs.copyFileSync(extractedAsar, appAsarPath);
@@ -341,15 +403,25 @@ async function apply(opts) {
 }
 
 async function main() {
+  let opts = {};
   try {
-    const opts = parseArgs();
+    opts = parseArgs();
+    writePatchState(opts.stateFile, { phase: 'running', startedAt: Date.now() });
     if (opts.mainPid) {
       log(`wait for main pid=${opts.mainPid} to exit (timeout=${opts.timeoutMs || 30000}ms)`);
       await waitForProcessExit(opts.mainPid, opts.timeoutMs || 30000);
     }
     await apply(opts);
+    writePatchState(opts.stateFile, { phase: 'applied', appliedAt: Date.now() });
     process.exit(0);
   } catch (e) {
+    // v1.2.10：失败也要留下痕迹，主进程下次启动才能告诉用户真实原因并自动改走全量
+    writePatchState(opts.stateFile, {
+      phase: 'failed',
+      reason: (e && e.reason) || 'unknown',
+      error: (e && e.message) || String(e),
+      failedAt: Date.now(),
+    });
     log('FAIL:', e && e.message);
     process.exit(2);
   }

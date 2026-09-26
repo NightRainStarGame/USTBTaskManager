@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Course, Requirement, CalendarEvent, Category, Project, ProjectTask, DashboardStats, UserProfile, CourseMiniProgram, AppInfo, UpdateCheckResult } from '@/types';
+import type { Course, Requirement, CalendarEvent, Category, Project, ProjectTask, DashboardStats, UserProfile, AppInfo, UpdateCheckResult } from '@/types';
 
 interface AppState {
   // 数据
@@ -12,7 +12,7 @@ interface AppState {
   stats: DashboardStats | null;
   settings: Record<string, string>;
   userProfile: UserProfile | null;
-  activeMiniProgram: CourseMiniProgram | null;
+
 
   // 应用信息 / 更新
   appInfo: AppInfo | null;
@@ -32,7 +32,7 @@ interface AppState {
   setStats: (d: DashboardStats) => void;
   setSettings: (d: Record<string, string>) => void;
   setUserProfile: (d: UserProfile | null) => void;
-  setActiveMiniProgram: (d: CourseMiniProgram | null) => void;
+
   setAppInfo: (d: AppInfo | null) => void;
   setUpdateInfo: (d: UpdateCheckResult | null) => void;
 }
@@ -47,7 +47,6 @@ export const useStore = create<AppState>((set) => ({
   stats: null,
   settings: {},
   userProfile: null,
-  activeMiniProgram: null,
   appInfo: null,
   updateInfo: null,
   loading: false,
@@ -55,7 +54,7 @@ export const useStore = create<AppState>((set) => ({
   refreshAll: async () => {
     set({ loading: true });
     try {
-      const [courses, requirements, projects, tasks, settings, stats, categories, userProfile, activeMiniProgram] = await Promise.all([
+      const [courses, requirements, projects, tasks, settings, stats, categories, userProfile] = await Promise.all([
         window.taskAPI.db.courses.list(),
         window.taskAPI.db.requirements.list({}),
         window.taskAPI.db.projects.list(),
@@ -64,11 +63,10 @@ export const useStore = create<AppState>((set) => ({
         window.taskAPI.db.stats.dashboard(),
         window.taskAPI.db.categories.list(),
         window.taskAPI.db.userProfiles.getActive().catch(() => null),
-        window.taskAPI.db.miniPrograms.getActive().catch(() => null),
       ]);
       // events 拉全量（一年的窗口），供课程/项目用
       const events = await window.taskAPI.db.events.list({});
-      set({ courses, requirements, projects, tasks, events, categories, settings, stats, userProfile, activeMiniProgram });
+      set({ courses, requirements, projects, tasks, events, categories, settings, stats, userProfile });
     } finally {
       set({ loading: false });
     }
@@ -83,7 +81,6 @@ export const useStore = create<AppState>((set) => ({
   setStats: (d) => set({ stats: d }),
   setSettings: (d) => set({ settings: d }),
   setUserProfile: (d) => set({ userProfile: d }),
-  setActiveMiniProgram: (d) => set({ activeMiniProgram: d }),
   setAppInfo: (d) => set({ appInfo: d }),
   setUpdateInfo: (d) => set({ updateInfo: d }),
 }));

@@ -16,10 +16,13 @@ import { initDatabase, getDb } from '../../electron/db/index';
 import { registerAllIpc } from '../../electron/ipc/index';
 import { buildAPI } from '../../electron/api-factory';
 import { ipcMain, ipcRenderer } from './electron-shim';
+import { installNativeHttpBridge } from './nativeHttp';
 
 async function boot() {
   // 版本号（vite.mobile.config.ts 的 define 注入）
   (globalThis as any).__TASKMANAGER_VERSION__ = __TASKMANAGER_VERSION__;
+  // v1.2.10：Android 原生 HTTP 通道（装了 @capacitor-community/http 才真正生效，否则自动回退）
+  installNativeHttpBridge();
 
   await initSqlJsRuntime();
   const restored = await hydrateMemFsFromIdb();

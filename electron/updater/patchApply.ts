@@ -28,6 +28,12 @@ const STATE_FILE = () => path.join(app.getPath('userData'), 'patch-state.json');
 export interface PatchEntry {
   fromVersion: string;
   url: string;
+  /**
+   * v1.2.10：镜像兜底列表（raw / jsDelivr / 云盘直链）。
+   * 以前补丁下载只看 url 一个地址（全量包 downloadUpdate 是有镜像链的），
+   * 主源一 404 就硬失败 —— 这是「增量更新老报错」的根因。
+   */
+  urlMirrors?: string[];
   sha256: string;
   size: number;
   baseAsarSha256: string;
@@ -83,22 +89,19 @@ export async function currentAsarSha256(): Promise<string | null> {
   } catch { return null; }
 }
 
-/** 下载补丁 zip + sha256 校验；进度通过 onProgress 回调上报 */
-export async function downloadPatchZip(
+/** 单个 URL 的流式下载 + sha256 校验（v1.2.10：从 downloadPatchZip 抽出，供多源回退复用） */
+async function downloadFromUrl(
+  url: string,
   patch: PatchEntry,
+  dest: string,
   onProgress?: (p: { received: number; total: number; percent: number }) => void,
-  destDir?: string,
-): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> {
-  const dir = destDir ?? path.join(os.tmpdir(), 'taskmgr-patch');
-  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
-  const filename = `${patch.fromVersion}-to-${(patch as any).toVersion || 'next'}.zip`;
-  const dest = path.join(dir, filename);
-
+  timeoutMs = 10 * 60 * 1000,
+): Promise<{ ok: boolean; canceled?: boolean; error?: string }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    const res = await net.fetch(patch.url, {
+    const res = await net.fetch(url, {
       redirect: 'follow',
       signal: ctrl.signal,
       headers: { 'User-Agent': 'TaskManager-Updater', Accept: 'application/zip,*/*' },
@@ -129,17 +132,67 @@ export async function downloadPatchZip(
     await new Promise<void>((resolve, reject) => out.end((e: Error | null) => (e ? reject(e) : resolve())));
     const actual = hash.digest('hex');
     if (actual !== patch.sha256.toLowerCase()) {
-      try { fs.unlinkSync(dest); } catch {}
       throw new Error(`补丁包 sha256 不匹配：期望 ${patch.sha256.slice(0, 16)}… 实际 ${actual.slice(0, 16)}…`);
     }
     onProgress?.({ received, total, percent: 100 });
-    return { ok: true, path: dest };
+    return { ok: true };
   } catch (e: any) {
     const aborted = /abort/i.test(String(e?.message || ''));
     return { ok: false, canceled: aborted, error: aborted ? '下载超时或已取消' : (e?.message || String(e)) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 日志/提示里给 URL 起个host 短名，方便区分「哪个源挂了」 */
+function hostLabel(url: string): string {
+  try { return new URL(url).host; } catch { return String(url).slice(0, 42); }
+}
+
+/**
+ * 下载补丁 zip + sha256 校验。
+ * v1.2.10：主 URL 失败自动依次回退 patch.urlMirrors（以前只试 url 一个地址，
+ * 主源一 404 就直接失败，即使清单里躺着能用的 raw / jsDelivr 镜像）。
+ */
+export async function downloadPatchZip(
+  patch: PatchEntry,
+  onProgress?: (p: { received: number; total: number; percent: number }) => void,
+  destDir?: string,
+): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string; fallback?: 'full' }> {
+  const dir = destDir ?? path.join(os.tmpdir(), 'taskmgr-patch');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+  const filename = `${patch.fromVersion}-to-${(patch as any).toVersion || 'next'}.zip`;
+  const dest = path.join(dir, filename);
+
+  const candidates = Array.from(
+    new Set([patch.url, ...(patch.urlMirrors || [])].filter((u) => typeof u === 'string' && u.trim())),
+  );
+  if (candidates.length === 0) {
+    return { ok: false, error: '补丁清单里没有可用的下载地址', fallback: 'full' };
+  }
+
+  const errors: string[] = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const url = candidates[i];
+    // 每个源都从干净的临时文件开始，避免上一个源写了一半被下一个源接着算 sha
+    try { fs.unlinkSync(dest); } catch { /* ignore */ }
+    const r = await downloadFromUrl(url, patch, dest, onProgress);
+    if (r.ok) return { ok: true, path: dest, canceled: false };
+    errors.push(`源 ${i + 1}/${candidates.length}（${hostLabel(url)}）：${r.error}`);
+    // 内容本身不对（sha 不符）→ 换源也一样错，不必继续浪费流量
+    if (/sha256 不匹配/.test(r.error || '')) break;
+  }
+
+  try { fs.unlinkSync(dest); } catch { /* ignore */ }
+  const canceled = /超时|已取消/.test(errors.join(' '));
+  return {
+    ok: false,
+    canceled,
+    fallback: 'full',
+    error: candidates.length > 1
+      ? `全部补丁源都失败了，建议改用完整安装包（约 90MB）：\n${errors.join('\n')}`
+      : (errors[0] || '下载失败'),
+  };
 }
 
 /** helper 脚本路径（packaged 后位于 resources/patch-helper.cjs，dev 时从仓库源拷贝） */
@@ -169,6 +222,8 @@ export function spawnPatchHelper(zipPath: string, manifest: PatchEntry, opts?: {
     mainPid: process.pid,
     timeoutMs: 30_000,
     relaunch: opts?.relaunch !== false,
+    // v1.2.10：告诉 helper 状态文件在哪，它才能把成功/失败写回来
+    stateFile: STATE_FILE(),
   });
   try {
     const env: NodeJS.ProcessEnv = {
@@ -213,6 +268,10 @@ export function checkPatchStateOnBoot(): {
   pendingSidecar?: boolean;
   /** v1.2.7：.new 残留的 sha（如果存在），用于 UI 调试展示 */
   sidecarSha?: string;
+  /** v1.2.10：helper 回写的失败分类（baseline-mismatch / asar-unreadable / rename-failed ...） */
+  reason?: string;
+  /** v1.2.10：helper 回写的失败详情，直接显示给用户（以前只有 tmp 日志里有） */
+  error?: string;
 } {
   const f = STATE_FILE();
   if (!fs.existsSync(f)) return {};
@@ -239,18 +298,38 @@ export function checkPatchStateOnBoot(): {
     try { fs.unlinkSync(f); } catch {}
     return { applied: true };
   }
-  if (sidecarSha && state.phase === 'pending') {
-    // .new 残留说明上次 rename 失败，helper 启动后会自己接管，主进程不需要做任何事
+
+  // v1.2.10：helper 现在会把终态写回状态文件。以前这些信息只躺在
+  // %TEMP%\taskmanager-patch-helper.log 里没人读 → UI 永远「成功」、重启后原地踏步。
+  const phase = state.phase;
+  const base = { expected: expected || '?', actual: cur || '?' };
+
+  if (phase === 'failed') {
+    // 一周以上的失败记录不再打扰用户（多数早已用完整安装解决）
+    if (state.failedAt && Date.now() - state.failedAt > 7 * 24 * 3600 * 1000) {
+      try { fs.unlinkSync(f); } catch {}
+      return {};
+    }
+    return { failed: true, reason: state.reason, error: state.error, baseline: base, sidecarSha };
+  }
+
+  if (phase === 'sidecar' || phase === 'pending' || (sidecarSha && !phase)) {
+    // .new 残留：helper 启动后会自动接管，UI 给用户一个「立即重试」入口
+    return { failed: false, pendingSidecar: true, reason: state.reason, error: state.error, baseline: base, sidecarSha };
+  }
+
+  if (phase === 'applied') {
     return {
-      failed: false,
-      pendingSidecar: true,
-      baseline: { expected: expected || '?', actual: cur || '?' },
-      sidecarSha,
+      failed: true,
+      reason: 'hash-mismatch',
+      error: '补丁已报告写入成功，但当前 app.asar 哈希与预期不一致（可能装到了别的安装位置）',
+      baseline: base,
     };
   }
+
   return {
     failed: true,
-    baseline: { expected: expected || '?', actual: cur || '?' },
+    baseline: base,
   };
 }
 

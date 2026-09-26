@@ -229,19 +229,7 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'user_profiles', 'username', 'TEXT');
   addColumnIfMissing(db, 'user_profiles', 'password_hash', 'TEXT');
 
-  // 课程小程序配置（每门课可挂不同自制小程序）
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS course_miniprograms (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      course_id INTEGER NOT NULL UNIQUE,
-      app_type TEXT NOT NULL DEFAULT 'timetable',
-      config_json TEXT DEFAULT '{}',
-      active INTEGER DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
-    );
-  `);
+  // v1.2.10：课程小程序（course_miniprograms）已整体移除，此处不再建表
 
   // courses 表新增标签字段
   addColumnIfMissing(db, 'courses', 'tags', "TEXT DEFAULT '[]'");
@@ -276,7 +264,7 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'events', 'category_id', 'INTEGER');
   addColumnIfMissing(db, 'events', 'type', "TEXT DEFAULT 'event'");
   addColumnIfMissing(db, 'events', 'recurrence_end', 'INTEGER');
-  addColumnIfMissing(db, 'course_miniprograms', 'active', 'INTEGER DEFAULT 0');
+
 
   // 关键修复：course_requirements.notes 列缺失会导致「添加作业」直接报 no such column
   addColumnIfMissing(db, 'course_requirements', 'notes', 'TEXT');
@@ -739,8 +727,7 @@ function seedDefaults(db: Database.Database) {
   insertSet.run('theme', 'neon-green');
   insertSet.run('semester', '2026-Fall');
   insertSet.run('semester_start', String(new Date(now).setHours(0, 0, 0, 0))); // 默认开学日 = 第一次运行时刻
-  insertSet.run('miniprogram_enabled', 'false');
-  insertSet.run('miniprogram_appid', '');
+
 }
 
 /** 清理历史版本预填的演示数据（只执行一次，用 settings.demo_cleared 标记）。
@@ -789,7 +776,7 @@ function clearDemoData(db: Database.Database) {
     db.prepare(`DELETE FROM events WHERE course_id IN (${inClause})`).run(...ids);
     db.prepare(`DELETE FROM course_requirements WHERE course_id IN (${inClause})`).run(...ids);
     db.prepare(`DELETE FROM course_notes WHERE course_id IN (${inClause})`).run(...ids);
-    db.prepare(`DELETE FROM course_miniprograms WHERE course_id IN (${inClause})`).run(...ids);
+
     db.prepare(`DELETE FROM courses WHERE id IN (${inClause})`).run(...ids);
   }
 

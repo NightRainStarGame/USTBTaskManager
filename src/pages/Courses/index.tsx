@@ -16,5 +16,5 @@ export { InfoTab } from './tabs/InfoTab';
 export { ScheduleTab } from './tabs/ScheduleTab';
 export { ReqsTab } from './tabs/ReqsTab';
 export { NotesTab } from './tabs/NotesTab';
-export { MiniProgramTab } from './tabs/MiniProgramTab';
+
 export * from './constants';

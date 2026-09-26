@@ -29,7 +29,7 @@ export function createCoursesApi(data: MockData) {
         data.requirements = data.requirements.filter((r) => r.course_id !== id);
         data.events = data.events.filter((e: any) => e.course_id !== id);
         data.courseNotes = data.courseNotes.filter((n) => n.course_id !== id);
-        data.miniPrograms = data.miniPrograms.filter((m) => m.course_id !== id);
+
         return { ok: true };
       },
     },

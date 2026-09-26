@@ -43,15 +43,7 @@ export interface UserProfile {
   updated_at: number;
 }
 
-export interface CourseMiniProgram {
-  id: number;
-  course_id: number;
-  app_type: string;
-  config_json: string;
-  active?: number;
-  created_at: number;
-  updated_at: number;
-}
+// v1.2.10：CourseMiniProgram 随小程序模块一并移除
 
 export interface Requirement {
   id: number;

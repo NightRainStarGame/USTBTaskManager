@@ -5,24 +5,44 @@
  *  - 各 tab 渲染通过 CourseDrawer 的 children prop 传入
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, BookOpen } from 'lucide-react';
+import { Plus, BookOpen, RefreshCw, KeyRound, CloudUpload, CloudDownload, Shell } from 'lucide-react';
 import { useStore } from '@/store';
 import type { Course } from '@/types';
 import { toast } from '@/utils/toast';
+import Modal from '@/components/Modal';
+import BeikeTimetable from '@/components/BeikeTimetable';
+import { GenerateCodesModal, PublishHomeworkModal, ReceiveHomeworkModal } from '../HomeworkModals';
 import { TimetableView } from './TimetableView';
 import { CourseDrawer } from './CourseDrawer';
 import { InfoTab } from './tabs/InfoTab';
 import { ScheduleTab } from './tabs/ScheduleTab';
 import { ReqsTab } from './tabs/ReqsTab';
 import { NotesTab } from './tabs/NotesTab';
-import { MiniProgramTab } from './tabs/MiniProgramTab';
+
 import type { DrawerTab } from './constants';
+
+/**
+ * v1.2.10 修正：APK 的主进程逻辑跑在同一个 webview 里（src/mobile/bootstrap.ts 会
+ * registerAllIpc），homework:* handler 全部就位，且 GitHub API 支持 CORS ——
+ * 作业同步在手机上本来就能用，之前隐藏它是误判（当时以为 APK 走的是浏览器 Mock）。
+ * 贝壳课表（USTB 教务）不发 CORS 头，要等原生 HTTP 通道就绪才放开。
+ */
+const IS_MOBILE = typeof window !== 'undefined' && !!(window as any).__MOBILE__;
+/** 作业同步入口是否可见（保留成常量是为了让移动端/桌面端的差异点一目了然） */
+const SHOW_HOMEWORK = true;
 
 export function CoursesPage() {
   const courses = useStore((s) => s.courses);
   const refreshAll = useStore((s) => s.refreshAll);
   const [activeCourseId, setActiveCourseId] = useState<number | null>(null);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('info');
+  // 作业同步（码制：生成作业码 / 发布作业 / 接收作业）— 恢复块 K 拆分时丢失的入口
+  const [hwMenuOpen, setHwMenuOpen] = useState(false);
+  const [genCodesOpen, setGenCodesOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  // 贝壳课表：USTB 教务同步（v1.2.3 从小程序中心迁入）— 同上恢复
+  const [beikeOpen, setBeikeOpen] = useState(false);
 
   const activeCourseObj = useMemo(
     () => courses.find((c) => c.id === activeCourseId) ?? null,
@@ -82,9 +102,53 @@ export function CoursesPage() {
           <h2 className="font-mono text-sm text-neon-green tracking-wider">COURSE TIMETABLE</h2>
           <span className="font-mono text-[10px] text-text-dim">{courses.length} 门课程</span>
         </div>
-        <button onClick={createCourse} className="btn-neon btn-neon-yellow">
-          <Plus size={14} /> 新建课程
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {SHOW_HOMEWORK && (
+            <div className="relative">
+              <button
+                onClick={() => setHwMenuOpen(v => !v)}
+                className={`btn-ghost ${hwMenuOpen ? 'text-neon-green border-neon-green/60 bg-neon-green/10' : ''}`}
+                title="生成作业码 / 发布 / 接收作业"
+              >
+                <RefreshCw size={14} /> 作业同步
+              </button>
+              {hwMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 z-30 glass-panel rounded-lg p-1.5 border border-neon-green/20 shadow-neon-green flex flex-col gap-1.5 animate-in min-w-[140px]">
+                  <button
+                    onClick={() => { setHwMenuOpen(false); setGenCodesOpen(true); }}
+                    className="btn-neon text-xs whitespace-nowrap justify-start"
+                  >
+                    <KeyRound size={13} /> 生成作业码
+                  </button>
+                  <button
+                    onClick={() => { setHwMenuOpen(false); setPublishOpen(true); }}
+                    className="btn-neon btn-neon-yellow text-xs whitespace-nowrap justify-start"
+                  >
+                    <CloudUpload size={13} /> 发布作业
+                  </button>
+                  <button
+                    onClick={() => { setHwMenuOpen(false); setReceiveOpen(true); }}
+                    className="btn-neon text-xs whitespace-nowrap justify-start"
+                  >
+                    <CloudDownload size={13} /> 接收作业
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {!IS_MOBILE && (
+            <button
+              onClick={() => setBeikeOpen(true)}
+              className="btn-ghost"
+              title="USTB 统一身份认证扫码登录，一键导入教务课表"
+            >
+              <Shell size={14} /> 贝壳课表
+            </button>
+          )}
+          <button onClick={createCourse} className="btn-neon btn-neon-yellow">
+            <Plus size={14} /> 新建课程
+          </button>
+        </div>
       </div>
 
       <TimetableView activeCourseId={activeCourseId} onOpenCourse={openCourse} />
@@ -95,12 +159,34 @@ export function CoursesPage() {
           activeTab={drawerTab}
           onTabChange={setDrawerTab}
           onClose={closeDrawer}
-          hasMiniProgram={false}
           InfoTab={<InfoTab course={activeCourseObj} onSaved={onSaved} onClose={closeDrawer} onGoTab={setDrawerTab} />}
           ScheduleTab={<ScheduleTab course={activeCourseObj} />}
           ReqsTab={<ReqsTab course={activeCourseObj} />}
           NotesTab={<NotesTab course={activeCourseObj} />}
-          MiniProgramTab={<MiniProgramTab course={activeCourseObj} />}
+        />
+      )}
+
+      {/* 贝壳课表：USTB 教务同步弹窗 */}
+      {beikeOpen && (
+        <Modal title="贝壳课表 · USTB 教务同步" onClose={() => setBeikeOpen(false)} width="max-w-3xl">
+          <BeikeTimetable />
+        </Modal>
+      )}
+
+      {/* 作业同步入口在顶部（v1.2.5 起，避免与右下 Pomodoro 重叠） */}
+      {genCodesOpen && (
+        <GenerateCodesModal onClose={() => setGenCodesOpen(false)} />
+      )}
+      {publishOpen && (
+        <PublishHomeworkModal
+          onClose={() => setPublishOpen(false)}
+          onChanged={async () => { await refreshAll(); }}
+        />
+      )}
+      {receiveOpen && (
+        <ReceiveHomeworkModal
+          onClose={() => setReceiveOpen(false)}
+          onSynced={async () => { await refreshAll(); }}
         />
       )}
     </div>

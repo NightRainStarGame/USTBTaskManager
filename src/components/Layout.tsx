@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import ParticleBg from './ParticleBg';
@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
 
 export default function Layout() {
+  const { pathname } = useLocation();
   const [plusOpen, setPlusOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -37,6 +38,12 @@ export default function Layout() {
       // 移动端无更新通道（安装包制 + child_process 不可用），
       // 跳过检查：避免无意义的跨域请求与「检查到更新却装不了」的误导
       if ((window as any).__MOBILE__) return;
+
+      // v1.2.10：首屏不再立刻打网络。以前挂载即并发请求 3 个更新源（单源超时 15s），
+      // 和首屏渲染抢资源，直接拖慢冷启动。主进程 8s 后会做同样的检查并通过
+      // updater:available 推过来（下面已订阅），所以这里延后即可。
+      await new Promise((r) => setTimeout(r, 6000));
+      if (!alive) return;
 
       try {
         const cfg = await window.taskAPI.updater.config();
@@ -74,8 +81,11 @@ export default function Layout() {
           onSearch={() => setSearchOpen(true)}
           onMenu={() => setMenuOpen(true)}
         />
+        {/* v1.2.10：路由切换时按 key 重挂载 + 淡入上移，取代原来的瞬时硬切 */}
         <main className="flex-1 overflow-auto">
-          <Outlet />
+          <div key={pathname} className="animate-page-in h-full">
+            <Outlet />
+          </div>
         </main>
       </div>
 

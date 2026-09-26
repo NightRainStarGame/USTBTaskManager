@@ -17,7 +17,7 @@ const items = [
   { to: '/habits', label: '习惯', icon: Flame, key: 'habits' },
   { to: '/projects', label: '项目', icon: FolderKanban, key: 'projects' },
   { to: '/stats', label: '统计', icon: BarChart3, key: 'stats' },
-  { to: '/miniprogram', label: '小程序', icon: AppWindow, key: 'miniprogram' },
+
   { to: '/class', label: '班级', icon: Users, key: 'class' },
   { to: '/settings', label: '设置', icon: Settings, key: 'settings' },
 ];

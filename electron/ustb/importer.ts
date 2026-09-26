@@ -86,7 +86,7 @@ export function importCurriculum(db: Database, items: ParsedClassItem[], opts: I
     db.prepare('DELETE FROM events WHERE course_id = ?').run(id);
     db.prepare('DELETE FROM course_requirements WHERE course_id = ?').run(id);
     db.prepare('DELETE FROM course_notes WHERE course_id = ?').run(id);
-    db.prepare('DELETE FROM course_miniprograms WHERE course_id = ?').run(id);
+
     db.prepare('DELETE FROM courses WHERE id = ?').run(id);
   };
 

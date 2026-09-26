@@ -1,8 +1,8 @@
 /**
- * v1.2.8 块 L：db.settings / db.userProfiles / db.courseNotes / db.miniPrograms mock
+ * v1.2.8 块 L：db.settings / db.userProfiles / db.courseNotes mock（v1.2.10 移除 miniPrograms）
  */
 import { delay, nextId, type MockData } from './data';
-import type { UserProfile, CourseNote, CourseMiniProgram } from '@/types';
+import type { UserProfile, CourseNote } from '@/types';
 
 export function createSettingsApi(data: MockData) {
   return {
@@ -58,32 +58,6 @@ export function createSettingsApi(data: MockData) {
         return data.courseNotes.find((n) => n.id === id) ?? null;
       },
       delete: async (id: number) => { await delay(); data.courseNotes = data.courseNotes.filter((n) => n.id !== id); return { ok: true }; },
-    },
-    miniPrograms: {
-      list: async () => { await delay(); return [...data.miniPrograms]; },
-      getByCourse: async (courseId: number) => {
-        await delay();
-        return data.miniPrograms.find((m) => m.course_id === courseId) ?? null;
-      },
-      getActive: async () => { await delay(); return data.miniPrograms.find((m) => m.active) ?? null; },
-      createOrUpdate: async (payload: Partial<CourseMiniProgram>) => {
-        await delay();
-        const idx = data.miniPrograms.findIndex((m) => m.course_id === payload.course_id);
-        if (idx >= 0) {
-          const updated = { ...data.miniPrograms[idx], ...payload, updated_at: Date.now() };
-          data.miniPrograms = [...data.miniPrograms.slice(0, idx), updated, ...data.miniPrograms.slice(idx + 1)];
-          return updated;
-        }
-        const m = { id: nextId(), created_at: Date.now(), updated_at: Date.now(), active: 0, ...payload } as CourseMiniProgram;
-        data.miniPrograms = [...data.miniPrograms, m];
-        return m;
-      },
-      setActive: async (id: number) => {
-        await delay();
-        data.miniPrograms = data.miniPrograms.map((m) => ({ ...m, active: m.id === id ? 1 : 0 }));
-        return data.miniPrograms.find((m) => m.id === id) ?? null;
-      },
-      delete: async (id: number) => { await delay(); data.miniPrograms = data.miniPrograms.filter((m) => m.id !== id); return { ok: true }; },
     },
   };
 }
