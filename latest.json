@@ -119,21 +119,6 @@
       "createdAt": "2026-09-22T14:39:11.542Z"
     },
     {
-      "fromVersion": "1.2.9",
-      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.10/TaskManager-Patch-1.2.9-to-1.2.10.zip",
-      "urlMirrors": [
-        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.9-to-1.2.10.zip",
-        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.9-to-1.2.10.zip"
-      ],
-      "sha256": "a058e6f0b58156a4ff5ddb4bb7cc5baa9ee1afe15e00b8ade6264cb96a07fe27",
-      "size": 23085570,
-      "baseAsarSha256": "6175eda40f9e843fed10eec376d39fba609f6803bfdcd38f88a8f8cbc8828474",
-      "baseAsarSize": 75256027,
-      "appAsarSha256": "4a8d76e703480444621dd2b0c44a539daabd480e9e75864d8b2d715e26e96152",
-      "appAsarSize": 75302318,
-      "createdAt": "2026-09-26T14:03:33.693Z"
-    },
-    {
       "fromVersion": "1.2.10",
       "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.11/TaskManager-Patch-1.2.10-to-1.2.11.zip",
       "urlMirrors": [
