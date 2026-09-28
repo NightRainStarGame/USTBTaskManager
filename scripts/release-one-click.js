@@ -338,8 +338,24 @@ if (stagedFiles) {
 } else {
   console.log('    无待提交变更（幂等重跑），跳过 commit');
 }
-const pushOut = run('git', ['push', 'origin', 'main']);
-ok(`push 完成${pushOut.includes('up to date') ? '（无变更）' : ''}`);
+// v1.2.11：本仓库历史里塞了大量 20MB+ 的补丁 zip，git push 偶发被 GitHub 以
+// HTTP 504 掐断（send-pack: unexpected disconnect），但对象往往**已经推送成功**了
+// （后续 push 会回 "Everything up-to-date"）。无条件让异常往上抛的话，后面
+// 「创建 Release + 上传附件」这两步永远没机会执行 —— 与脚本自称的「幂等可续跑」
+// 相矛盾。因此 push 报错时改为校验远端实际 HEAD：已同步就继续，真没同步才中止。
+let pushOut = '';
+try {
+  pushOut = run('git', ['push', 'origin', 'main']);
+} catch (e) {
+  console.log('    ⚠ git push 报错（多为 GitHub 504），校验远端实际状态…');
+}
+const localHead = String(run('git', ['rev-parse', 'HEAD']) || '').trim();
+const remoteHead = String(run('git', ['rev-parse', 'origin/main']) || '').trim();
+if (localHead && remoteHead && localHead === remoteHead) {
+  ok(`push 完成${pushOut.includes('up to date') ? '（无变更）' : ''}（远端 HEAD 已同步: ${remoteHead.slice(0, 8)}）`);
+} else {
+  die(`push 未成功且远端未同步：local=${localHead.slice(0, 8)} remote=${remoteHead.slice(0, 8) || '(未知)'}`);
+}
 
 if (!NO_RELEASE_PAGE) {
   step('创建 GitHub Release + 上传附件');
