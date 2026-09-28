@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useEffect, useRef, lazy, Suspense } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 import Layout from './components/Layout';
 // 首页（Dashboard）保持静态：它是冷启动首屏，不能被 Suspense 挂起来
 import Dashboard from './pages/Dashboard';
@@ -10,20 +10,30 @@ import { useApplyTheme } from './hooks/useApplyTheme';
 import { useInputDiag } from './hooks/useInputDiag';
 
 /**
- * v1.2.10：其余页面改为按需加载。
- * 以前全部静态 import，Settings(108KB) / ClassDetail(39KB) / HomeworkModals(39KB)
- * 等全部打进首包 —— 它们直接决定了 renderer ready 的那 1.5 秒白屏。
- * 现在首包只剩 Dashboard + Layout + 公共组件。
+ * v1.2.11：所有路由回到静态 import —— **请不要再把这里改回 React.lazy**。
+ *
+ * 教训（v1.2.10 翻车实录）：懒加载会让 Vite 产出 9 个独立 chunk，靠运行时
+ * `import()` 拉取。开发模式下是 http://localhost:5173，一切正常；但打包成
+ * Electron 安装版后，主窗口是 loadFile() 加载 app.asar 里的 index.html，
+ * **协议是 file://**。file:// 下模块脚本的源是 opaque（null origin），页面里
+ * 发出的 dynamic import 会被 Chromium 拒掉，报：
+ *   Failed to fetch dynamically imported module:
+ *   file:///D:/Appdata/Taskmanager/resources/app.asar/dist/assets/Calendar.js
+ * 表现是：Dashboard 能进（静态打进首包），其余功能页点一个崩一个。
+ *
+ * 将来若真要恢复按需加载，前提是先把生产环境从 file:// 换成自定义协议
+ * （在 main.ts 里 protocol.handle('app', …) 托管 dist/），并且 index.html 的
+ * base 相对路径仍要能正确解析 —— 只把 lazy 改回来必然会再次复发。
  */
-const ClassListPage = lazy(() => import('./pages/Class'));
-const ClassDetailPage = lazy(() => import('./pages/Class/ClassDetail'));
-const CalendarPage = lazy(() => import('./pages/Calendar'));
-const CoursesPage = lazy(() => import('./pages/Courses'));
-const ProjectsPage = lazy(() => import('./pages/Projects'));
-const SettingsPage = lazy(() => import('./pages/Settings'));
-const AcademicPage = lazy(() => import('./pages/Academic'));
-const HabitsPage = lazy(() => import('./pages/Habits'));
-const StatsPage = lazy(() => import('./pages/Stats'));
+import ClassListPage from './pages/Class';
+import ClassDetailPage from './pages/Class/ClassDetail';
+import CalendarPage from './pages/Calendar';
+import CoursesPage from './pages/Courses';
+import ProjectsPage from './pages/Projects';
+import SettingsPage from './pages/Settings';
+import AcademicPage from './pages/Academic';
+import HabitsPage from './pages/Habits';
+import StatsPage from './pages/Stats';
 
 /** 切页时的骨架占位（避免路由切换那一瞬的空白闪一下） */
 function PageLoading() {

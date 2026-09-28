@@ -26,6 +26,11 @@ export default defineConfig({
         main: path.resolve(__dirname, 'index.html'),
       },
       output: {
+        // v1.2.11 血泪提示：**不要在这里加 manualChunks，也不要让产物出现运行时 import()**。
+        // 打包版由 Electron loadFile() 加载 app.asar 内的 index.html（file:// 协议），
+        // Chromium 在 file:// 下不会放行页面发起的动态 import —— v1.2.10 就是这样让
+        // 9 个懒加载页面全部崩掉的（详见 src/App.tsx 顶部注释）。
+        // 保持「单入口 → 单 bundle」，index.html 只有一个 main.js/main.css。
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
         assetFileNames: 'assets/[name].[ext]',
