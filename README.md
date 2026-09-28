@@ -4,12 +4,14 @@
 
 ## 下载安装
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.3.exe`
+**当前最新版：v1.2.11**
+
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.11.exe`
 
 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
 > 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.2.exe`
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.11.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
@@ -33,7 +35,7 @@ App 自带默认两个源：
 
 ## 使用指南
 
-应用共十个页面：**总览 · 日历 · 课程 · 学业 · 习惯 · 项目 · 小组 · 统计 · 小程序 · 设置**。所有数据都存在本机 SQLite 数据库里，不联网上传。
+应用共九个页面：**总览 · 日历 · 课程 · 学业 · 习惯 · 项目 · 小组 · 统计 · 设置**（「小程序」页已于 v1.2.10 移除）。所有数据都存在本机 SQLite 数据库里，不联网上传。
 
 ### 1. 总览（仪表盘）
 
@@ -70,7 +72,7 @@ App 自带默认两个源：
 
 > 课表日历里显示「第 N 周」需要先在 **设置 → 学期** 里填好学期开始日期。
 
-**贝壳课表同步**（课程页右上角「贝壳课表」按钮，v1.2.3 从小程序中心迁入）：北科大统一身份认证微信扫码登录，自动拉取教务课表生成课程卡片 + 日历上课时间（支持学期选择、导入前预览）；登录态仅存本机，下次同步免扫码。需校园网环境。
+**贝壳课表同步**（课程页右上角「贝壳课表」按钮）：北科大统一身份认证微信扫码登录，自动拉取教务课表生成课程卡片 + 日历上课时间（支持学期选择、导入前预览）；登录态仅存本机，下次同步免扫码。需校园网环境。
 
 ### 2b. 学业（v1.2.3 新增）
 
@@ -182,7 +184,7 @@ App 自带默认两个源：
 - **数据库自检修复**：怀疑数据异常时点一下，会检查并修复数据库完整性
 - **WebDAV 云同步**（v1.2.3）：设置 → WebDAV 云同步，把全量备份推到坚果云等网盘，换设备 / 重装系统时「从云端恢复」一键拉回（恢复前自动安全备份）。坚果云：网页端「账户信息 → 安全选项 → 添加应用密码」，地址填 `https://dav.jianguoyun.com/dav/`
 
-数据库文件本体在 `%APPDATA%/TaskManager/task-manager.db`，直接拷贝这个文件也等于备份。
+数据库文件本体在 `%APPDATA%\task-manager\task-manager.db`，直接拷贝这个文件也等于备份。
 
 ### 8. 软件更新
 
@@ -203,15 +205,14 @@ App 自带默认两个源：
 - 📂 **项目** 看板 / 列表 / 时间线 / 画布四种视图 · 拖拽切换状态 · 优先级旗标与过滤
 - 💾 **数据安全** 一键备份 / 恢复 · WebDAV 云同步（v1.2.3）· 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装；增量补丁协议（典型更新 12% 体积）；输入框失灵自检与补焦
+- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装（v1.2.11 起统一整装升级，不再分发增量补丁）；输入框失灵自检与补焦
 - 🎓 **学业**（v1.2.3）成绩录入 · 加权 GPA · 挂科预警 · 考试倒计时 + 复习任务生成 · 出勤打卡
 - ⏱ **番茄钟**（v1.2.3）全局悬浮 · 任务绑定 · 每日 / 各科专注统计
 - 🔥 **习惯打卡**（v1.2.3）连击统计 · 热力图 · 每周目标
 - 👥 **小组清单**（v1.2.3）GitHub 通道共享待办 · 认领分工 · 组码即用
 - 📊 **统计复盘**（v1.2.3）周报 / 月报 · 按天按科分布图 · 出勤构成
 - 🔔 **系统提醒**（v1.2.3）托盘常驻 · 上课 / 作业 / 考试分级弹窗 · 全局快捷键快速添加
-- ⚙️ **设置** 主题 / 学期 / 数据导出 / 小程序配置
-- 🪟 **小程序中心** 课程级小程序工具（课表编辑 / 番茄钟 / 绩点计算 / 课程笔记，可挂载到任意课程）
+- ⚙️ **设置** 主题 / 学期 / 数据导出 / 更新源 / 作业同步
 
 
 ## 快速开始（开发）
@@ -229,14 +230,14 @@ npm run dev
 npm run build:exe
 ```
 
-输出在 `release-v<版本>/` 目录，NSIS 安装包约 85MB。
+输出在 `release-v<版本>/` 目录，NSIS 安装包约 93MB。
 
 ## 发布新版本
 
 改完 `package.json` 里的 `version` 后：
 
 ```bash
-npm run release:one -- 1.2.2 --notes-file RELEASE-NOTES.md        # 一键：build + 双源分发 + commit + push + Release 附件
+npm run release:one -- 1.2.11 --notes-file RELEASE-NOTES.md       # 一键：build + 双源分发 + commit + push + Release 附件
 # 或手动分步：
 npm run build:exe          # 打包
 npm run publish:github     # ① 同步一份到 GitHub（含 Release 附件）
@@ -254,6 +255,7 @@ GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `ur
 按 basename 前缀找修改时间最新的一份再换签名直链下载。
 
 `patches[]` 同样规则：GitHub 版是 raw 绝对链，云盘版改写成云盘内 basename。
+（**v1.2.11 起暂停分发增量补丁**，`patches` 当前为空数组，所有版本统一整装升级。）
 
 ### 自建源（可选）
 
@@ -297,9 +299,9 @@ node scripts/clean-release.js --keep release-0.2.3,release-0.3.0   # 执行清�
 ## 数据存储
 
 SQLite 数据库存放在系统用户目录：
-- Windows: `%APPDATA%/TaskManager/task-manager.db`
-- macOS: `~/Library/Application Support/TaskManager/task-manager.db`
-- Linux: `~/.config/TaskManager/task-manager.db`
+- Windows: `%APPDATA%\task-manager\task-manager.db`
+- macOS: `~/Library/Application Support/task-manager/task-manager.db`
+- Linux: `~/.config/task-manager/task-manager.db`
 
 首次启动自动写入示例数据（3 门课程、5 个要求、3 个日历事件、1 个项目）。
 
@@ -310,16 +312,3 @@ SQLite 数据库存放在系统用户目录：
 - `Ctrl+Shift+A` 全局快速添加（应用外也能呼出主窗口 + 自然语言建作业，v1.2.3）
 - `Esc` 关闭弹层
 
-## 小程序中心（课程级工具）
-
-小程序中心（顶部导航「小程序」）是给每门课程挂载的小工具集合：`src/pages/MiniProgram.tsx`，后台数据走 `window.taskAPI.db.miniPrograms.*`。
-
-**内置小程序类型**（`APP_TYPES`）：
-- **课程表**（`timetable`）：编辑某门课的每周上课时段
-- **番茄钟**（`timer`）：25/5 分钟专注计时，绑定该课程
-- **绩点计算器**（`calculator`）：算学分 / 成绩 / 加权 GPA
-- **课程笔记**（`notes`）：按课程组织的快速笔记（数据落在 `course_notes` 表）
-
-使用：在课程卡片 → 「小程序」配置里选择类型挂载，启用后顶部导航出现该小程序入口。
-
-> 注：贝壳课表（USTB 教务扫码导入）功能已于 v1.2.3 从小程序中心迁出到「课程」页右上角按钮。
