@@ -196,8 +196,30 @@
     --c-accent-glow: rgba(76, 194, 255, 0.35);
   }
 
+  /* v1.2.11：移动端安全区变量（Android 端由 src/mobile/insets.ts 用原生
+     WindowInsetsCompat 的真实值覆写；桌面端无插件 → 恒为 0，布局零回归）。
+     顶栏/悬浮球/抽屉等 fixed 元素必须据此避让，否则在 Android 16 的
+     edge-to-edge 下会被状态栏和手势条压住。 */
+  :root {
+    --sat: 0px;
+    --sab: 0px;
+    --sal: 0px;
+    --sar: 0px;
+  }
+
+  /* v1.2.11：@xyflow/react 的缩放控制条 / 小地图默认贴视口底边，移动端会正好
+     落在手势条上（拖不到、还会误触「返回」）。统一抬起来，省得动组件代码。 */
+  .react-flow__controls,
+  .react-flow__minimap {
+    margin-bottom: var(--sab);
+    margin-left: var(--sal);
+  }
+
   html, body, #root {
+    /* 100vh 在移动端包含系统栏且键盘弹起时不收缩 → 内容溢出被 overflow 裁掉。
+       dvh（dynamic viewport height）会随系统栏/输入法实时变化。 */
     height: 100vh;
+    height: 100dvh;
     margin: 0;
     padding: 0;
     overflow: hidden;

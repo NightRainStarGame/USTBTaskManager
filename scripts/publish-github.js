@@ -143,6 +143,33 @@ function resolveInstaller() {
   return hits[0] || null;
 }
 
+// v1.2.11：APK 产物定位 + 版本号读取（移动端自更新清单的数据来源）
+function resolveApk() {
+  const candidates = [
+    path.join(ROOT, 'leastversion', `${productName}-${version}.apk`),
+    path.join(ROOT, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** versionCode 是整数，移动端判新旧全靠它（字符串版本号会误判） */
+function androidVersionInfo() {
+  const gradlePath = path.join(ROOT, 'android', 'app', 'build.gradle');
+  let versionCode = 0;
+  let versionName = '';
+  if (fs.existsSync(gradlePath)) {
+    const src = fs.readFileSync(gradlePath, 'utf8');
+    const c = src.match(/versionCode\s+(\d+)/);
+    const n = src.match(/versionName\s+["']([^"']+)["']/);
+    if (c) versionCode = parseInt(c[1], 10);
+    if (n) versionName = n[1];
+  }
+  return { versionCode, versionName };
+}
+
 // GitHub API
 /** 需要区分 404 / 200 —— 用带状态码的方式请求 */
 function apiWithStatus(token, method, apiPath, body) {
@@ -224,6 +251,27 @@ async function main() {
     releasedAt: new Date().toISOString(),
   };
 
+  // v1.2.11：APK 也要作为 Release 附件 + 写进 android 清单字段。
+  // 移动端靠这段数据做自更新，漏了就会出现「手机端永远停在旧版本」。
+  const apkFile = resolveApk();
+  if (apkFile) {
+    const info = androidVersionInfo();
+    const apkAssetName = `${productName}-${version}.apk`;
+    manifest.android = {
+      version: info.versionName || version,
+      versionCode: info.versionCode || 0,
+      url: `https://github.com/${repo}/releases/download/${tag}/${apkAssetName}`,
+      mirrors: [
+        `https://raw.githubusercontent.com/${repo}/${branch}/leastversion/${apkAssetName}`,
+        `https://cdn.jsdelivr.net/gh/${repo}@${branch}/leastversion/${apkAssetName}`,
+      ],
+      sha256: hashFile(apkFile),
+      size: fs.statSync(apkFile).size,
+      fileName: apkAssetName,
+      page: `https://github.com/${repo}/releases/tag/${tag}`,
+    };
+  }
+
   log(`\n  仓库    ：${repo}（分支 ${branch}）`);
   log(`  tag     ：${tag}`);
   log(`  附件名  ：${assetName}`);
@@ -295,6 +343,31 @@ async function main() {
     fail(`上传返回异常：${upRaw.slice(0, 400)}`);
   }
   log(`  ✓ 上传成功：${upJson.browser_download_url}`);
+
+  if (apkFile) {
+    step('4.5/5 上传 APK 附件（移动端自更新源）');
+    const apkAssetName = manifest.android.fileName;
+    const dupApk = (release.assets || []).find((a) => a.name === apkAssetName);
+    if (dupApk) {
+      log(`  已存在同名附件，先删除旧的（id=${dupApk.id}）`);
+      apiWithStatus(token, 'DELETE', `/repos/${repo}/releases/assets/${dupApk.id}`);
+    }
+    try {
+      execFileSync('curl', [
+        '-sS', '-X', 'POST',
+        '-H', `Authorization: Bearer ${token}`,
+        '-H', 'Accept: application/vnd.github+json',
+        '-H', 'Content-Type: application/octet-stream',
+        '-H', 'User-Agent: publish-github',
+        '--max-time', '1800',
+        '--data-binary', `@${apkFile}`,
+        `https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${encodeURIComponent(apkAssetName)}`,
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+      log(`  ✓ APK 上传成功：${apkAssetName}（${fmtSize(manifest.android.size)}）`);
+    } catch (e) {
+      log(`  ! APK 上传失败：${e.message}（桌面安装包不受影响）`);
+    }
+  }
 
   step('5/5 写入并推送 latest.json');
   const latestPath = path.join(ROOT, 'latest.json');

@@ -9,13 +9,16 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <!-- v1.2.11：输入法弹起时压缩 WebView 视口，而不是把 fixed 元素留在原地。
+             没有这行，输入框聚焦后顶部/底部的固定栏（保存条、悬浮球）会悬空错位。 -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -38,4 +41,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- v1.2.11：应用内安装 APK（未知来源）所必需，APK 自更新链路的基础 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

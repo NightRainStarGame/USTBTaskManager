@@ -13,8 +13,11 @@ android {
         applicationId "com.lasarac.taskmanager"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 6
-        versionName "1.2.10"
+        // v1.2.11：与 package.json 保持一致。
+        // ⚠️ versionCode 必须单调递增，否则用户安装新 APK 时会被系统拒绝
+        // （INSTALL_FAILED_VERSION_DOWNGRADE），表现为「永远更新不了」。
+        versionCode 7
+        versionName "1.2.11"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

@@ -35,8 +35,9 @@ export default function Layout() {
         if (alive) setAppInfo(info);
       } catch { /* 浏览器 mock 不可用时忽略 */ }
 
-      // 移动端无更新通道（安装包制 + child_process 不可用），
-      // 跳过检查：避免无意义的跨域请求与「检查到更新却装不了」的误导
+      // 移动端：APK 更新由设置页的 MobileUpdatePanel 负责（走原生插件下载安装）。
+      // 这里跳过桌面通道 —— 桌面链路的 install 依赖 child_process.spawn，
+      // 在 APK 的 electron-shim 下必抛错，让它跑只会得到「检查到更新却装不了」。
       if ((window as any).__MOBILE__) return;
 
       // v1.2.10：首屏不再立刻打网络。以前挂载即并发请求 3 个更新源（单源超时 15s），
@@ -58,7 +59,10 @@ export default function Layout() {
   }, [setAppInfo, setUpdateInfo]);
 
   return (
-    <div className="relative h-screen w-screen flex overflow-hidden bg-ink-base">
+    // v1.2.11：唯一外壳。用 dvh + 安全区内边距把内容推离状态栏/手势条。
+    // 内部 absolute inset-0 的背景层仍按 padding box 铺满整屏，所以背景照样
+    // 延伸到底，视觉上没有留白，但不重叠。桌面端变量为 0，行为完全不变。
+    <div className="relative h-[100dvh] w-screen flex overflow-hidden bg-ink-base pt-[var(--sat)] pb-[var(--sab)] pl-[var(--sal)] pr-[var(--sar)]">
       {/* 动态背景 */}
       <div className="absolute inset-0 z-0">
         <ParticleBg density={50} />

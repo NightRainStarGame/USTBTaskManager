@@ -17,9 +17,11 @@ export default function Modal({ title, onClose, children, footer, width = 'max-w
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 pt-[calc(1rem_+_var(--sat))] pb-[calc(1rem_+_var(--sab))] animate-fade-in" onClick={onClose}>
       <div
-        className={`w-full ${width} glass-panel overflow-hidden flex flex-col max-h-[90vh] animate-panel-in`}
+        // v1.2.11：高度按 dvh 并扣掉安全区，否则输入法弹起后底部操作按钮
+        // 会跑到手势条底下够不着
+        className={`w-full ${width} glass-panel overflow-hidden flex flex-col max-h-[calc(100dvh_-_var(--sat)_-_var(--sab)_-_2rem)] animate-panel-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-neon-green/15">

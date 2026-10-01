@@ -14,9 +14,9 @@ export default function PlusMenu({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[calc(6rem_+_var(--sat))] bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-[480px] glass-panel overflow-hidden"
+        className="w-[480px] max-w-[calc(100vw_-_2rem)] glass-panel overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-neon-green/15">

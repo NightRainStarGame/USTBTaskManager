@@ -17,12 +17,16 @@ import { registerAllIpc } from '../../electron/ipc/index';
 import { buildAPI } from '../../electron/api-factory';
 import { ipcMain, ipcRenderer } from './electron-shim';
 import { installNativeHttpBridge } from './nativeHttp';
+import { installSystemInsets } from './insets';
 
 async function boot() {
   // 版本号（vite.mobile.config.ts 的 define 注入）
   (globalThis as any).__TASKMANAGER_VERSION__ = __TASKMANAGER_VERSION__;
   // v1.2.10：Android 原生 HTTP 通道（装了 @capacitor-community/http 才真正生效，否则自动回退）
   installNativeHttpBridge();
+  // v1.2.11：系统栏安全区 —— 必须在 React mount 前写入 CSS 变量，
+  // 否则首帧的顶栏/悬浮球会先“陷进”状态栏和手势条再弹出来。
+  installSystemInsets();
 
   await initSqlJsRuntime();
   const restored = await hydrateMemFsFromIdb();

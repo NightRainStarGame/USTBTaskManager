@@ -90,6 +90,25 @@ function main() {
   if (args.force) manifest.force = true;
   if (args['min-version']) manifest.minVersion = String(args['min-version']);
 
+  // v1.2.11：APK 也要进清单，否则移动端「永远是最新版」= 永远装不上新 APK。
+  // 找不到 APK 不阻塞桌面发布（可能本次只为桌面 hotfix）。
+  const apk = resolveApk();
+  if (apk) {
+    const info = androidVersionInfo();
+    const base = String(args['apk-base-url'] || APK_BASE_URL).replace(/\/+$/, '');
+    const apkName = path.basename(apk);
+    manifest.android = {
+      version: info.versionName || version,
+      versionCode: info.versionCode || 0,
+      url: `${base}/${encodeURIComponent(apkName)}`,
+      mirrors: APK_MIRROR_BASES.map((b) => `${b.replace(/\/+$/, '')}/${encodeURIComponent(apkName)}`),
+      sha256: hashFile(apk),
+      size: fs.statSync(apk).size,
+      fileName: apkName,
+      page: `${APK_RELEASES_PAGE}${version ? `/tag/v${version}` : ''}`,
+    };
+  }
+
   // 写出产物
   fs.mkdirSync(path.join(outDir, 'releases'), { recursive: true });
   write(path.join(outDir, 'latest.json'), JSON.stringify(manifest, null, 2) + '\n');
@@ -137,6 +156,41 @@ function resolveInstaller() {
     .filter((f) => fs.existsSync(f))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
   return candidates[0] || null;
+}
+
+// v1.2.11：Android 产物的发布定位（APK 自更新清单要用到）
+const APK_BASE_URL = String(args['apk-base-url'] || '')
+  || 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion';
+const APK_MIRROR_BASES = [
+  'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion',
+];
+const APK_RELEASES_PAGE = 'https://github.com/NightRainStarGame/USTBTaskManager/releases';
+
+/** APK 位置：优先已经放进 leastversion/ 的成品，否则直接用 Gradle 的产物 */
+function resolveApk() {
+  const candidates = [
+    path.join(ROOT, 'leastversion', `${productName}-${version}.apk`),
+    path.join(ROOT, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** 从 build.gradle 读 versionCode / versionName —— 移动端靠整数 versionCode 判新旧 */
+function androidVersionInfo() {
+  const gradlePath = path.join(ROOT, 'android', 'app', 'build.gradle');
+  let versionCode = 0;
+  let versionName = '';
+  if (fs.existsSync(gradlePath)) {
+    const src = fs.readFileSync(gradlePath, 'utf8');
+    const c = src.match(/versionCode\s+(\d+)/);
+    const n = src.match(/versionName\s+["']([^"']+)["']/);
+    if (c) versionCode = parseInt(c[1], 10);
+    if (n) versionName = n[1];
+  }
+  return { versionCode, versionName };
 }
 
 // 工具函数

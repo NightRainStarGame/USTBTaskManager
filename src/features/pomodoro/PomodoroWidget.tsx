@@ -136,7 +136,8 @@ export default function PomodoroWidget() {
     <div
       style={{ transform: `translate(${drag.pos.x}px, ${drag.pos.y}px)` }}
       className={clsx(
-        'fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3 ease-spring',
+        // v1.2.11：bottom-6 会压在 Android 手势条上（拖不动 + 误触返回手势）
+        'fixed bottom-[calc(1.5rem_+_var(--sab))] right-[calc(1.5rem_+_var(--sar))] z-30 flex flex-col items-end gap-3 ease-spring',
         drag.dragging && 'cursor-grabbing select-none',
       )}
     >

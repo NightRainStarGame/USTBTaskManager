@@ -154,6 +154,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: Props) {
       <aside
         className={clsx(
           'fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] flex flex-col bg-ink-900/95 backdrop-blur-md border-r border-neon-green/15',
+          // v1.2.11：抽屉从 y=0 开始会顶到挖孔、底部沉入手势条
+          'pt-[var(--sat)] pb-[var(--sab)]',
           'transition-transform duration-300 ease-out will-change-transform',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )}

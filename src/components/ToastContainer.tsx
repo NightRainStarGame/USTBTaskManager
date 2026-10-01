@@ -54,7 +54,7 @@ export function ToastContainer() {
 
   return createPortal(
     <div
-      className="fixed top-4 right-4 z-[60] flex flex-col gap-2 max-w-sm pointer-events-none"
+      className="fixed top-[calc(1rem_+_var(--sat))] right-[calc(1rem_+_var(--sar))] z-[60] flex flex-col gap-2 max-w-sm pointer-events-none"
       role="region"
       aria-label="通知"
     >

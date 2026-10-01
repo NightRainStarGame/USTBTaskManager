@@ -30,7 +30,8 @@ export function CourseDrawer({
 }: CourseDrawerProps) {
   return (
     <div
-      className="fixed inset-y-0 right-0 w-full max-w-md z-40 bg-ink-950/95 backdrop-blur-md border-l border-neon-green/15 shadow-2xl flex flex-col animate-panel-spring"
+      // v1.2.11：抽屉上下俄入挖孔/手势条，内容需按安全区内缩
+      className="fixed inset-y-0 right-0 w-full max-w-md z-40 bg-ink-950/95 backdrop-blur-md border-l border-neon-green/15 shadow-2xl flex flex-col animate-panel-spring pt-[var(--sat)] pb-[var(--sab)]"
       role="dialog"
       aria-label="课程详情"
     >

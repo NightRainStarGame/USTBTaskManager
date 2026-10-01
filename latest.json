@@ -1,6 +1,6 @@
 {
   "version": "1.2.11",
-  "notes": "v1.2.11 紧急修复（建议所有 1.2.10 用户立即升级）\r\n\r\n【修复】打包版点击任意功能模块均提示「界面渲染出现异常」，页面组件崩溃\r\n· 原因：1.2.10 引入路由懒加载后，Vite 产出 9 个 chunk 需在运行时动态加载；\r\n  开发模式正常，但安装版从 app.asar 内以 file:// 加载，动态 import 被拒绝。\r\n· 处理：所有页面恢复静态打包，产物收敛为单个 main.js，彻底不再依赖运行时 import()。\r\n\r\n【更新链路】\r\n· 补丁下载支持镜像回退（主源失败自动切备用源）\r\n· 补丁失败原因可诊断（版本基线不匹配 / asar 不可读 / 建议转整装）\r\n· 全源失败自动引导重新下载完整安装包\r\n\r\n【作业同步】\r\n· 云端迁至独立数据仓 USTBTaskManager-Class，与班级模块共用令牌，开箱即用\r\n· 迁移前发布的老同步码仍可继续拉取\r\n\r\n【Android】\r\n· 作业同步入口在移动端可用（此前被误隐藏）\r\n· 新增原生 HTTP 通道，贝壳课表/网盘不再受 WebView CORS 限制\r\n\r\n【其他】\r\n· 移除课程小程序模块及其 28 处接线\r\n· 冷启动单实例锁、首屏启动更快\r\n· 统一动效曲线，尊重系统「减少动态效果」设置",
+  "notes": "v1.2.11 紧急修复（建议所有 1.2.10 用户立即升级）\r\n\r\n【修复】打包版点击任意功能模块均提示「界面渲染出现异常」，页面组件崩溃\r\n· 原因：1.2.10 引入路由懒加载后，Vite 产出 9 个 chunk 需在运行时动态加载；\r\n  开发模式正常，但安装版从 app.asar 内以 file:// 加载，动态 import 被拒绝。\r\n· 处理：所有页面恢复静态打包，产物收敛为单个 main.js，彻底不再依赖运行时 import()。\r\n\r\n【更新链路】\r\n· 补丁下载支持镜像回退（主源失败自动切备用源）\r\n· 补丁失败原因可诊断（版本基线不匹配 / asar 不可读 / 建议转整装）\r\n· 全源失败自动引导重新下载完整安装包\r\n\r\n【作业同步】\r\n· 云端迁至独立数据仓 USTBTaskManager-Class，与班级模块共用令牌，开箱即用\r\n· 迁移前发布的老同步码仍可继续拉取\r\n\r\n【Android】\r\n· 作业同步入口在移动端可用（此前被误隐藏）\r\n· 新增原生 HTTP 通道，贝壳课表/网盘不再受 WebView CORS 限制\r\n\r\n【其他】\r\n· 移除课程小程序模块及其 28 处接线\r\n· 冷启动单实例锁、首屏启动更快\r\n· 统一动效曲线，尊重系统「减少动态效果」设置\r\n\r\n【Android APK】\r\n· 修复 UI 重叠：状态栏不再盖住顶栏、手势条不再压住悬浮球/保存条\r\n· 修复输入法弹起后固定栏悬空错位、搜索&新建面板在小屏被裁\r\n· 新增 APK 应用内更新：设置 → 软件更新 → 下载并安装（sha256 校验 + 镜像回退）\r\n· versionCode 提升到 7，旧包可正常覆盖安装，不会再卡在更新不了的旧版本",
   "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.11/TaskManager-Setup-1.2.11.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.2",
   "sha256": "079473cc495b3a3fb7bb075aa941156ebc4ca0a181824556d49f6748a3011647",
@@ -11,6 +11,18 @@
   "asarSha256": "f499acaa18f0d04887c00e17a73c17cf5af05e2c519892cae2f2e4024b04b578",
   "asarSize": 76151465,
   "patches": [],
+  "android": {
+    "version": "1.2.11",
+    "versionCode": 7,
+    "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.11.apk",
+    "mirrors": [
+      "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.11.apk"
+    ],
+    "sha256": "e93545504feb0a05ede147181484bacf8a723a6eab55af96c6840a85f40ce3d5",
+    "size": 4719162,
+    "fileName": "TaskManager-1.2.11.apk",
+    "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.11"
+  },
   "urlMirrors": [
     "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.11.exe",
     "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.11.exe"

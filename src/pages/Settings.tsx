@@ -9,11 +9,13 @@ import { PRICING } from '../config/pricing';
 import AboutPanel from '@/components/AboutPanel';
 import DiagPanel from '@/components/DiagPanel';
 import { PatchUpdateButton, PatchCacheCard, PatchStateCard } from '@/components/PatchPanel';
+import MobileUpdatePanel from '@/components/MobileUpdatePanel';
 import dayjs from 'dayjs';
 import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
 
-/** 移动端（Android 壳）无应用内更新通道：安装包制 + child_process 不可用，
- *  检查到新版本也装不了 → 隐藏更新操作区，提示去 GitHub Releases 下载 APK */
+/** 移动端（Android 壳）：更新走 APK 自更新链路（见 MobileUpdatePanel），
+ *  桌面那套 child_process / 补丁只为安装包设计，在 APK 里不可用 → 一律隐藏。
+ *  ⚠️ 桌面专属的 Patch* 卡片在移动端也应隐藏，否则会渲染出永远空白的区块。 */
 const IS_MOBILE = !!(window as any).__MOBILE__;
 
 interface UpdateSource {
@@ -1366,26 +1368,20 @@ export default function SettingsPage() {
           </button>
         </div>
         ) : (
-          <div className="flex items-start gap-2 p-3 rounded-md border border-neon-yellow/30 bg-neon-yellow/5 font-mono text-xs text-neon-yellow/90">
-            <ExternalLink size={14} className="shrink-0 mt-0.5" />
-            <span>
-              移动端不支持应用内更新。新版本 APK 请到 GitHub Releases 下载：
-              github.com/NightRainStarGame/USTBTaskManager/releases
-              <button
-                onClick={() => { try { window.open('https://github.com/NightRainStarGame/USTBTaskManager/releases', '_blank'); } catch { /* ignore */ } }}
-                className="ml-2 underline underline-offset-2 hover:text-neon-green"
-              >
-                打开发布页
-              </button>
-            </span>
-          </div>
+          // v1.2.11：移动端不再是「不支持更新」的空壳，走 APK 自更新链路
+          // （检查 latest.json 的 android 字段 → 原生下载校验 → 拉起系统安装器）
+          <MobileUpdatePanel />
         )}
 
-        {/* v1.3.0：已下载的增量补丁（zip + manifest 缓存，随时应用） */}
-        <PatchCacheCard appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} />
-
-        {/* v1.2.7：上次补丁的结果（applied / pendingSidecar / failed） + 立即重试 */}
-        <PatchStateCard onMessage={setUpdateMsg} />
+        {/* v1.3.0：已下载的增量补丁（zip + manifest 缓存，随时应用）
+            v1.2.11：APK 里没有补丁目录概念，这两块会渲染成永远空白的占位 */}
+        {!IS_MOBILE && (
+          <>
+            <PatchCacheCard appVersion={appInfo?.version || ''} onMessage={setUpdateMsg} />
+            {/* v1.2.7：上次补丁的结果（applied / pendingSidecar / failed） + 立即重试 */}
+            <PatchStateCard onMessage={setUpdateMsg} />
+          </>
+        )}
 
         {/* 下载进度 */}
         {dl && (
@@ -1570,8 +1566,10 @@ export default function SettingsPage() {
         <AboutPanel appVersion={appInfo?.version || ''} />
       </Section>
 
-      {/* v1.2.5: fixed bottom-0 改为 bottom-24 让出 Pomodoro widget 位置（96px） */}
-      <div className="fixed bottom-24 right-4 left-64 bg-ink-900/95 p-3 border-t border-neon-green/15 flex justify-end z-30">
+      {/* v1.2.5: fixed bottom-0 改为 bottom-24 让出 Pomodoro widget 位置（96px）
+          v1.2.11: left-64 是给桌面常驻侧栏留位，移动端侧栏是抽屉 → 从屏幕左边起算，
+                   否则 360dp 屏上保存按钮只剩几十像素。底部再叠上手势条高度。 */}
+      <div className="fixed bottom-[calc(6rem_+_var(--sab))] right-4 left-4 md:left-64 bg-ink-900/95 p-3 border-t border-neon-green/15 flex justify-end z-30">
         <button onClick={save} className="btn-neon"><Save size={14} /> 保存所有设置</button>
       </div>
 

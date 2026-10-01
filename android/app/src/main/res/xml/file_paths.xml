@@ -2,4 +2,10 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-path name="my_images" path="." />
     <cache-path name="my_cache_images" path="." />
+    <!-- v1.2.11：APK 自更新 —— 下载目录（app 私有外部 Download/）与缓存目录，
+         供 ApkInstallerPlugin 生成安装 Intent 所需的 content:// Uri。
+         FileProvider 只能暴露这里显式声明的路径，漏了会抛
+         IllegalArgumentException: Failed to find configured root。 -->
+    <external-files-path name="apk_downloads" path="Download" />
+    <external-cache-path name="apk_cache" path="." />
 </paths>

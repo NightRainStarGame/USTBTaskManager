@@ -42,8 +42,9 @@ export default function SearchPalette({ onClose }: Props) {
   }, [q, courses, requirements, events, projects, nav]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-32 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-[600px] glass-panel overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[calc(8rem_+_var(--sat))] bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      {/* v1.2.11：600px 硬宽在 360dp 屏会横向溢出，补响应式上限 */}
+      <div className="w-[600px] max-w-[calc(100vw_-_2rem)] glass-panel overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-neon-green/15">
           <Search size={16} className="text-neon-green" />
           <input

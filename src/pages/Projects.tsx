@@ -113,7 +113,7 @@ export default function ProjectsPage() {
         <div className="lg:col-span-3 min-w-0">
           {activeProject ? (
             view === 'canvas' ? (
-              <div className="h-[calc(100vh-150px)] min-h-[480px] rounded-lg border border-neon-green/15 overflow-hidden">
+              <div className="h-[calc(100dvh_-_150px)] min-h-[480px] rounded-lg border border-neon-green/15 overflow-hidden">
                 <ProjectCanvas project={activeProject} />
               </div>
             ) : (
