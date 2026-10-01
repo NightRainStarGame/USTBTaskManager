@@ -1240,6 +1240,9 @@ export default function SettingsPage() {
                   {s.type === 'anyshare' && (
                     <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/40 shrink-0" title="北科云盘外链源（需北京科技大学校园网）">云盘</span>
                   )}
+                  {String(s.url || '').toLowerCase().startsWith('ssio+') && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-cyan/15 text-neon-cyan border border-neon-cyan/40 shrink-0" title="SSIO 自托管更新服务（ssio+ 前缀，提取码填 APIKey）">SSIO</span>
+                  )}
                   <input
                     value={s.name}
                     onChange={(e) => updateSourceLocal(i, { name: e.target.value })}
@@ -1249,16 +1252,16 @@ export default function SettingsPage() {
                   <input
                     value={s.url}
                     onChange={(e) => updateSourceLocal(i, { url: e.target.value })}
-                    placeholder="版本清单 JSON 直链 / 网盘分享页"
+                    placeholder="JSON 直链 / 网盘分享页 / ssio+http://host:8100"
                     className="input-neon flex-1 py-0.5 px-2 text-xs"
                   />
-                  {s.type === 'anyshare' && (
+                  {(s.type === 'anyshare' || String(s.url || '').toLowerCase().startsWith('ssio+')) && (
                     <input
                       value={s.password || ''}
                       onChange={(e) => updateSourceLocal(i, { password: e.target.value })}
-                      placeholder="提取码"
-                      className="input-neon w-20 py-0.5 px-2 text-xs"
-                      title="北科云盘提取码"
+                      placeholder={String(s.url || '').toLowerCase().startsWith('ssio+') ? 'APIKey' : '提取码'}
+                      className="input-neon w-24 py-0.5 px-2 text-xs"
+                      title={String(s.url || '').toLowerCase().startsWith('ssio+') ? 'SSIO APIKey（需要 release:read scope）' : '北科云盘提取码'}
                     />
                   )}
                   <button onClick={() => removeSource(i)} className="btn-ghost text-neon-danger p-1" title="删除该源">

@@ -21,6 +21,7 @@ import {
 // 直接抛 `ReferenceError: require is not defined`，阻断移动端启动。
 // patchApply 不反向依赖本模块，无循环依赖；其顶层只有定义无副作用，静态引入安全。
 import * as patchApply from './patchApply';
+import { fetchSsioManifestText, isSsioSource } from './ssio';
 
 /** 内置更新源：默认三个公开源（GitHub raw + jsdelivr CDN 备援 + 北科云盘）。
  *  v1.2.7：加 jsdelivr CDN 作纯 latest.json 备援（jsdelivr 50MB 限制，setup 92.85MB 不适用，
@@ -359,8 +360,10 @@ function anyshareCfgFromSource(src: UpdateSource | undefined | null): AnyShareCo
   return { ...parsed, password: src.password };
 }
 
-/** 拉取某源清单：http 型直接 GET；anyshare 型从云盘里下载 latest-<ts>.json（按前缀取最新） */
+/** 拉取某源清单：http 型直接 GET；anyshare 型从云盘里下载 latest-<ts>.json（按前缀取最新）；
+ *  ssio 型调 API 并把响应合成成清单（见 updater/ssio.ts） */
 async function fetchManifestText(src: UpdateSource): Promise<string> {
+  if (isSsioSource(src)) return fetchSsioManifestText(src);
   const cfg = anyshareCfgFromSource(src);
   if (!cfg) return fetchText(src.url);
   const file =
