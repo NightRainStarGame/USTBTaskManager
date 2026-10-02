@@ -4,24 +4,24 @@
 
 ## 下载安装
 
-**当前最新版：v1.2.11**
+**当前最新版：v1.2.12**
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.11.exe`
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe`
 
 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
 > 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.11.exe`
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.12.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
 ### Android 版（APK）
 
-同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.11**（versionCode 8）。
+同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.12**（versionCode 9）。
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.11.apk`
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.12.apk`
 
-镜像兜底：`https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.11.apk`
+镜像兜底：`https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.12.apk`
 
 - 手机装好后**无需再手动下载**：**设置 → 软件更新** 里会直接显示新版本并支持「下载并安装」（原生下载 + SHA-256 校验 + 拉起系统安装器，主源失败自动走镜像）
 - 首次安装需授权「允许安装未知应用」，App 会引导跳转到对应开关页
@@ -31,6 +31,7 @@
 ## 自动更新
 
 应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查所有启用的源**，取版本号最高的那个升级；
+**v1.2.12 起默认主源是自建的 SSIO 服务器**（国内外都能连），GitHub raw 与北科云盘降为备源 —— SSIO 不可达时自动回退，不用手工切源。
 一个源连不上不影响其他源。
 
 App 自带默认两个源：
@@ -218,7 +219,7 @@ App 自带默认两个源：
 - 📂 **项目** 看板 / 列表 / 时间线 / 画布四种视图 · 拖拽切换状态 · 优先级旗标与过滤
 - 💾 **数据安全** 一键备份 / 恢复 · WebDAV 云同步（v1.2.3）· 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装（v1.2.11 起统一整装升级，不再分发增量补丁）；输入框失灵自检与补焦
+- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装（v1.2.12 起统一整装升级，不再分发增量补丁）；输入框失灵自检与补焦
 - 🎓 **学业**（v1.2.3）成绩录入 · 加权 GPA · 挂科预警 · 考试倒计时 + 复习任务生成 · 出勤打卡
 - ⏱ **番茄钟**（v1.2.3）全局悬浮 · 任务绑定 · 每日 / 各科专注统计
 - 🔥 **习惯打卡**（v1.2.3）连击统计 · 热力图 · 每周目标
@@ -250,7 +251,7 @@ npm run build:exe
 改完 `package.json` 里的 `version` 后：
 
 ```bash
-npm run release:one -- 1.2.11 --notes-file RELEASE-NOTES.md       # 一键：build + 双源分发 + commit + push + Release 附件
+npm run release:one -- 1.2.12 --notes-file RELEASE-NOTES.md       # 一键：build + 双源分发 + commit + push + Release 附件
 # 或手动分步：
 npm run build:exe          # 打包
 npm run publish:github     # ① 同步一份到 GitHub（含 Release 附件）
@@ -268,7 +269,7 @@ GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `ur
 按 basename 前缀找修改时间最新的一份再换签名直链下载。
 
 `patches[]` 同样规则：GitHub 版是 raw 绝对链，云盘版改写成云盘内 basename。
-（**v1.2.11 起暂停分发增量补丁**，`patches` 当前为空数组，所有版本统一整装升级。）
+（**v1.2.12 起暂停分发增量补丁**，`patches` 当前为空数组，所有版本统一整装升级。）
 
 ### 自建源（可选）
 

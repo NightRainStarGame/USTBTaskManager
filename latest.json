@@ -1,30 +1,31 @@
 {
-  "version": "1.2.11",
-  "notes": "v1.2.11 紧急修复（建议所有 1.2.10 用户立即升级）\r\n\r\n【修复】打包版点击任意功能模块均提示「界面渲染出现异常」，页面组件崩溃\r\n· 原因：1.2.10 引入路由懒加载后，Vite 产出 9 个 chunk 需在运行时动态加载；\r\n  开发模式正常，但安装版从 app.asar 内以 file:// 加载，动态 import 被拒绝。\r\n· 处理：所有页面恢复静态打包，产物收敛为单个 main.js，彻底不再依赖运行时 import()。\r\n\r\n【更新链路】\r\n· 补丁下载支持镜像回退（主源失败自动切备用源）\r\n· 补丁失败原因可诊断（版本基线不匹配 / asar 不可读 / 建议转整装）\r\n· 全源失败自动引导重新下载完整安装包\r\n\r\n【作业同步】\r\n· 云端迁至独立数据仓 USTBTaskManager-Class，与班级模块共用令牌，开箱即用\r\n· 迁移前发布的老同步码仍可继续拉取\r\n\r\n【Android】\r\n· 作业同步入口在移动端可用（此前被误隐藏）\r\n· 新增原生 HTTP 通道，贝壳课表/网盘不再受 WebView CORS 限制\r\n\r\n【其他】\r\n· 移除课程小程序模块及其 28 处接线\r\n· 冷启动单实例锁、首屏启动更快\r\n· 统一动效曲线，尊重系统「减少动态效果」设置\r\n\r\n【Android APK】\r\n· 修复 UI 重叠：状态栏不再盖住顶栏、手势条不再压住悬浮球/保存条\r\n· 修复输入法弹起后固定栏悬空错位、搜索&新建面板在小屏被裁\r\n· 新增 APK 应用内更新：设置 → 软件更新 → 下载并安装（sha256 校验 + 镜像回退）\r\n· versionCode 提升到 8（rev2），旧包可正常覆盖安装，不会再卡在更新不了的旧版本\r\n\r【rev2 重做（10-02 真机反馈后）】\r\n· 修「按钮点不上」真因：页面切换动画 pageIn/panelIn 的终态保留 translate3d(0,0,0)，\r\n  使页面容器变成后代 fixed 的包含块并被 overflow 裁剪 → 设置保存条、课程抽屉、\r\n  Modal、右键菜单全部脱离视口。终态改为 transform:none 后全部恢复\r\n· 修「菜单与状态栏重叠」真因：安全区只在启动时读一次，而 Activity 早期\r\n  getRootWindowInsets() 返回 null 拿到 0，之后又没有事件触发重读 → 永久为 0。\r\n  改为原生 OnApplyWindowInsetsListener 主动推送 + Web 多轮探测 + 本地缓存 + 兜底值，\r\n  并叠加 CSS env(safe-area-inset-*) 双层取大\r\n· Toast 层级从 z-60 降到 z-45（原来正好压住抽屉右上角关闭按钮）\r\n· 崩溃页、项目画布高度补安全区",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.11/TaskManager-Setup-1.2.11.exe",
-  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.2",
-  "sha256": "079473cc495b3a3fb7bb075aa941156ebc4ca0a181824556d49f6748a3011647",
-  "size": 97512784,
-  "fileName": "TaskManager-Setup-1.2.11.exe",
-  "releasedAt": "2026-09-18T10:48:00.000Z",
-  "releaseDate": "2026-09-28T13:13:18.988Z",
-  "asarSha256": "f499acaa18f0d04887c00e17a73c17cf5af05e2c519892cae2f2e4024b04b578",
-  "asarSize": 76151465,
+  "version": "1.2.12",
+  "notes": "v1.2.12：云服务主源统一切换到自建 SSIO + 班级成员修复 + Android UI 重做\r\n\r\n【云主源统一为 SSIO】\r\n· 自动更新 / 班级（公告·接龙·投票·成员）/ 作业同步，主源全部切换为自建 SSIO 服务器\r\n· GitHub 与北科云盘降级为备源，SSIO 不可达时自动回退\r\n· 不再需要自己申请 GitHub 令牌：内置客户端 Key 开箱即用，想用个人 PAT 仍可（变备源）\r\n· 强一致：绕开 GitHub raw 最长 5 分钟的 CDN 缓存，发布后对方立刻能收到\r\n· 移动端可用：SSIO 支持 CORS，Android WebView 直连（北科云盘在移动端依然不可用）\r\n· 内置 Key 只有 release:read + storage:read/write（无写权限），源码公开也发不了恶意更新包\r\n\r\n【班级：修「成员一个都看不到」】\r\n· 创建班级时只有配了 GitHub PAT 才写云端（没配就整段跳过）→ 班级只躺在本机 → 别人按邀请码加不进来\r\n· 加入班级同理，没 PAT 就不把自己写进云端成员表 → 加入者永远不出现在其他人的成员列表\r\n· 现在云端写入不受令牌有无影响，失败只记 warning，不再静默跳过\r\n\r\n【Android】\r\n· 修「按钮点不上」真因：页面切换动画终态保留了 transform，使页面容器变成后代 fixed 的包含块并被裁剪 → 保存条 / 抽屉 / 弹窗全部脱离视口\r\n· 修「菜单与状态栏重叠」真因：安全区只在启动时读一次，而 Activity 早期恒为 0；改为原生主动推送 + 多轮探测 + 本地缓存 + 兜底值\r\n· Toast 层级下调（原来正好压住抽屉右上角关闭按钮）；页面底部给悬浮球留出空间\r\n· versionCode 提升到 9，装了旧包的机器可正常覆盖升级",
+  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe",
+  "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12",
+  "sha256": "7a9afa9db125a9d4aac5276cbba00e1fa519a9ec4599aefe9f83e1c133bf69d3",
+  "size": 97523499,
+  "fileName": "TaskManager-Setup-1.2.12.exe",
+  "releasedAt": "2026-10-02T15:10:00.000Z",
+  "releaseDate": "2026-10-02T15:10:00.000Z",
+  "asarSha256": null,
+  "asarSize": null,
   "patches": [],
   "android": {
-    "version": "1.2.11",
-    "versionCode": 8,
-    "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.11.apk",
+    "version": "1.2.12",
+    "versionCode": 9,
+    "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.12.apk",
     "mirrors": [
-      "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.11.apk"
+      "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.12.apk"
     ],
-    "sha256": "393a52dd26f451fb0f73063093b1a6ca55ab5488382749cd6eb5f04ca0fed0d3",
-    "size": 4720606,
-    "fileName": "TaskManager-1.2.11.apk",
-    "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.11"
+    "sha256": "f53fd77eb5633f9456fb9b7af6bf4b27f376ed527ba86d468ed96587202a884f",
+    "size": 4721642,
+    "fileName": "TaskManager-1.2.12.apk",
+    "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12"
   },
   "urlMirrors": [
-    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.11.exe",
-    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.11.exe"
+    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe",
+    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.12.exe",
+    "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.12/TaskManager-Setup-1.2.12.exe"
   ]
 }
