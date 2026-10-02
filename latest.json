@@ -18,8 +18,8 @@
     "mirrors": [
       "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.12.apk"
     ],
-    "sha256": "f53fd77eb5633f9456fb9b7af6bf4b27f376ed527ba86d468ed96587202a884f",
-    "size": 4721642,
+    "sha256": "50f1751a018c79c080edc953f9534554deee7da0be5747388850c5c0dc5e7a38",
+    "size": 4721714,
     "fileName": "TaskManager-1.2.12.apk",
     "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12"
   },

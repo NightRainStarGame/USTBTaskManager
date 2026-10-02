@@ -14,6 +14,9 @@
  * 与桌面更新完全隔离：不碰 electron child_process / patch 那套，
  * 因此不会出现「下载进 IndexedDB、安装时抛 spawn 未定义」的经典翻车。
  */
+
+import { kvGetJson } from '../../electron/cloud/ssioClient';
+
 export interface AndroidUpdateInfo {
   version: string;
   versionCode: number;
@@ -36,6 +39,10 @@ export interface ApkUpdateCheck {
   latest?: AndroidUpdateInfo | null;
   error?: string;
 }
+
+/** v1.2.12：SSIO 主源。服务端 KV 里镜像了一份 latest.json（发版时同步上去），
+ *  国内外都能取到，且不受 GitHub raw 缓存影响。取不到才回退下面的备源。 */
+const SSIO_LATEST_KEY = 'latest.json';
 
 const LATEST_SOURCES = [
   'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
@@ -127,6 +134,15 @@ function parseAndroid(obj: any, source: string): AndroidUpdateInfo | null {
 
 /** 从所有可用源里挑 android.versionCode 最高的那份。 */
 export async function fetchAndroidUpdate(): Promise<AndroidUpdateInfo | null> {
+  // 主源 SSIO：拿到就直接返回（备源只在 SSIO 不可达时才走）
+  try {
+    const obj = await kvGetJson<any>(SSIO_LATEST_KEY);
+    const info = parseAndroid(obj, 'ssio');
+    if (info) return info;
+  } catch (e) {
+    console.warn('[apk] SSIO 更新清单读取失败，回退 GitHub:', e);
+  }
+
   const results = await Promise.allSettled(LATEST_SOURCES.map((u) => fetchJson(u)));
   let best: AndroidUpdateInfo | null = null;
 
