@@ -15,6 +15,19 @@
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
+### Android 版（APK）
+
+同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.11**（versionCode 8）。
+
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.11.apk`
+
+镜像兜底：`https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.11.apk`
+
+- 手机装好后**无需再手动下载**：**设置 → 软件更新** 里会直接显示新版本并支持「下载并安装」（原生下载 + SHA-256 校验 + 拉起系统安装器，主源失败自动走镜像）
+- 首次安装需授权「允许安装未知应用」，App 会引导跳转到对应开关页
+- 移动端为功能子集：班级 / 作业同步可用；北科云盘、贝壳课表因依赖 Node 模块或教务系统 CORS，不可用
+- 系统栏已按 Android 16 edge-to-edge 适配（状态栏 / 手势条不会遮挡菜单与按钮）
+
 ## 自动更新
 
 应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查所有启用的源**，取版本号最高的那个升级；
