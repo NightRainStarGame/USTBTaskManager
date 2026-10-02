@@ -246,7 +246,7 @@ export default function UpdateNotification({ externalTrigger }: Props) {
     <div
       // v1.1.5: 外层 pointer-events-none 避免挡住右下角其他按钮（保存设置、Calendar + 按钮）；
       // 内部按钮 / 链接 pointer-events-auto 让 toast 自己仍可点击
-      className="fixed bottom-[calc(1rem_+_var(--sab))] right-[calc(1rem_+_var(--sar))] z-50 w-[420px] max-w-[92vw] rounded-lg border border-neon-yellow/50 bg-ink-900/95 backdrop-blur-md shadow-2xl overflow-hidden pointer-events-none"
+      className="fixed bottom-[calc(1rem_+_var(--sab))] right-[calc(1rem_+_var(--sar))] z-[45] w-[420px] max-w-[92vw] rounded-lg border border-neon-yellow/50 bg-ink-900/95 backdrop-blur-md shadow-2xl overflow-hidden pointer-events-none"
       style={{ boxShadow: '0 0 24px rgba(255, 214, 10, 0.25)' }}
     >
       {/* 头部 */}

@@ -35,7 +35,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="min-h-screen bg-ink-base flex items-center justify-center p-8">
+      // v1.2.11 rev2：崩溃页渲染在 Layout 之外，拿不到外壳的安全区 padding，
+      // 这里自己补上，否则报错文案会顶到状态栏里
+      <div className="min-h-[100dvh] bg-ink-base flex items-center justify-center p-8 pt-[calc(2rem_+_var(--sat))] pb-[calc(2rem_+_var(--sab))]">
         <div className="max-w-xl w-full border border-neon-green/30 bg-ink-card rounded-lg p-8 text-center">
           <div className="w-14 h-14 mx-auto rounded-full border border-red-500/40 bg-red-500/10 flex items-center justify-center mb-4">
             <AlertTriangle size={26} className="text-red-400" />

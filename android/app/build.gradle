@@ -13,10 +13,11 @@ android {
         applicationId "com.lasarac.taskmanager"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // v1.2.11：与 package.json 保持一致。
+        // v1.2.11 rev2：与 package.json 保持一致。
         // ⚠️ versionCode 必须单调递增，否则用户安装新 APK 时会被系统拒绝
         // （INSTALL_FAILED_VERSION_DOWNGRADE），表现为「永远更新不了」。
-        versionCode 7
+        // rev2（UI 重叠重做）= 8，装了上一版（7）的机器也能正常覆盖升级。
+        versionCode 8
         versionName "1.2.11"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

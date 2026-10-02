@@ -54,7 +54,9 @@ export function ToastContainer() {
 
   return createPortal(
     <div
-      className="fixed top-[calc(1rem_+_var(--sat))] right-[calc(1rem_+_var(--sar))] z-[60] flex flex-col gap-2 max-w-sm pointer-events-none"
+      // v1.2.11 rev2：z 低于抽屉（z-50）。以前 z-[60] 时 toast 正好压在抽屉
+      // 右上角的关闭按钮上，360dp 屏上「菜单关不掉」。
+      className="fixed top-[calc(1rem_+_var(--sat))] right-[calc(1rem_+_var(--sar))] z-[45] flex flex-col gap-2 max-w-sm pointer-events-none"
       role="region"
       aria-label="通知"
     >

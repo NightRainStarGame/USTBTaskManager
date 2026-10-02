@@ -63,13 +63,18 @@ export default {
       },
       keyframes: {
         // v1.2.10：页面切换（轻微上移 + 淡入，走合成层不触发 layout）
+        // ⚠️ 终态必须是 transform: none，不能写 translate3d(0, 0, 0)！
+        // animation-fill-mode: both 会永久保留终态，而任何非 none 的 transform
+        // 都会让该元素变成后代 position:fixed 的 containing block，同时被祖先
+        // 的 overflow 裁剪 —— 页面里所有 fixed（设置保存条、课程抽屉、Modal、
+        // 边右键菜单）会脱离视口、按钮全部点不上。v1.2.11 rev2 修复。
         pageIn: {
           '0%': { opacity: '0', transform: 'translate3d(0, 8px, 0)' },
-          '100%': { opacity: '1', transform: 'translate3d(0, 0, 0)' },
+          '100%': { opacity: '1', transform: 'none' },
         },
         panelIn: {
           '0%': { opacity: '0', transform: 'translate3d(0, 6px, 0) scale(0.985)' },
-          '100%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
+          '100%': { opacity: '1', transform: 'none' },
         },
         fadeIn: {
           '0%': { opacity: '0' },

@@ -113,7 +113,9 @@ export default function ProjectsPage() {
         <div className="lg:col-span-3 min-w-0">
           {activeProject ? (
             view === 'canvas' ? (
-              <div className="h-[calc(100dvh_-_150px)] min-h-[480px] rounded-lg border border-neon-green/15 overflow-hidden">
+              // v1.2.11 rev2：150px 是桌面口径（顶栏+侧栏），移动端要再扣掉安全区；
+              // min-h 也从 480 降到 360，否则小屏上画布撑破可视区
+              <div className="h-[calc(100dvh_-_var(--sat)_-_var(--sab)_-_150px)] min-h-[360px] md:min-h-[480px] rounded-lg border border-neon-green/15 overflow-hidden">
                 <ProjectCanvas project={activeProject} />
               </div>
             ) : (

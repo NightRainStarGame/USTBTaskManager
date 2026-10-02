@@ -201,10 +201,19 @@
      顶栏/悬浮球/抽屉等 fixed 元素必须据此避让，否则在 Android 16 的
      edge-to-edge 下会被状态栏和手势条压住。 */
   :root {
-    --sat: 0px;
-    --sab: 0px;
-    --sal: 0px;
-    --sar: 0px;
+    /* --sat-js 等由 src/mobile/insets.ts 写入（原生 WindowInsetsCompat 的真值） */
+    --sat-js: 0px;
+    --sab-js: 0px;
+    --sal-js: 0px;
+    --sar-js: 0px;
+    /* v1.2.11 rev2：双保险 —— 取原生值与 WebView 自带 env() 的较大者。
+       原生链路万一没来得及推（页面刚起来 / 插件异常），WebView 自己算的
+       safe-area 还能兜住底；两者都失效时才退化成 0。
+       桌面端（无插件、无 env）恒为 0 → 布局零回归。 */
+    --sat: max(var(--sat-js), env(safe-area-inset-top, 0px));
+    --sab: max(var(--sab-js), env(safe-area-inset-bottom, 0px));
+    --sal: max(var(--sal-js), env(safe-area-inset-left, 0px));
+    --sar: max(var(--sar-js), env(safe-area-inset-right, 0px));
   }
 
   /* v1.2.11：@xyflow/react 的缩放控制条 / 小地图默认贴视口底边，移动端会正好

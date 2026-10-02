@@ -24,9 +24,10 @@ async function boot() {
   (globalThis as any).__TASKMANAGER_VERSION__ = __TASKMANAGER_VERSION__;
   // v1.2.10：Android 原生 HTTP 通道（装了 @capacitor-community/http 才真正生效，否则自动回退）
   installNativeHttpBridge();
-  // v1.2.11：系统栏安全区 —— 必须在 React mount 前写入 CSS 变量，
-  // 否则首帧的顶栏/悬浮球会先“陷进”状态栏和手势条再弹出来。
-  installSystemInsets();
+  // v1.2.11 rev2：系统栏安全区 —— 必须在 React mount 前写入 CSS 变量，
+  // 否则首帧的顶栏/抽屉会先“陷进”状态栏再弹出来。这里 await 第一轮探测，
+  // 后续多轮探测与原生推送在后台继续（详见 insets.ts）。
+  await installSystemInsets();
 
   await initSqlJsRuntime();
   const restored = await hydrateMemFsFromIdb();
