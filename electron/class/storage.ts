@@ -34,6 +34,9 @@ import {
   type AnyShareConfig, type AnyShareFile,
 } from '../anyshare';
 import { CLASS_SECRET } from './crypto';
+// v1.2.12：SSIO 立为主源（见 cloud/ssioClient 头注释）。GitHub 降为备源：
+// 国内可达性差、匿名 Contents API 60 次/h 限速、移动端 AnyShare 根本不可用。
+import { kvGetJson, kvPut, kvDelete } from '../cloud/ssioClient';
 
 export const CLASS_REPO_OWNER = 'NightRainStarGame';
 export const CLASS_REPO_NAME = 'USTBTaskManager-Class';
@@ -227,6 +230,11 @@ export interface PollEntry {
 // 文件路径助手
 // ============================================================
 
+/** v1.2.12：SSIO KV 的键。路径协议与 GitHub 完全一致，只是换了后端。 */
+function ssioFilePath(inviteCode: string, ...parts: string[]): string {
+  return [CLASS_DIR, inviteCode, ...parts].join('/');
+}
+
 function ghFilePath(inviteCode: string, ...parts: string[]): string {
   return [CLASS_DIR, inviteCode, ...parts].join('/');
 }
@@ -249,6 +257,13 @@ export interface ClassSource {
 export const githubSource: ClassSource = {
   name: 'github',
   async fetchManifest(inviteCode) {
+    // v1.2.12：SSIO 主源 —— 内置 Key 即可读，不需要用户配令牌，也不吃 GitHub 限速
+    try {
+      const sm = await kvGetJson<ClassManifest>(ssioFilePath(inviteCode, 'manifest.json'));
+      if (sm && sm.classCode && sm.inviteCode) return sm;
+    } catch (e) {
+      console.warn('[class] SSIO 读取 manifest 失败，回退 GitHub:', e);
+    }
     // v1.2.9 R9：raw CDN 优先（免鉴权无限速；不占共享令牌的 Contents API 配额——
     // 内置公共令牌 5000 req/h 全部留给写路径，读全走 raw）
     // ?t= 随机参数绕 CDN 缓存，保证读到刚 push 的版本
@@ -307,6 +322,13 @@ export const anyshareSource: ClassSource = {
 /** 拉取一条公告 */
 export async function fetchAnnouncement(inviteCode: string, annId: number, source: 'github' | 'anyshare' = 'github'): Promise<AnnouncementEntry | null> {
   if (source === 'github') {
+    // v1.2.12：SSIO 主源
+    try {
+      const se = await kvGetJson<AnnouncementEntry>(ssioFilePath(inviteCode, 'announcements', `${annId}.json`));
+      if (se && se.id === annId) return se;
+    } catch (e) {
+      console.warn('[class] SSIO 读取公告失败，回退 GitHub:', e);
+    }
     const r = await ghFetch(`${ghRawUrl(inviteCode, 'announcements', annId + '.json')}?t=${Date.now()}`);
     if (r.ok) {
       try {
@@ -336,6 +358,13 @@ export async function fetchAnnouncement(inviteCode: string, annId: number, sourc
 /** 拉取一条班级作业 */
 export async function fetchClassTask(inviteCode: string, taskId: number, source: 'github' | 'anyshare' = 'github'): Promise<ClassTaskEntry | null> {
   if (source === 'github') {
+    // v1.2.12：SSIO 主源
+    try {
+      const se = await kvGetJson<ClassTaskEntry>(ssioFilePath(inviteCode, 'tasks', `${taskId}.json`));
+      if (se && se.id === taskId) return se;
+    } catch (e) {
+      console.warn('[class] SSIO 读取班级作业失败，回退 GitHub:', e);
+    }
     const r = await ghFetch(`${ghRawUrl(inviteCode, 'tasks', taskId + '.json')}?t=${Date.now()}`);
     if (r.ok) {
       try {
@@ -363,6 +392,13 @@ export async function fetchClassTask(inviteCode: string, taskId: number, source:
 
 /** 拉取一条接龙（v1.2.9 R4；仅 GitHub 源——AnyShare 备源只兜公告/作业） */
 export async function fetchChain(inviteCode: string, chainId: number): Promise<ChainEntry | null> {
+  // v1.2.12：SSIO 主源（接龙要能实时追加，GitHub 的 CDN 缓存会让别人看到旧内容）
+  try {
+    const se = await kvGetJson<ChainEntry>(ssioFilePath(inviteCode, 'chains', `${chainId}.json`));
+    if (se && se.id === chainId) return se;
+  } catch (e) {
+    console.warn('[class] SSIO 读取接龙失败，回退 GitHub:', e);
+  }
   const r = await ghFetch(`${ghRawUrl(inviteCode, 'chains', chainId + '.json')}?t=${Date.now()}`);
   if (r.ok) {
     try {
@@ -375,6 +411,13 @@ export async function fetchChain(inviteCode: string, chainId: number): Promise<C
 
 /** 拉取一条投票（v1.2.9 R5；仅 GitHub 源） */
 export async function fetchPoll(inviteCode: string, pollId: number): Promise<PollEntry | null> {
+  // v1.2.12：SSIO 主源（投票同理，CDN 缓存会让票数滞后）
+  try {
+    const se = await kvGetJson<PollEntry>(ssioFilePath(inviteCode, 'polls', `${pollId}.json`));
+    if (se && se.id === pollId) return se;
+  } catch (e) {
+    console.warn('[class] SSIO 读取投票失败，回退 GitHub:', e);
+  }
   const r = await ghFetch(`${ghRawUrl(inviteCode, 'polls', pollId + '.json')}?t=${Date.now()}`);
   if (r.ok) {
     try {
@@ -497,7 +540,15 @@ export async function fetchClassSnapshot(
 
 /** GitHub 发布一条公告（或更新 manifest 时调用） */
 export async function ghPut(inviteCode: string, relPath: string[], content: string, token: string, sha?: string, message?: string): Promise<void> {
-  if (!token) throw new Error('GitHub 写入需要令牌（设置 → 班级 → GitHub PAT）');
+  // v1.2.12：SSIO 是主源。它不需要用户配令牌、不受 GitHub 限速、移动端也能写，
+  // 写成功就直接返回；失败才回退 GitHub（此时没有令牌就只能报错了）。
+  try {
+    await kvPut(ssioFilePath(inviteCode, ...relPath), content);
+    return;
+  } catch (e) {
+    console.warn('[class] SSIO 写入失败，回退 GitHub:', e);
+  }
+  if (!token) throw new Error('云端写入失败：SSIO 不可达，且未配置 GitHub 令牌（设置 → 班级 → GitHub PAT）');
   const filePath = ghFilePath(inviteCode, ...relPath);
   const body: any = {
     message: message || `Update class/${inviteCode}/${relPath.join('/')}`,
@@ -529,7 +580,14 @@ export async function ghGetSha(inviteCode: string, relPath: string[], token?: st
 
 /** GitHub 删除文件（v1.2.9 R2：公告撤回。Contents API DELETE 必须带 sha） */
 export async function ghDelete(inviteCode: string, relPath: string[], token: string, sha: string, message?: string): Promise<void> {
-  if (!token) throw new Error('GitHub 删除需要令牌');
+  // v1.2.12：SSIO 主源（KV 删除幂等，key 不存在也当成功）
+  try {
+    await kvDelete(ssioFilePath(inviteCode, ...relPath));
+    return;
+  } catch (e) {
+    console.warn('[class] SSIO 删除失败，回退 GitHub:', e);
+  }
+  if (!token) throw new Error('云端删除失败：SSIO 不可达，且未配置 GitHub 令牌');
   const filePath = ghFilePath(inviteCode, ...relPath);
   const body = {
     message: message || `Delete class/${inviteCode}/${relPath.join('/')}`,

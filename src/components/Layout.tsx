@@ -86,7 +86,10 @@ export default function Layout() {
           onMenu={() => setMenuOpen(true)}
         />
         {/* v1.2.10：路由切换时按 key 重挂载 + 淡入上移，取代原来的瞬时硬切 */}
-        <main className="flex-1 overflow-auto">
+        {/* v1.2.12：移动端底部留白 —— 番茄钟悬浮球和页面内的固定操作条（如设置的
+            保存条）都贴在视口底部，不给内容留空间的话列表最后几项永远点不到。
+            平板/桌面（md+）空间充裕且没有全宽悬浮控件，不需要这个内边距。 */}
+        <main className="flex-1 overflow-auto pb-[calc(4.5rem_+_var(--sab))] md:pb-0">
           <div key={pathname} className="animate-page-in h-full">
             <Outlet />
           </div>

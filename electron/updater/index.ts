@@ -21,17 +21,29 @@ import {
 // 直接抛 `ReferenceError: require is not defined`，阻断移动端启动。
 // patchApply 不反向依赖本模块，无循环依赖；其顶层只有定义无副作用，静态引入安全。
 import * as patchApply from './patchApply';
-import { fetchSsioManifestText, isSsioSource } from './ssio';
+import { fetchSsioManifestText, isSsioSource, SSIO_PREFIX } from './ssio';
+import { SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
 
 /** 内置更新源：默认三个公开源（GitHub raw + jsdelivr CDN 备援 + 北科云盘）。
  *  v1.2.7：加 jsdelivr CDN 作纯 latest.json 备援（jsdelivr 50MB 限制，setup 92.85MB 不适用，
  *  但 latest.json 和 22MB 补丁都可以走 jsdelivr）。用户也可在设置里增删、替换、加主源标 */
 export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
+    // v1.2.12：SSIO 立为主源。自建服务器国内外都能连（GitHub raw 在国内常被墙/劫持），
+    // 且 APK 与桌面端共用同一份发行记录。`ssio+` 前缀由 updater/ssio.ts 识别，
+    // password 位置放 APIKey（只有 release:read，没有写权限，泄露也发不了恶意包）。
+    name: 'SSIO 官方源',
+    url: `${SSIO_PREFIX}${SSIO_DEFAULT_BASE}`,
+    password: SSIO_BUILTIN_KEY,
+    type: 'ssio',
+    enabled: true,
+    primary: true,
+  },
+  {
     name: 'GitHub',
     url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
     enabled: true,
-    primary: true,
+    primary: false,
   },
   {
     name: 'jsDelivr CDN（GitHub 镜像）',
@@ -64,7 +76,8 @@ export interface UpdateSource {
   url: string;
   enabled: boolean;
   primary: boolean;
-  type?: 'anyshare' | 'http';
+  /** v1.2.12：新增 'ssio' —— 自建 SSIO 发行源（url 带 `ssio+` 前缀） */
+  type?: 'anyshare' | 'http' | 'ssio';
   password?: string;
 }
 
@@ -266,7 +279,14 @@ export function getSources(db: DB | null): UpdateSource[] {
         ...userSources,
         ...toAdd.map((s) => ({ ...s, primary: false })),
       ];
-      if (!merged.some((s) => s.primary)) merged[0] = { ...merged[0], primary: true };
+      // v1.2.12：SSIO 是官方主源。老用户本机已存的源会挡住新默认源（合并只追加），
+      // 这里让新加入的 SSIO 源接管 primary，升级后自动切过去。
+      const ssioIdx = merged.findIndex((s) => isSsioSource(s));
+      if (ssioIdx >= 0) {
+        for (let i = 0; i < merged.length; i++) merged[i].primary = i === ssioIdx;
+      } else if (!merged.some((s) => s.primary)) {
+        merged[0] = { ...merged[0], primary: true };
+      }
       if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(merged));
       return merged;
     }

@@ -541,16 +541,18 @@ export function registerClass(db: DB) {
 
     const ghToken = getGitHubToken(db);
     const errors: string[] = [];
-    if (ghToken) {
-      try {
-        await ghTryWrite((t) => ghPut(inviteCode, ['manifest.json'], JSON.stringify(manifest, null, 2), t, undefined, `创建班级 ${name}`));
-        const sha = await ghGetSha(inviteCode, ['manifest.json'], ghToken);
-        if (sha) db.prepare('UPDATE classes SET cloud_synced = 1, manifest_sha = ? WHERE id = ?').run(sha, classId);
-      } catch (e: any) {
-        errors.push(friendlyGhErr('GitHub 同步失败', e));
-      }
-    } else {
-      errors.push('没有可用的 GitHub 写入令牌：班级仅保存在本机，其他成员看不到。到「班级 → 配置」填写 GitHub PAT');
+    // v1.2.12：SSIO 内置 Key 不需要用户配置任何令牌，所以「有没有 GitHub PAT」
+    // 不再决定班级能不能上云。以前没配 PAT 就整段跳过云端写入 → 班级只躺在本机
+    // → 其他人按邀请码加入时读不到 manifest → 表现为「成员一个都看不到」。
+    // 现在无条件尝试写云端（SSIO 主源，失败才回退 GitHub），失败才记 warning。
+    try {
+      await ghPut(inviteCode, ['manifest.json'], JSON.stringify(manifest, null, 2), ghToken || '', undefined, `创建班级 ${name}`);
+      db.prepare('UPDATE classes SET cloud_synced = 1 WHERE id = ?').run(classId);
+      // manifest_sha 只有走 GitHub 才有意义（SSIO 用 version 做乐观锁）
+      const sha = ghToken ? await ghGetSha(inviteCode, ['manifest.json'], ghToken) : null;
+      if (sha) db.prepare('UPDATE classes SET manifest_sha = ? WHERE id = ?').run(sha, classId);
+    } catch (e: any) {
+      errors.push(`云端同步失败（班级已存在本机）：${friendlyGhErr('', e) || e?.message || e}`);
     }
 
     // AnyShare 双写（可选；v1.2.9 R9 起默认关闭——之前内置的占位链接根本不存在，纯报错噪音）
@@ -598,7 +600,7 @@ export function registerClass(db: DB) {
         if (manifest) source = 'anyshare';
       } catch {}
     }
-    if (!manifest) return { ok: false, error: '远端找不到该班级（GitHub + AnyShare 都未命中）', errorCode: 'NOT_FOUND' };
+    if (!manifest) return { ok: false, error: '远端找不到该班级（SSIO + GitHub + AnyShare 都未命中）', errorCode: 'NOT_FOUND' };
 
     // 验证每个成员签名（防云端被中间人篡改）
     for (const m of manifest.members) {
@@ -632,23 +634,21 @@ export function registerClass(db: DB) {
 
     // v1.2.9 R1：把自己写进云端 manifest.members（之前 join 从不更新云端 → 成员列表永远只有 owner）
     const warnings: string[] = [];
-    const ghToken = getGitHubToken(db);
-    if (ghToken) {
-      try {
-        const updated = await mutateManifestRemote(inviteCode, `成员 ${alias} 加入班级`, (m) => {
-          if (!m.members.some((x) => x.alias === alias)) {
-            m.members.push({ alias, role: 'member', joinedAt: now, sig: signMember(alias, m.classCode, 'member') });
-          }
-        });
-        if (updated) {
-          db.prepare('UPDATE classes SET members_json = ?, member_synced = 1, member_count = ? WHERE id = ?')
-            .run(JSON.stringify(updated.members), updated.members.length, classId);
+    // v1.2.12：无条件尝试写云端成员表。SSIO 内置 Key 不需要用户配任何令牌，
+    // 以前「没配 PAT 就跳过」会让加入者永远不出现在其他人的成员列表里
+    // （这也是「成员看不到」的另一半原因）。
+    try {
+      const updated = await mutateManifestRemote(inviteCode, `成员 ${alias} 加入班级`, (m) => {
+        if (!m.members.some((x) => x.alias === alias)) {
+          m.members.push({ alias, role: 'member', joinedAt: now, sig: signMember(alias, m.classCode, 'member') });
         }
-      } catch (e: any) {
-        warnings.push(friendlyGhErr('成员列表未更新到云端', e));
+      });
+      if (updated) {
+        db.prepare('UPDATE classes SET members_json = ?, member_synced = 1, member_count = ? WHERE id = ?')
+          .run(JSON.stringify(updated.members), updated.members.length, classId);
       }
-    } else {
-      warnings.push('没有可用的 GitHub 写入令牌：你的昵称暂不写入云端成员列表（不影响收公告）。到「班级 → 配置」填写 PAT');
+    } catch (e: any) {
+      warnings.push(`成员列表未更新到云端：${friendlyGhErr('', e) || e?.message || e}`);
     }
 
     return {

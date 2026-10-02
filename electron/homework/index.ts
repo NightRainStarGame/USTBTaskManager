@@ -22,6 +22,9 @@ import {
 } from '../anyshare';
 // v1.2.10：复用班级那张 fine-grained PAT 作为作业同步的内置令牌（同仓库、同权限）
 import { CLASS_FALLBACK_TOKEN } from '../class/storage';
+// v1.2.12：SSIO 立为主源 —— 内置 Key 无需用户配 PAT，且强一致（GitHub raw 有最多 5 分钟
+// CDN 缓存，发布后立刻接收会拿到旧包，v1.1.8 就栽在这）。GitHub 降为可选镜像。
+import { kvGetJson, kvPut } from '../cloud/ssioClient';
 
 export const HOMEWORK_REPO_OWNER = 'NightRainStarGame';
 /**
@@ -316,6 +319,13 @@ const githubSource: HomeworkSource = {
   name: 'github',
   async fetchBundle(syncCode, token) {
     const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
+    // v1.2.12：SSIO 主源（强一致 + 免令牌 + 国内外可达）
+    try {
+      const sf = await kvGetJson<HomeworkFile>(`${HOMEWORK_DIR}/${syncCode}.json`);
+      if (sf && Array.isArray(sf.entries) && sf.syncCode === syncCode) return { file: sf };
+    } catch (e) {
+      console.warn('[homework] SSIO 读取失败，回退 GitHub:', e);
+    }
     // Contents API（no-store）优先：raw CDN 的缓存键忽略 query string，?t= 绕不过
     // 它最长 5 分钟的缓存——发布第二条后立刻接收会拿到只剩第一条的旧包（v1.1.8 实测根因）。
     // raw 降级为 Contents API 网络失败时的兜底（有缓存总比拿不到强）。
@@ -737,31 +747,56 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
 
   // GitHub 目标
   const token = resolveToken(db);
-  if (!token) return { ok: false, error: '未找到 GitHub 发布令牌（内置令牌不可用，请在「设置 → 作业同步」填一张 PAT）' };
+  // v1.2.12：SSIO 主源。内置 Key 不需要用户配 PAT —— 先探一次 SSIO，
+  // 可达时即使没有 GitHub 令牌也能发布（GitHub 退化为可选镜像）。
+  const ssioKey = `${HOMEWORK_DIR}/${syncCode}.json`;
+  let ssioFile: HomeworkFile | null = null;
+  let ssioUp = true;
+  try {
+    ssioFile = await kvGetJson<HomeworkFile>(ssioKey);
+  } catch (e) {
+    ssioUp = false;
+    console.warn('[homework] SSIO 不可用，回退 GitHub:', e);
+  }
+  if (!token && !ssioUp) {
+    return { ok: false, error: '未找到 GitHub 发布令牌，且 SSIO 云不可达（请在「设置 → 作业同步」填一张 PAT，或检查网络）' };
+  }
 
   let file: HomeworkFile;
   let sha: string | undefined;
   // 最多两次 GET（一次主、一次 409 重试）。每次都发 no-store 头防 CDN 60s 缓存命中旧 sha
   const fetchFile = async () => ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
-  let r = await fetchFile();
-  if (r.status === 404) {
-    file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
-  } else if (!r.ok) {
-    return { ok: false, error: describeStatus(r.status, r.text) };
-  } else {
-    try {
-      const meta = JSON.parse(r.text);
-      sha = meta.sha;
-      file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-      if (!Array.isArray(file.entries)) file.entries = [];
-      // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
-      file = mergeBundleFiles([file], syncCode);
-      file.courseName = courseName;
-      if (courseKey && !file.courseKey) file.courseKey = courseKey;
-      if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
-    } catch {
-      return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
+
+  // SSIO 上有包 → 直接当基线（强一致，不存在「发布后收不到」的缓存滞后）
+  if (ssioFile && Array.isArray(ssioFile.entries)) {
+    file = mergeBundleFiles([ssioFile], syncCode);
+    file.courseName = courseName;
+    if (courseKey && !file.courseKey) file.courseKey = courseKey;
+    if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
+  } else if (token) {
+    const r = await fetchFile();
+    if (r.status === 404) {
+      file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
+    } else if (!r.ok) {
+      return { ok: false, error: describeStatus(r.status, r.text) };
+    } else {
+      try {
+        const meta = JSON.parse(r.text);
+        sha = meta.sha;
+        file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
+        if (!Array.isArray(file.entries)) file.entries = [];
+        // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
+        file = mergeBundleFiles([file], syncCode);
+        file.courseName = courseName;
+        if (courseKey && !file.courseKey) file.courseKey = courseKey;
+        if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
+      } catch {
+        return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
+      }
     }
+  } else {
+    // 没有 GitHub 令牌、SSIO 上也没有历史包：本地起一个新包，写进 SSIO
+    file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
   }
 
   // 批量合并到内存 file，最后一次性 PUT（避免 N 次远端 IO）
@@ -825,7 +860,16 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     }
     putRes = await put(sha);
   }
-  if (!putRes.ok) return { ok: false, error: describeStatus(putRes.status, putRes.text) };
+  // v1.2.12：SSIO 主源写回（与 GitHub 双写，任一成功即算发布成功）
+  let ssioErr = '';
+  try {
+    await kvPut(ssioKey, JSON.stringify(mergedFile, null, 2));
+  } catch (e: any) {
+    ssioErr = String(e?.message || e);
+  }
+  if (!putRes.ok && ssioErr) {
+    return { ok: false, error: `${describeStatus(putRes.status, putRes.text)}；SSIO 写入也失败：${ssioErr}` };
+  }
 
   return {
     ok: true,
