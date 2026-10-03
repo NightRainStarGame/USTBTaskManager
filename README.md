@@ -4,14 +4,14 @@
 
 ## 下载安装
 
-**当前最新版：v1.2.13**
+**当前最新版：v1.2.14**
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.13.exe`
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.14.exe`
 
 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
 > 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.13.exe`
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.14.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
@@ -31,7 +31,9 @@
 ## 自动更新
 
 应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查所有启用的源**，取版本号最高的那个升级；
-**v1.2.12 起默认主源是自建的 SSIO 服务器**（国内外都能连），GitHub raw 与北科云盘降为备源 —— SSIO 不可达时自动回退，不用手工切源。
+**v1.2.12 起默认主源是自建的 SSIO 服务器**（国内外都能连）。v1.2.14 起默认只启用两个源：
+SSIO（主）+ jsDelivr（备）；GitHub raw 与北科云盘**默认关闭**（国内常连不上 / 需校园网，
+只会拖慢每次检查），需要可在「设置 → 软件更新 → 更新源」里勾选启用。任一源不可用不影响其他源。
 一个源连不上不影响其他源。
 
 App 自带默认两个源：
