@@ -58,7 +58,9 @@ export default function ClassDetailPage() {
         return;
       }
       if (r.ok) {
-        setMsg(`✅ 同步完成 · ${r.source || 'github'} · 新增 ${r.newAnnouncements || 0} 公告 / ${r.newChains || 0} 接龙 / ${r.newPolls || 0} 投票`);
+        // v1.2.13：后端 source 字段仍是历史值 'github'（那个「github 源」内部其实是
+        // SSIO 优先、GitHub 兜底），直接显示会误导。这里按真实主源展示。
+        setMsg(`✅ 同步完成 · SSIO 云 · 新增 ${r.newAnnouncements || 0} 公告 / ${r.newChains || 0} 接龙 / ${r.newPolls || 0} 投票`);
         await refresh();
       } else {
         setMsg(`❌ 同步失败：${r.error}`);

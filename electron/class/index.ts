@@ -386,7 +386,7 @@ export function registerClass(db: DB) {
         'github',
       );
       if (!snap) {
-        lastError = 'GitHub 拉取返回 null';
+        lastError = '云端拉取返回 null（SSIO 与 GitHub 都未命中）';
       } else {
         if (snap.manifest.sig !== signManifest(snap.manifest)) {
           return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
@@ -587,7 +587,7 @@ export function registerClass(db: DB) {
     const exist = db.prepare('SELECT id FROM classes WHERE code = ?').get(classCode) as { id: number } | undefined;
     if (exist) return { ok: false, error: '本机已加入此班级', errorCode: 'ALREADY_JOINED', classId: exist.id };
 
-    // 拉远端 manifest（GitHub 优先 → AnyShare 兜底）
+    // 拉远端 manifest（首选源内部：SSIO 优先 → GitHub 回退；再 AnyShare 兜底）
     let manifest: ClassManifest | null = null;
     let source: 'github' | 'anyshare' | null = null;
     try {

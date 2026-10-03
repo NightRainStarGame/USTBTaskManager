@@ -1064,7 +1064,7 @@ export default function SettingsPage() {
       <Section icon={<Trash2 size={14} />} title="自动清理 & 回收站">
         <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
           <div>· 完成的作业/任务、过期日程、完结项目到期后自动移入<strong className="text-neon-green">回收站</strong>，回收站到期后彻底删除</div>
-          <div>· 上传到 GitHub/云盘的共享作业超过保留天数后云端同步清理（云盘为写过滤快照，旧客户端也不再挂载过期条目）</div>
+          <div>· 上传到 SSIO 云/北科云盘的共享作业超过保留天数后云端同步清理（云盘为写过滤快照，旧客户端也不再挂载过期条目）</div>
           <div>· 手动删除的数据同样先进回收站，可随时恢复</div>
         </div>
         {cleanRules ? (
@@ -1306,10 +1306,11 @@ export default function SettingsPage() {
                 {srcSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : <><Save size={12} /> 保存源</>}
               </button>
               <span className="font-mono text-[10px] text-text-dim">
-                内置三个源：<strong className="text-neon-green">StarOS（nrsc.games）</strong>为主源，
-                <strong className="text-neon-green">GitHub leastversion</strong>与
-                <strong className="text-neon-yellow">北科云盘（需校园网）</strong>为备用镜像；
-                检查更新时会一起查，取版本最高的那个升级。
+                {/* v1.2.13：默认只启用两个源，其余默认关闭——开太多只会让每次检查都等超时 */}
+                默认启用两个源：<strong className="text-neon-green">SSIO 官方源</strong>为主源，
+                <strong className="text-neon-green">jsDelivr CDN</strong>为备源；
+                检查更新时一起查，取版本最高的那个升级。
+                GitHub raw 与北科云盘默认关闭（国内常连不上 / 需校园网），需要可在上面的列表里勾选启用。
               </span>
             </div>
 
@@ -1363,8 +1364,8 @@ export default function SettingsPage() {
           {aggregate?.winner?.hasUpdate && (
             <button onClick={ignoreVersion} className="btn-ghost text-text-dim">忽略 v{aggregate.winner.latestVersion}</button>
           )}
-          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="GitHub 源打不开 / 下载慢的解决教程（主源 nrsc.games 不受影响）">
-            <ExternalLink size={14} /> GitHub 源打不开？点这
+          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="默认源打不开 / 下载慢的解决教程（主源 SSIO 不受影响）">
+            <ExternalLink size={14} /> 更新源打不开？点这
           </button>
         </div>
         ) : (
@@ -1455,7 +1456,7 @@ export default function SettingsPage() {
           <div className="mt-1 p-3 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap break-all">
             <div>✗ {updateMsg}</div>
             <button onClick={openGithubFix} className="mt-2 underline underline-offset-2 hover:opacity-80">
-              GitHub 源连不上？点这（解决教程）
+              更新源连不上？点这（解决教程）
             </button>
           </div>
         )}
@@ -1476,14 +1477,18 @@ export default function SettingsPage() {
 
       {/* 作业同步（v1.1.4） */}
       <Section icon={<CloudUpload size={14} />} title="作业同步">
-        <Row label="GitHub 发布令牌">
+        {/* v1.2.13：作业同步主源也是 SSIO（内置通道，开箱即用），GitHub PAT 降级为可选备源 */}
+        <Row label="GitHub 令牌（备源，可选）">
           <div className="space-y-1.5">
+            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 text-[10px] font-mono text-neon-green mb-1">
+              ✅ 作业已默认读写 <strong>SSIO 云服务器</strong>，无需配置任何令牌
+            </div>
             <div className="flex items-center gap-2">
               <input
                 type="password"
                 value={hwToken}
                 onChange={(e) => setHwToken(e.target.value)}
-                placeholder={hwTokenSet ? '已配置（留空不修改）' : 'ghp_… / github_pat_…'}
+                placeholder={hwTokenSet ? '已配置（留空不修改）' : 'ghp_… / github_pat_…（备源用，可不填）'}
                 className="input-neon flex-1"
               />
               <button onClick={saveHwAuth} className="btn-neon text-xs py-1.5 shrink-0">
@@ -1491,7 +1496,8 @@ export default function SettingsPage() {
               </button>
             </div>
             <div className="font-mono text-[10px] text-text-dim">
-              发布作业到 GitHub 时需要（fine-grained PAT，勾选本仓库 Contents 读写）。接收作业<strong className="text-neon-green">不需要令牌</strong>（v1.1.4 起读走 raw CDN，不受 API 每小时 60 次限制）。
+              只在你想额外镜像一份到 GitHub 仓库时才需要（fine-grained PAT，勾选该仓库 Contents 读写）。
+              留空不影响使用：接收作业<strong className="text-neon-green">不需要令牌</strong>，且 SSIO 是强一致的（发布后立刻能收到）。
             </div>
           </div>
         </Row>
@@ -1515,7 +1521,7 @@ export default function SettingsPage() {
                 className="accent-[#00FF88]"
               />
               <span className="text-xs text-text-secondary">
-                启用后「接收作业」除 GitHub 外也会查北科云盘；「发布作业」可选发布到云盘。
+                启用后「接收作业」除 SSIO 云外也会查北科云盘；「发布作业」可选发布到云盘。
                 <strong className="text-neon-yellow">需要北京科技大学校园网</strong>。
               </span>
             </label>
@@ -1541,7 +1547,7 @@ export default function SettingsPage() {
             )}
             {IS_MOBILE && (
               <div className="font-mono text-[10px] text-neon-yellow">
-                ⚠ 手机端不支持云盘（依赖 Node 原生 HTTPS）；作业同步走 GitHub 源即可，不受影响
+                ⚠ 手机端不支持云盘（依赖 Node 原生 HTTPS）；作业同步走 SSIO 云即可，不受影响
               </div>
             )}
             <div className="font-mono text-[10px] text-text-dim">

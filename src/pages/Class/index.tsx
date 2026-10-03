@@ -53,7 +53,7 @@ export default function ClassListPage() {
             班级
           </h1>
           <p className="text-text-dim font-mono text-xs mt-1">
-            P2P 班级 · 无中心服务器 · 数据落在 GitHub raw + 北科云盘
+            班级数据实时同步到 SSIO 云服务器（GitHub 仓库作为备源）
           </p>
         </div>
         <div className="flex gap-2">
@@ -80,10 +80,8 @@ export default function ClassListPage() {
           <Users size={32} className="mx-auto text-text-dim mb-2" />
           <div className="text-text-secondary font-mono text-sm mb-1">还没有加入任何班级</div>
           <div className="text-text-dim font-mono text-xs">
-            {cfg?.cloudSourceEnabled || cfg?.tokenSet
-              ? <>点击右上角「<strong className="text-neon-green">创建班级</strong>」开始，或用邀请码「<strong className="text-neon-yellow">加入班级</strong>」</>
-              : <>建议先点击「<strong className="text-neon-green">⚙ 配置</strong>」配置 GitHub PAT 或北科云盘，否则其他同学看不到你的班级</>
-            }
+            {/* v1.2.13：SSIO 是内置主源，开箱即用，不需要先配令牌 —— 别再提示「先去配置 GitHub PAT」 */}
+            点击右上角「<strong className="text-neon-green">创建班级</strong>」开始，或用邀请码「<strong className="text-neon-yellow">加入班级</strong>」
           </div>
         </div>
       ) : (
@@ -310,7 +308,7 @@ function CreateClassModal({ cfg, onClose, onCreated, onJumpToPay }: any) {
           <div className="text-[11px] font-mono text-text-dim">
             · 把邀请码发给同学 → 他们在「加入班级」里粘贴即可
             <br />· owner_token 仅在本机保存，不要外传
-            <br />· 你发布的公告/作业会上传到 GitHub + 北科云盘
+            <br />· 你发布的公告/作业会实时同步到 SSIO 云服务器（同学无需同网）
           </div>
         </div>
       </Modal>
@@ -353,11 +351,8 @@ function CreateClassModal({ cfg, onClose, onCreated, onJumpToPay }: any) {
           </div>
         </div>
         {err && <div className="text-red-400 font-mono text-xs">❌ {err}</div>}
-        {!cfg?.tokenSet && !cfg?.cloudSourceEnabled && (
-          <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-xs font-mono text-neon-yellow">
-            ⚠ 你还没配置 GitHub PAT 或北科云盘，班级数据将仅存本机，其他同学看不到
-          </div>
-        )}
+        {/* v1.2.13：删掉「没配 GitHub PAT 就只存本机」的警告 —— SSIO 内置主源永远可写，
+            这条警告在 SSIO 时代是纯误导（配不配令牌同学都能看到） */}
       </div>
     </Modal>
   );
@@ -459,9 +454,13 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
       </>
     }>
       <div className="space-y-4 text-left">
-        {/* GitHub 写入通道 */}
+        {/* v1.2.13：SSIO 云同步是主源（内置 Key，开箱即用）；GitHub 令牌降级为可选备源 */}
         <div className="border border-neon-green/15 rounded p-3">
-          <div className="font-mono text-xs text-neon-green mb-2">📦 GitHub 写入通道（主源）</div>
+          <div className="font-mono text-xs text-neon-green mb-2">☁️ SSIO 云同步（主源 · 内置已启用）</div>
+          <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
+            ✅ 数据读写走 SSIO 云服务器，无需任何配置
+            <span className="text-text-dim"> · 下方 GitHub 令牌仅作备源，留空即可</span>
+          </div>
           {/* v1.2.9 R9：通道状态一目了然——不静默 */}
           {cfg?.usingFallbackToken ? (
             <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
@@ -480,7 +479,7 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
           <div className="flex items-center gap-2">
             <input
               type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)}
-              className="input-neon font-mono text-xs flex-1" placeholder="个人 PAT（可选）ghp_xxxx / github_pat_xxxx"
+              className="input-neon font-mono text-xs flex-1" placeholder="GitHub PAT（备源，可选）ghp_xxxx / github_pat_xxxx"
             />
             {cfg?.tokenSet && (
               <button
@@ -501,8 +500,8 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
             )}
           </div>
           <div className="text-[10px] font-mono text-text-dim mt-1">
-            需要对 <span className="text-neon-green">{cfg?.repo || 'NightRainStarGame/USTBTaskManager-Class'}</span> 的 Contents 读写权限
-            <br />留空 = 用内置公共通道（或保持现状）
+            备源仓库 <span className="text-neon-green">{cfg?.repo || 'NightRainStarGame/USTBTaskManager-Class'}</span> 需要 Contents 读写权限
+            <br />留空 = 只用 SSIO 主源（推荐，同学照样能看到）
           </div>
         </div>
 
@@ -524,7 +523,7 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
             className="input-neon text-xs" placeholder="提取码"
           />
           <div className="text-[10px] font-mono text-text-dim mt-1">
-            仅校园网内可达的可选备份；不填也能用（GitHub 主源已保证可用）
+            仅校园网内可达的可选备份；不填也能用（SSIO 主源已保证可用）
           </div>
         </div>
 

@@ -300,10 +300,12 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
         <button onClick={onClose} className="btn-neon">完成</button>
       </>;
     }
+    // v1.2.13：targets.github 这个分支内部是「SSIO 主源 + GitHub 镜像」，
+    // 对外要说 SSIO，否则用户以为还在依赖 GitHub。
     const btnLabel = busy ? '上传中…' : (
-      targets.cloud && targets.github ? `上传 ${validItems.length || ''} 条到 GitHub + 云盘`
+      targets.cloud && targets.github ? `上传 ${validItems.length || ''} 条到 SSIO 云 + 北科云盘`
       : targets.cloud ? `上传 ${validItems.length || ''} 条到北科云盘`
-      : `上传 ${validItems.length || ''} 条到 GitHub`
+      : `上传 ${validItems.length || ''} 条到 SSIO 云`
     );
     return <>
       <button onClick={onClose} className="btn-ghost">取消</button>
@@ -340,7 +342,7 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
                 <div className="font-mono text-[10px] text-text-dim border-t border-neon-green/15 pt-1">
                   {published.perTarget.map((t) => (
                     <span key={t.target} className={`mr-2 ${t.ok ? 'text-neon-green' : 'text-neon-danger'}`}>
-                      {t.target === 'github' ? 'GitHub' : '北科云盘'}{t.ok ? ` ✓ ${t.entriesCount ?? 0} 条` : ` ✗ ${t.error || '失败'}`}
+                      {t.target === 'github' ? 'SSIO 云' : '北科云盘'}{t.ok ? ` ✓ ${t.entriesCount ?? 0} 条` : ` ✗ ${t.error || '失败'}`}
                     </span>
                   ))}
                 </div>
@@ -362,7 +364,7 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
             {/* 发布目标 */}
             <div className="flex items-center gap-3">
               <span className="text-xs text-text-dim shrink-0">发布到</span>
-              {([['github', 'GitHub'], ['cloud', '北科云盘（需校园网）']] as const).map(([v, label]) => (
+              {([['github', 'SSIO 云（主源）'], ['cloud', '北科云盘（需校园网）']] as const).map(([v, label]) => (
                 <label
                   key={v}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono border cursor-pointer transition-colors ${targets[v] ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
@@ -440,7 +442,7 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
                 <input type="checkbox" checked={secretMode} onChange={(e) => setSecretMode(e.target.checked)} className="accent-[#FFCC00]" />
                 <span className="font-mono text-[11px] text-text-secondary">
                   <strong className="text-neon-yellow">secret edit（可选）</strong>：开启后只有输入「作业发布码」才能改这个码包。
-                  默认关闭——只要有 GitHub 令牌就能改（一般场景够用；想限制修改权限再勾）。
+                  默认关闭——知道同步码就能改（一般场景够用；想限制修改权限再勾）。
                 </span>
               </label>
               {secretMode && (
@@ -615,7 +617,7 @@ export function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => voi
     >
       <div className="space-y-3">
         <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim">
-          输入发布者分享的同步作业码，从 GitHub 拉取对应课程作业包，自动挂到本地同名课程。
+          输入发布者分享的同步作业码，从 SSIO 云拉取对应课程作业包，自动挂到本地同名课程。
           {lastSync ? <span className="block mt-1">上次接收：{dayjs(lastSync).format('YYYY-MM-DD HH:mm')}</span> : <span className="block mt-1">还没接收过</span>}
         </div>
 

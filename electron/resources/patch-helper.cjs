@@ -64,21 +64,73 @@ function writePatchState(stateFile, patch) {
   }
 }
 
-/** 拉起新版本（三个分支共用） */
-function relaunchApp() {
+/** 同步 sleep（helper 是单线程脚本，busy wait 足够） */
+function sleepSync(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { /* busy wait */ }
+}
+
+/**
+ * v1.2.13 关键修复：拉起新版本前**必须**清掉 ELECTRON_RUN_AS_NODE / NODE_OPTIONS。
+ *
+ * helper 自身是以 ELECTRON_RUN_AS_NODE=1 启动的（否则打包后的 exe 跑不了 Node 脚本）。
+ * 若子进程原样继承 env，拉起来的 TaskManager.exe 会进入 **Node 模式** —— 没有 GUI、
+ * 没有入口参数，起来就退出。表现就是「补丁应用成功、App 退出，然后再也没有下文」。
+ * 这是 AGENTS.md §7 明令的红线（spawn 打包 exe 前必须 delete 这两个变量）。
+ */
+function relaunchEnv() {
+  const env = { ...process.env, TASKMGR_PATCH_APPLIED: '1' };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.NODE_OPTIONS;
+  return env;
+}
+
+/** 进程名是否在运行（tasklist 匹配；查不动时保守返回 true，避免误重试） */
+function processAliveByName(exeName) {
   try {
-    spawn(process.execPath, [], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      cwd: path.dirname(process.execPath),
-      env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
-    }).unref();
+    const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${exeName}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.toLowerCase().includes(exeName.toLowerCase());
+  } catch {
     return true;
-  } catch (e) {
-    log(`[!] relaunch 失败：${e.message}`);
-    return false;
   }
+}
+
+/** 拉起新版本（四个分支共用） */
+function relaunchApp() {
+  // 主进程刚退出，单实例锁（requestSingleInstanceLock）释放可能有几十~几百毫秒延迟。
+  // 不等就拉起的话，新进程会被判成「第二个实例」直接 quit —— 同样表现为「没下文」。
+  sleepSync(1200);
+  const env = relaunchEnv();
+  const exeName = path.basename(process.execPath);
+  let ok = false;
+  for (let i = 0; i < 2 && !ok; i++) {
+    try {
+      const child = spawn(process.execPath, [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        cwd: path.dirname(process.execPath),
+        env,
+      });
+      child.unref();
+      log(`relaunch 已发起 pid=${child.pid} cwd=${path.dirname(process.execPath)}`);
+      ok = true;
+    } catch (e) {
+      log(`[!] relaunch 失败：${e.message}`);
+    }
+    // 等它真正起来再看一眼：起不来（被单实例锁吞掉 / 缺依赖）就再试一次，
+    // 否则用户只会看到「App 退出后再也没动静」。
+    sleepSync(3000);
+    if (ok && processAliveByName(exeName)) {
+      log(`✓ 已确认新版本进程在运行（${exeName}）`);
+      return true;
+    }
+    if (ok) log(`[!] 第 ${i + 1} 次拉起后未检测到 ${exeName}，重试`);
+  }
+  return ok;
 }
 
 /** 解析传给 helper 的参数：argv[2]=--patch-helper + argv[3]=JSON or stdin */
@@ -225,18 +277,8 @@ async function apply(opts) {
           try { fs.unlinkSync(sidecar); } catch {}
         }
         log(`✓ 已接管 .new 旁路残留 mode=${mode || 'normal'} sha256=${sideSha.slice(0, 16)}…`);
-        if (relaunch) {
-          log('拉起新版本应用');
-          try {
-            spawn(process.execPath, [], {
-              detached: true,
-              stdio: 'ignore',
-              windowsHide: true,
-              cwd: path.dirname(process.execPath),
-              env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
-            }).unref();
-          } catch (e) { log(`[!] relaunch 失败：${e.message}`); }
-        }
+        // v1.2.13：走 relaunchApp()（它会清掉 ELECTRON_RUN_AS_NODE，否则拉起来的是 Node 模式进程）
+        if (relaunch) relaunchApp();
         log('=== patch helper done (接管 .new) ===');
         return;
       } else if (mode === 'takeover-sidecar') {
@@ -277,18 +319,8 @@ async function apply(opts) {
           try { fs.unlinkSync(sidecar); } catch {}
         }
         log(`✓ 已接管 .new 旁路残留 sha256=${sideSha.slice(0, 16)}…`);
-        if (relaunch) {
-          log('拉起新版本应用');
-          try {
-            spawn(process.execPath, [], {
-              detached: true,
-              stdio: 'ignore',
-              windowsHide: true,
-              cwd: path.dirname(process.execPath),
-              env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
-            }).unref();
-          } catch (e) { log(`[!] relaunch 失败：${e.message}`); }
-        }
+        // v1.2.13：走 relaunchApp()（它会清掉 ELECTRON_RUN_AS_NODE，否则拉起来的是 Node 模式进程）
+        if (relaunch) relaunchApp();
         log('=== patch helper done (接管 .new) ===');
         return;
       } else {
@@ -385,20 +417,7 @@ async function apply(opts) {
   }
 
   // 4) 可选：重新拉起（v1.2.7：加 cwd + windowsHide，避免 spawn 失败或弹出 cmd 窗口）
-  if (relaunch) {
-    log('拉起新版本应用');
-    try {
-      spawn(process.execPath, [], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-        cwd: path.dirname(process.execPath),
-        env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' },
-      }).unref();
-    } catch (e) {
-      log(`[!] relaunch 失败：${e.message}`);
-    }
-  }
+  if (relaunch) relaunchApp();
   log('=== patch helper done ===');
 }
 

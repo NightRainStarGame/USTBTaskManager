@@ -24,9 +24,14 @@ import * as patchApply from './patchApply';
 import { fetchSsioManifestText, isSsioSource, SSIO_PREFIX } from './ssio';
 import { SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
 
-/** 内置更新源：默认三个公开源（GitHub raw + jsdelivr CDN 备援 + 北科云盘）。
- *  v1.2.7：加 jsdelivr CDN 作纯 latest.json 备援（jsdelivr 50MB 限制，setup 92.85MB 不适用，
- *  但 latest.json 和 22MB 补丁都可以走 jsdelivr）。用户也可在设置里增删、替换、加主源标 */
+/**
+ * 内置更新源。
+ *
+ * v1.2.13 精简：默认只启用 **SSIO 主源 + jsDelivr 备源** 两个。
+ * 以前四个源全开，其中 GitHub raw 在国内常被墙/DNS 劫持、北科云盘只有校园网可达，
+ * 每次检查更新都要等它们超时（各 15s），表现为「检查更新半天没反应 / 一堆源都不好使」。
+ * 这两个现在默认关闭（enabled: false），需要的人可在「设置 → 软件更新 → 更新源」里手动开。
+ */
 export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
     // v1.2.12：SSIO 立为主源。自建服务器国内外都能连（GitHub raw 在国内常被墙/劫持），
@@ -40,23 +45,27 @@ export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
     primary: true,
   },
   {
-    name: 'GitHub',
-    url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
-    enabled: true,
-    primary: false,
-  },
-  {
-    name: 'jsDelivr CDN（GitHub 镜像）',
+    // v1.2.13：jsDelivr 是 SSIO 之外唯一默认启用的备源 —— 国内可达、免鉴权，
+    // 且 latest.json（几 KB）与 22MB 补丁都在它的 50MB 限制内。
+    name: 'jsDelivr CDN（备源）',
     url: 'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json',
     enabled: true,
     primary: false,
   },
   {
-    name: '北科云盘（需校园网）',
+    // v1.2.13：默认关闭。国内直连经常失败，留着只为境外/已挂代理的用户手动启用。
+    name: 'GitHub raw（默认关闭）',
+    url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
+    enabled: false,
+    primary: false,
+  },
+  {
+    // v1.2.13：默认关闭。仅校园网可达，校外每次检查都要白等一个超时。
+    name: '北科云盘（需校园网，默认关闭）',
     url: 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469',
     password: 'kc26',
     type: 'anyshare',
-    enabled: true,
+    enabled: false,
     primary: false,
   },
 ];
