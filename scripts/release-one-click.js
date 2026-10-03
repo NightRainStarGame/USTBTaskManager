@@ -362,6 +362,21 @@ try {
   console.log(`    [!] KV 同步失败：${e.message}（整包更新不受影响）`);
 }
 
+// v1.2.13：桌面端主源是 SSIO，光发 GitHub / 云盘**用户收不到更新** ——
+// SSIO 上没有这个版本，主源查询只会返回 hasUpdate=false。必须把安装包传上去并建 release。
+step('发布安装包到 SSIO（桌面端更新主源）');
+try {
+  const pubScript = path.join(ROOT, 'scripts', 'publish-release-ssio.js');
+  const r = spawnSync(process.execPath, [pubScript, exePath, version, notesFile || ''], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  if (r.status === 0) ok('SSIO 已发布 v' + version + '（主源用户可收到更新）');
+  else console.log(`    [!] SSIO 发布返回 ${r.status}（GitHub / 云盘备源仍可用）`);
+} catch (e) {
+  console.log(`    [!] SSIO 发布失败：${e.message}（GitHub / 云盘备源仍可用）`);
+}
+
 step('git 提交推送');
 run('git', ['add', '-A']);
 // v1.2.10：幂等重跑时可能没有任何东西可提交，git commit 会以 exit 1 告终并通过

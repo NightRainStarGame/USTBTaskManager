@@ -4,14 +4,14 @@
 
 ## 下载安装
 
-**当前最新版：v1.2.12**
+**当前最新版：v1.2.13**
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe`
+最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.13.exe`
 
 [Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
 
 > 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.12.exe`
+> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.13.exe`
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
@@ -219,7 +219,7 @@ App 自带默认两个源：
 - 📂 **项目** 看板 / 列表 / 时间线 / 画布四种视图 · 拖拽切换状态 · 优先级旗标与过滤
 - 💾 **数据安全** 一键备份 / 恢复 · WebDAV 云同步（v1.2.3）· 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 多源（GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装（v1.2.12 起统一整装升级，不再分发增量补丁）；输入框失灵自检与补焦
+- 🔄 **软件更新** 多源（SSIO 主源 + GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装 / **增量补丁**（约 22MB，整装约 93MB）；输入框失灵自检与补焦
 - 🎓 **学业**（v1.2.3）成绩录入 · 加权 GPA · 挂科预警 · 考试倒计时 + 复习任务生成 · 出勤打卡
 - ⏱ **番茄钟**（v1.2.3）全局悬浮 · 任务绑定 · 每日 / 各科专注统计
 - 🔥 **习惯打卡**（v1.2.3）连击统计 · 热力图 · 每周目标
@@ -269,7 +269,11 @@ GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `ur
 按 basename 前缀找修改时间最新的一份再换签名直链下载。
 
 `patches[]` 同样规则：GitHub 版是 raw 绝对链，云盘版改写成云盘内 basename。
-（**v1.2.12 起暂停分发增量补丁**，`patches` 当前为空数组，所有版本统一整装升级。）
+
+补丁清单**也有一份在 SSIO KV**（key `taskmgr/latest.json`，发版时由
+`scripts/publish-manifest-kv.js` 自动同步）：桌面端主源是 SSIO，而 SSIO 的
+`/v1/releases/latest` 只认识整包、不认识补丁，所以补丁信息从 KV 下发。
+（v1.2.12 曾因此丢掉整个增量补丁能力，v1.2.13 修复。）
 
 ### 自建源（可选）
 
