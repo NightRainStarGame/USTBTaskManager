@@ -83,7 +83,12 @@ console.log(`    更新说明: ${notes ? (notesFile || '内联') + `（${notes.l
 const dryPrevInLeast = fs.existsSync(leastDir) ? fs.readdirSync(leastDir).filter((f) => f.endsWith('.exe')) : [];
 let dryPrevVersion = null;
 if (dryPrevInLeast.length) {
-  const m = dryPrevInLeast[0].match(/(\d+\.\d+\.\d+)\.exe$/);
+  // v1.2.13：必须取**最新**的那个版本，不能取 readdir 的第一个。
+  // leastversion/ 在异常情况下可能残留多个 exe（如上一版没滚干净），
+  // 取 [0] 会把 1.2.11 当成基线、跳过 1.2.12，生成的补丁对 1.2.12 用户无效。
+  // 真正发版时 prevDistVersion 由滚动循环逐个覆盖（最后赋值的才是最新），行为一致。
+  const sorted = [...dryPrevInLeast].sort();
+  const m = sorted[sorted.length - 1].match(/(\d+\.\d+\.\d+)\.exe$/);
   if (m) dryPrevVersion = m[1];
 }
 console.log(`    增量补丁：${dryPrevVersion
