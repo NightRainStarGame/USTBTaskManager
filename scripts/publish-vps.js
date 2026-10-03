@@ -1,5 +1,23 @@
 #!/usr/bin/env node
 /**
+ * ⚠️ DEPRECATED（2026-10-03）—— 发布主路径已迁移到 SSIO，本脚本不再参与发版。
+ *
+ * 为什么退役：v1.2.14 起 `downloads/taskmanager/latest.json` 由
+ * `D:\StarMain\Web\scripts\_sync-ssio.mjs` 从 SSIO 生成（`source:"ssio"`，下载地址指向
+ * 站点的 `/api/public/taskmanager/dl`，由站点现签 SSIO 临时 URL 后 302 过去）。
+ * 本脚本仍按老模型写清单：把 url 指向 `leastversion/*.exe` 这一**静态文件**——
+ * 而大安装包早已不再随站点部署（部署包里排除了 exe）。一旦误跑，清单会被改回
+ * 指向一个线上不存在的文件 → 客户端下载 404，且 `source` 字段丢失。
+ *
+ * 现在怎么发版：
+ *   node scripts/publish-release-ssio.js <exe> <版本> [notes]
+ *   node D:\StarMain\Web\scripts\_sync-ssio.mjs        # 刷新站点清单（可选，站点有定时任务）
+ *
+ * 保留 `--verify`：它只做线上清单连通性自检，不写任何文件，仍然有用。
+ * 真要走老路径（例如临时把站点当独立源用），加 `--legacy` 显式解锁。
+ *
+ * ─────────────── 以下为原文档（历史行为说明，保留备查） ───────────────
+ *
  * publish-vps.js —— 把当前版本发布到 StarOS 自建更新站（nrsc.games）
  *
  * 做的事（等价于站点 deploy/README.md「发布新版本」那一节，只是全自动了）：
@@ -83,8 +101,31 @@ if (args.verify) {
   main();
 }
 
+/**
+ * 退役守卫：站点清单已经归 SSIO 管，本脚本再写就会把客户端指向不存在的静态 exe。
+ * 只有显式 --legacy 才能解锁。
+ */
+function guardDeprecated() {
+  if (args.legacy) return;
+  let m = null;
+  try { m = JSON.parse(fs.readFileSync(LATEST_JSON, 'utf8')); } catch { /* 读不到就按老路径放行 */ }
+  if (!m) return;
+  const ssioOwned = m.source === 'ssio' || String(m.url || '').includes('/api/public/taskmanager/dl');
+  if (!ssioOwned) return;
+  fail(
+    '本脚本已退役：站点下载清单现在由 SSIO 生成（source="ssio"），' +
+    '用它改写会把客户端指向线上不存在的静态 exe。\n' +
+    '  发版请改用：\n' +
+    '    node scripts/publish-release-ssio.js <exe 路径> <版本> [notes 文件]\n' +
+    '  然后（可选）刷新站点清单：\n' +
+    '    node D:\\StarMain\\Web\\scripts\\_sync-ssio.mjs\n' +
+    '  确实要走老路径就加 --legacy。',
+  );
+}
+
 // 主流程
 function main() {
+  guardDeprecated();
   log('');
   log('══════════════════════════════════════════════');
   log(`  发布 TaskManager v${version} 到自建更新站`);

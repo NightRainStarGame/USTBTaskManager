@@ -279,17 +279,32 @@ GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `ur
 
 ### 自建源（可选）
 
-如需额外搭建自建更新源（VPS / CDN），脚本 `scripts/publish-vps.js` 会把 `leastversion/` 的安装包
-和 `latest.json` 拷到站点目录（默认 `D:\StarMain\Web\downloads\taskmanager\`），再由站点部署到线上：
+> ⚠️ **2026-10-03：`scripts/publish-vps.js` 已退役。**
+> 站点下载清单现在由 SSIO 生成（`source:"ssio"`，下载地址指向站点的
+> `/api/public/taskmanager/dl`，由站点现签 SSIO 临时 URL 后 302）。
+> `publish-vps.js` 仍按老模型把 url 指向 `leastversion/*.exe` 静态文件，而大安装包
+> 早已不随站点部署 —— 误跑会让客户端下载 404。脚本已加守卫，直接跑会报错退出。
+> 只有 `--verify`（线上清单连通性自检）仍然可用。
+
+如需额外搭建自建更新源（VPS / CDN），老脚本 `scripts/publish-vps.js` 会把 `leastversion/` 的安装包
+和 `latest.json` 拷到站点目录（默认 `D:\StarMain\Web\downloads\taskmanager\`），再由站点部署到线上。
+**现在请改用 SSIO 路径**：
 
 ```bash
-node scripts/publish-vps.js                # 发布当前版本
-node scripts/publish-vps.js --dry-run      # 只预览计划，不动文件
-node scripts/publish-vps.js --notes-file RELEASE-NOTES.md
-node scripts/publish-vps.js --site D:\StarMain\Web   # 换站点目录
-node scripts/publish-vps.js --keep 1       # 历史版本只留 1 个（默认 2）
-npm run verify:vps                         # 自检线上清单是否正常
+# 1) 发布到 SSIO（唯一主源）
+node scripts/publish-release-ssio.js <exe 路径> <版本> [notes 文件]
+node scripts/publish-release-ssio.js --ping     # 只自检凭据与连通性
+
+# 2) 刷新站点清单（可选，站点有定时任务兜底）
+node D:\StarMain\Web\scripts\_sync-ssio.mjs
+
+# 3) 自检线上清单
+npm run verify:vps
 ```
+
+**发版凭据**：`publish-release-ssio.js` 从环境变量 `SSIO_PUBLISH_KEY` 或仓库根 `.env.local` 读取
+（`.env.local` 已 gitignore）。⚠️ 该 Key 带 `release:write`，**绝不能提交进仓库** ——
+历史上有一把被硬编码进脚本并推到公开仓库，已吊销。
 
 > **更新源地址写在哪？** 内置默认值是 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`
 > （**重新打包后才对新装用户生效**）；已安装用户的值存在本机 SQLite 的 `update_sources` 设置里，

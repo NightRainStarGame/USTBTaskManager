@@ -8,11 +8,16 @@
  *
  * 用法：
  *   node scripts/publish-release-ssio.js <exe 路径> <版本> [notes 文件]
+ *   node scripts/publish-release-ssio.js --ping      # 只自检凭据与连通性，不发布
  *
  * 环境变量：SSIO_BASE（默认 http://120.53.9.81:8100）、SSIO_PUBLISH_KEY。
  * 需要 storage:write + release:write scope。
  * 发版脚本（release-one-click.js）会自动调用，失败只告警不阻断。
+ *
+ * ⚠️ 凭据只能从环境变量 / 仓库根 .env.local 读，绝不能写死在源码里 ——
+ * 本仓库是公开的，曾经把带 release:write 的 Key 硬编码进来（等于任何人都能推更新包）。
  */
+
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -20,8 +25,51 @@ const path = require('path');
 const crypto = require('crypto');
 
 const BASE = process.env.SSIO_BASE || 'http://120.53.9.81:8100';
-// 内置只读 Key 没有 release:write，发版要用带写权限的那把
-const KEY = process.env.SSIO_PUBLISH_KEY || 'ssio_live_nOSSh26vCpWIDmbhspJVbg';
+
+/**
+ * 从仓库根的 .env.local / .env 里补环境变量（两者都已进 .gitignore）。
+ * 只补当前进程里缺失的键，不覆盖显式传入的环境变量。
+ */
+function loadEnvLocal() {
+  const root = path.resolve(__dirname, '..');
+  for (const name of ['.env.local', '.env']) {
+    const p = path.join(root, name);
+    if (!fs.existsSync(p)) continue;
+    for (const rawLine of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      let v = line.slice(eq + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (k && process.env[k] === undefined) process.env[k] = v;
+    }
+  }
+}
+
+loadEnvLocal();
+const KEY = process.env.SSIO_PUBLISH_KEY || '';
+
+function requireKey() {
+  if (KEY) return;
+  console.error(
+    [
+      '缺少 SSIO 发布凭据：环境变量 SSIO_PUBLISH_KEY 未设置。',
+      '',
+      '请二选一：',
+      '  1) 仓库根建 .env.local（已在 .gitignore 里），写一行：',
+      '       SSIO_PUBLISH_KEY=你的Key',
+      '  2) 或当前终端先 export SSIO_PUBLISH_KEY=你的Key',
+      '',
+      '需要 storage:write + release:write scope 的 Key。',
+      '⚠️ 不要把 Key 提交进仓库 —— 本仓库是公开的。',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 
 function req(method, urlStr, { headers = {}, body = null, timeout = 600000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -64,7 +112,18 @@ function req(method, urlStr, { headers = {}, body = null, timeout = 600000 } = {
   });
 }
 
+async function ping() {
+  requireKey();
+  const apps = await req('GET', `${BASE}/v1/releases?limit=1`);
+  const n = Array.isArray(apps) ? apps.length : (apps && apps.items ? apps.items.length : '?');
+  console.log(`✓ 凭据可用：${BASE}  已有 release 记录 ${n} 条（抽样 1 条）`);
+}
+
 async function main() {
+  // 自检模式：不通网络凭据就别等到传完 90MB 才失败
+  if (process.argv[2] === '--ping') return ping();
+
+  requireKey();
   const exePath = process.argv[2];
   const version = process.argv[3];
   const notesFile = process.argv[4];

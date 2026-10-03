@@ -10,6 +10,13 @@
  *   node scripts/publish-manifest-kv.js              # 用内置 SSIO 地址与 Key
  *   SSIO_BASE=... SSIO_KEY=... node scripts/publish-manifest-kv.js
  *
+ * 凭据：优先读环境变量 SSIO_KEY，其次 SSIO_PUBLISH_KEY，再其次仓库根 .env.local。
+ * 兜底用的是**客户端内置那张** Key（release:read + storage:read/write）——
+ * 它本来就编译进客户端公开发布，所以写在这里不算新增泄露面；
+ * 但仍建议用环境变量覆盖成一张独立的 Key，便于单独吊销。
+ * ⚠️ 注意：这张 Key **没有 release:write**，只能写 KV，不能建版本 —— 发版用
+ *    publish-release-ssio.js（那边的凭据必须来自环境变量）。
+ *
  * 发版脚本（release-one-click.js）会在写盘 latest.json 之后自动调用本脚本。
  */
 const fs = require('fs');
@@ -19,8 +26,28 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const KV_KEY = 'taskmgr/latest.json';
+
+/** 从仓库根 .env.local / .env 补齐缺失的环境变量（两者都已 gitignore）。 */
+function loadEnvLocal() {
+  for (const name of ['.env.local', '.env']) {
+    const p = path.join(ROOT, name);
+    if (!fs.existsSync(p)) continue;
+    for (const rawLine of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      let v = line.slice(eq + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+      if (k && process.env[k] === undefined) process.env[k] = v;
+    }
+  }
+}
+loadEnvLocal();
+
 const BASE = process.env.SSIO_BASE || 'http://120.53.9.81:8100';
-const KEY = process.env.SSIO_KEY || 'ssio_live_OiTftLzMkgh21475jUXmWP';
+const KEY = process.env.SSIO_KEY || process.env.SSIO_PUBLISH_KEY || 'ssio_live_OiTftLzMkgh21475jUXmWP';
 
 function put(urlStr, bodyObj) {
   return new Promise((resolve, reject) => {

@@ -16,16 +16,30 @@
  * 班级 / 作业的文件路径协议（class/<code>/manifest.json、homework/<code>.json）
  * 原样保留，只是把「读写哪个后端」换掉 —— 上层逻辑几乎不用改。
  *
- * ⚠️ 内置的这张 APIKey 只有 release:read + storage:read/write：
- *    绝不能给 release:write，否则源码公开 = 任何人都能发恶意更新包。
- *    发版用 Master Key（只在本机脚本里，不进客户端）。
+ * ⚠️⚠️ 内置 APIKey 的风险边界（2026-10-03 复核）：
+ *    这张 Key 编译进客户端，而仓库是公开的 → **必须当作「已公开」来对待**。
+ *    因此它的 scope 只有 release:read + storage:read/write，**绝不能有 release:write** ——
+ *    否则任何人都能发恶意更新包，存量客户端自动更新会直接中招。
+ *    （历史上确有另一张带 release:write 的 Key 被硬编码进 scripts/ 并推到公开仓库，
+ *     已于 2026-10-03 吊销；发版凭据现在只走环境变量 SSIO_PUBLISH_KEY / 仓库根 .env.local。）
+ *
+ *    为什么还留 storage:write：班级 / 作业的云同步要用 KV 写入（kvPut）。
+ *    这是"客户端直连 BaaS"架构的固有代价 —— 拿到这张 Key 的人能写 KV，
+ *    但**改不了发行版本**，危害被限制在数据层而非代码执行层。
+ *
+ *    🔧 长期方案（等有空再做）：云同步改为「客户端拿用户 JWT → 站点/SSIO 按用户身份鉴权」，
+ *    客户端就不再持有任何写权限的共享凭据了。在那之前，别动这张 Key：
+ *    吊销它 = 所有已发布客户端立刻查不到更新 + 班级/作业同步失效。
  */
 
 const TIMEOUT_MS = 15_000;
 
 /** 默认服务器。nrsc.games 域名被 DNSPod 拦截（未备案），先用 IP 直连。 */
 export const SSIO_DEFAULT_BASE = 'http://120.53.9.81:8100';
-/** 内置客户端 Key：release:read + storage:read/write，无写发行权限。 */
+/**
+ * 内置客户端 Key：release:read + storage:read/write，**无 release:write**。
+ * ⚠️ 此值随客户端分发，等同公开。改动或吊销前务必先看文件头的「风险边界」注释。
+ */
 export const SSIO_BUILTIN_KEY = 'ssio_live_OiTftLzMkgh21475jUXmWP';
 
 export interface SsioConfig {

@@ -382,7 +382,7 @@ function printSummary(o) {
     line('  ⚠ 未提供 --base-url，清单里的下载地址是相对路径。');
     line('     App 需要绝对 http(s) 地址，请重新执行：');
     line(`     node scripts/release.js --base-url https://nrsc.games/downloads/taskmanager`);
-    line('  ℹ 发布到本项目自建更新站，直接用：node scripts/publish-vps.js');
+    line('  ℹ 发版到 SSIO（当前唯一主源）：node scripts/publish-release-ssio.js <exe> <版本>');
     line('────────────────────────────────────────────────────────────');
   }
   line('  下一步：');
