@@ -69,6 +69,18 @@ function clientId(): string {
   }
 }
 
+/**
+ * v1.2.13：TaskManager 完整更新清单在 SSIO KV 里的键名。
+ *
+ * SSIO 的 `/v1/releases/latest` 只认识「一个整包」，不认识增量补丁 —— v1.2.12 把
+ * 更新主源切到 SSIO 后，这里只能合成出 `patches: []`，于是设置页的「增量补丁」
+ * 板块整个消失（PatchPanel 靠 manifest.patches 渲染），所有人都得下载 93MB 整包。
+ *
+ * 解法：发版时把 latest.json 原文同步进 KV，客户端在这里取回 patches / 镜像链 /
+ * asar 基线哈希；整包下载地址仍然用 SSIO 的（国内快），补丁 zip 走镜像链。
+ */
+const MANIFEST_KV_KEY = 'taskmgr/latest.json';
+
 interface SsioLatestResponse {
   hasUpdate?: boolean;
   version?: string;
@@ -77,6 +89,34 @@ interface SsioLatestResponse {
   size?: number | null;
   notes?: string | null;
   mandatory?: boolean;
+}
+
+/** 拉 SSIO KV 里的权威清单；拿不到（未同步 / 无权限 / 超时）返回 null，由调用方退化。 */
+async function fetchKvManifest(
+  base: string,
+  headers: Record<string, string>,
+): Promise<Record<string, any> | null> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    let text: string;
+    try {
+      const res = await net.fetch(
+        `${base}/v1/kv?key=${encodeURIComponent(MANIFEST_KV_KEY)}`,
+        { method: 'GET', headers, signal: ctrl.signal } as RequestInit,
+      );
+      if (!res.ok) return null;
+      text = await res.text();
+    } finally {
+      clearTimeout(timer);
+    }
+    const row = JSON.parse(text) as { value?: string } | null;
+    if (!row || typeof row.value !== 'string') return null;
+    const parsed = JSON.parse(row.value) as Record<string, any> | null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -94,21 +134,30 @@ export async function fetchSsioManifestText(src: SsioSourceLike): Promise<string
     clientId: clientId(),
   });
 
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    // APIKey 走 password 字段（与云盘提取码复用同一个位置）
+    ...(src.password ? { 'X-API-Key': src.password } : {}),
+  };
+
+  // 两个请求并发：整包信息来自 releases/latest（SSIO 自己的下载端点，国内快），
+  // 补丁清单来自 KV（发版时同步的完整 latest.json）。任一失败都不影响另一路。
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   let text: string;
+  let kvManifest: Record<string, any> | null = null;
   try {
-    const res = await net.fetch(`${base}/v1/releases/latest?${qs.toString()}`, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        // APIKey 走 password 字段（与云盘提取码复用同一个位置）
-        ...(src.password ? { 'X-API-Key': src.password } : {}),
-      },
-      signal: ctrl.signal,
-    } as RequestInit);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
-    text = await res.text();
+    const [releaseRes, kv] = await Promise.all([
+      net.fetch(`${base}/v1/releases/latest?${qs.toString()}`, {
+        method: 'GET',
+        headers,
+        signal: ctrl.signal,
+      } as RequestInit),
+      fetchKvManifest(base, headers),
+    ]);
+    kvManifest = kv;
+    if (!releaseRes.ok) throw new Error(`HTTP ${releaseRes.status} ${releaseRes.statusText || ''}`.trim());
+    text = await releaseRes.text();
   } finally {
     clearTimeout(timer);
   }
@@ -119,15 +168,24 @@ export async function fetchSsioManifestText(src: SsioSourceLike): Promise<string
     return JSON.stringify({ version: current, notes: null, url: null, sha256: null, patches: [] });
   }
 
+  const version = String(data.version);
+  // 只有 KV 清单与 SSIO 发行版本一致时才敢用它的补丁：版本对不上说明两边没同步，
+  // 这时下发补丁会让客户端拿错基线（baseAsarSha256 不匹配必然应用失败）。
+  const synced = kvManifest && String(kvManifest.version) === version ? kvManifest : null;
+  const patches = synced && Array.isArray(synced.patches) ? synced.patches : [];
+
   return JSON.stringify({
-    version: String(data.version),
-    notes: data.notes ?? null,
+    version,
+    notes: data.notes ?? synced?.notes ?? null,
     url: data.url ?? null,
     sha256: data.sha256 ?? null,
     size: data.size ?? null,
     // SSIO 的 mandatory 对应 latest.json 的 force
     force: data.mandatory === true,
-    // SSIO 不做增量补丁：留空，更新系统自然走整包
-    patches: [],
+    // 基线哈希用于补丁校验；KV 没同步时留空，下游自动走整包
+    asarSha256: synced?.asarSha256 ?? null,
+    asarSize: synced?.asarSize ?? null,
+    urlMirrors: Array.isArray(synced?.urlMirrors) ? synced.urlMirrors : [],
+    patches,
   });
 }

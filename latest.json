@@ -10,7 +10,23 @@
   "releaseDate": "2026-10-02T15:10:00.000Z",
   "asarSha256": null,
   "asarSize": null,
-  "patches": [],
+  "patches": [
+    {
+      "fromVersion": "1.2.11",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.12/TaskManager-Patch-1.2.11-to-1.2.12.zip",
+      "urlMirrors": [
+        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.11-to-1.2.12.zip",
+        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.11-to-1.2.12.zip"
+      ],
+      "sha256": "9e2183991b4a7d5f747c542a32bf6c367b4d64f45b59fe2f11abfd5e3231e220",
+      "size": 23387625,
+      "baseAsarSha256": "f499acaa18f0d04887c00e17a73c17cf5af05e2c519892cae2f2e4024b04b578",
+      "baseAsarSize": 76151465,
+      "appAsarSha256": "7c0b22552f7732fbd638e994c263bf46c75f308aa3f662c1baf3f82ffc62436e",
+      "appAsarSize": 76179893,
+      "createdAt": "2026-10-03T00:41:31.038Z"
+    }
+  ],
   "android": {
     "version": "1.2.12",
     "versionCode": 9,

@@ -327,6 +327,19 @@ if (newLatestContent === oldLatestContent) {
 }
 ok(`version=${version} url=${latest.url} mirrors=${setupMirrorUrls.length} patches=${newPatches.length}`);
 
+// v1.2.13：桌面端更新主源是 SSIO，而 SSIO 的 releases/latest 不认识增量补丁 ——
+// 补丁清单只能从 KV 下发（electron/updater/ssio.ts 会读 taskmgr/latest.json）。
+// 漏掉这一步 = 所有人只能下 93MB 整包，设置页的增量补丁板块也不显示。
+step('同步更新清单到 SSIO KV');
+try {
+  const kvScript = path.join(ROOT, 'scripts', 'publish-manifest-kv.js');
+  const r = spawnSync(process.execPath, [kvScript], { cwd: ROOT, stdio: 'inherit' });
+  if (r.status === 0) ok('KV 清单已同步（客户端可拿到增量补丁）');
+  else console.log(`    [!] KV 同步返回 ${r.status}（整包更新不受影响）`);
+} catch (e) {
+  console.log(`    [!] KV 同步失败：${e.message}（整包更新不受影响）`);
+}
+
 step('git 提交推送');
 run('git', ['add', '-A']);
 // v1.2.10：幂等重跑时可能没有任何东西可提交，git commit 会以 exit 1 告终并通过
