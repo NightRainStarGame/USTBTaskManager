@@ -1,9 +1,10 @@
 /**
  * 更新源、清单解析、下载、补丁下发
  *
- * 支持两种源：
- *  - http(s) 直链 GET 一个 latest.json（GitHub raw / 自建站 / jsDelivr）
- *  - 北科云盘 AnyShare 外链：从云盘分享里下载 latest-<ts>.json（按前缀取最新）
+ * v1.2.15 起**只有 SSIO 一种源**：url 带 `ssio+` 前缀的 SSIO 发行服务。
+ * 曾经的 GitHub raw / jsDelivr / 北科云盘外链全部下线 —— GitHub 在国内常被 DNS 投毒
+ * （本机实测把 raw.githubusercontent.com 解析成 0.0.0.0）、云盘只有校园网可达，
+ * 它们不仅帮不上忙，还会让每次「检查更新」白等一个 15s 超时。
  *
  * App 启动或点「检查更新」时并行查所有启用源，挑版本号最高的升级；任一源失败不影响其他源。
  */
@@ -12,30 +13,27 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { DB } from '../db/index';
-import {
-  parseAnyShareUrl, downloadTextFile, findShareFile, findLatestByPrefix, getFileDownloadUrl,
-  type AnyShareConfig,
-} from '../anyshare';
 // v1.2.9：改成静态 import。
 // 原先用 CJS `require('./patchApply')` 懒加载，在浏览器/WebView（移动端 bundle）里
 // 直接抛 `ReferenceError: require is not defined`，阻断移动端启动。
 // patchApply 不反向依赖本模块，无循环依赖；其顶层只有定义无副作用，静态引入安全。
 import * as patchApply from './patchApply';
-import { fetchSsioManifestText, isSsioSource, SSIO_PREFIX } from './ssio';
+import { fetchSsioManifestText, fetchSsioDownloadUrl, isSsioSource, SSIO_PREFIX } from './ssio';
 import { SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
 
 /**
  * 内置更新源。
  *
- * v1.2.13 精简：默认只启用 **SSIO 主源 + jsDelivr 备源** 两个。
- * 以前四个源全开，其中 GitHub raw 在国内常被墙/DNS 劫持、北科云盘只有校园网可达，
- * 每次检查更新都要等它们超时（各 15s），表现为「检查更新半天没反应 / 一堆源都不好使」。
- * 这两个现在默认关闭（enabled: false），需要的人可在「设置 → 软件更新 → 更新源」里手动开。
+ * v1.2.15：只剩 SSIO 一个源。
+ * 以前挂着 GitHub raw / jsDelivr / 北科云盘做备源，实际收益是负的：
+ *   · 它们托管的是**仓库里的静态 latest.json**，而最新数据只在 SSIO 上了 ——
+ *     备源即使连上也只会报一个过期的版本号（甚至反过来把用户锁旧版本）；
+ *   · 每次检查都要原地等它们超时，表现就是「点检查更新转半天」。
+ * 自建 SSIO 国内外都通、还能同一个接口覆盖桌面包与 APK，没必要再留多重镜像。
  */
 export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
   {
-    // v1.2.12：SSIO 立为主源。自建服务器国内外都能连（GitHub raw 在国内常被墙/劫持），
-    // 且 APK 与桌面端共用同一份发行记录。`ssio+` 前缀由 updater/ssio.ts 识别，
+    // SSIO 主源。`ssio+` 前缀由 updater/ssio.ts 识别，
     // password 位置放 APIKey（只有 release:read，没有写权限，泄露也发不了恶意包）。
     name: 'SSIO 官方源',
     url: `${SSIO_PREFIX}${SSIO_DEFAULT_BASE}`,
@@ -43,30 +41,6 @@ export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
     type: 'ssio',
     enabled: true,
     primary: true,
-  },
-  {
-    // v1.2.13：jsDelivr 是 SSIO 之外唯一默认启用的备源 —— 国内可达、免鉴权，
-    // 且 latest.json（几 KB）与 22MB 补丁都在它的 50MB 限制内。
-    name: 'jsDelivr CDN（备源）',
-    url: 'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json',
-    enabled: true,
-    primary: false,
-  },
-  {
-    // v1.2.13：默认关闭。国内直连经常失败，留着只为境外/已挂代理的用户手动启用。
-    name: 'GitHub raw（默认关闭）',
-    url: 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
-    enabled: false,
-    primary: false,
-  },
-  {
-    // v1.2.13：默认关闭。仅校园网可达，校外每次检查都要白等一个超时。
-    name: '北科云盘（需校园网，默认关闭）',
-    url: 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469',
-    password: 'kc26',
-    type: 'anyshare',
-    enabled: false,
-    primary: false,
   },
 ];
 export const DEFAULT_UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]?.url || '';
@@ -85,8 +59,12 @@ export interface UpdateSource {
   url: string;
   enabled: boolean;
   primary: boolean;
-  /** v1.2.12：新增 'ssio' —— 自建 SSIO 发行源（url 带 `ssio+` 前缀） */
-  type?: 'anyshare' | 'http' | 'ssio';
+  /**
+   * 'ssio'   = 自建 SSIO 发行源（url 带 `ssio+` 前缀）
+   * 'http'   = 直链 GET 一份 latest.json（自建镜像/内网用）
+   * v1.2.15：去掉 'anyshare'（北科云盘）—— 只有校园网可达，且它托管的清单早已过时。
+   */
+  type?: 'http' | 'ssio';
   password?: string;
 }
 
@@ -94,7 +72,12 @@ export interface UpdateManifest {
   version: string;
   notes?: string | null;
   url?: string | null;
-  /** v1.2.7 100MB 风险预案：备援下载链接数组（GitHub Releases 主源挂了 → 试 raw → 试 jsdelivr CDN） */
+  /**
+   * v1.2.15：SSIO 发行记录 id。有它就能在下载前重新签一条新地址，
+   * 清单里的 url 字段可能是引用形式（`ssio:release:<id>`），两者经常成对出现。
+   */
+  releaseId?: string | null;
+  /** v1.2.7 100MB 风险预案：备援下载链接数组（主源挂了 → 依次试下面的镜像） */
   urlMirrors?: string[] | null;
   page?: string | null;
   sha256?: string | null;
@@ -189,7 +172,11 @@ export function parseManifest(text: string, sourceUrl: string): UpdateManifest |
             version: String(version).replace(/^v/i, '').trim(),
             notes: pick(obj, ['notes', 'changelog', 'description', 'body', 'releaseNotes']),
             url: pick(obj, ['url', 'download', 'downloadUrl', 'installer', 'file']),
-            urlMirrors: Array.isArray(obj.urlMirrors) ? obj.urlMirrors.filter((u: any) => typeof u === 'string' && /^https?:\/\//i.test(u)) : null,
+            releaseId: typeof obj.releaseId === 'string' ? obj.releaseId : null,
+            // 镜像既可以是 http 直链，也可以是 ssio:release:<id> / ssio:file:<id> 引用
+            urlMirrors: Array.isArray(obj.urlMirrors)
+              ? obj.urlMirrors.filter((u: any) => typeof u === 'string' && (/^https?:\/\//i.test(u) || /^ssio:(release|file):/i.test(u)))
+              : null,
             page: pick(obj, ['page', 'pageUrl', 'website', 'share', 'link', 'html_url']),
             sha256: pick(obj, ['sha256', 'hash', 'checksum']),
             force: obj.force === true || obj.force === 1 || obj.force === 'true',
@@ -243,14 +230,15 @@ function setSetting(db: DB, key: string, value: string) {
 
 function normalizeSource(s: any, i: number): UpdateSource {
   const url = String(s?.url || '').trim().slice(0, 2048);
-  const asUrl = url ? parseAnyShareUrl(url) : null;
   return {
     name: String(s?.name || `源 ${i + 1}`).slice(0, 40),
     url,
     enabled: s?.enabled !== false,
     primary: s?.primary === true,
-    type: asUrl ? 'anyshare' : (s?.type === 'anyshare' ? 'anyshare' : 'http'),
-    ...(asUrl || s?.type === 'anyshare' ? { password: String(s?.password || '').trim().slice(0, 64) } : {}),
+    // v1.2.15：type 只剩 ssio / http。以前还会顺手把 URL 解析成北科云盘外链，
+    // 那个分支随云盘一起下线；password 以前只在云盘源上保留，现在 SSIO 也要用它放 APIKey。
+    type: s?.type === 'ssio' ? 'ssio' : 'http',
+    ...(s?.password ? { password: String(s.password).trim().slice(0, 64) } : {}),
   };
 }
 
@@ -381,74 +369,60 @@ function describeError(e: any): string {
   return msg || '未知错误';
 }
 
-function anyshareCfgFromSource(src: UpdateSource | undefined | null): AnyShareConfig | null {
-  if (!src?.url) return null;
-  const parsed = parseAnyShareUrl(src.url);
-  if (!parsed) return null;
-  if (!src.password) return null;
-  return { ...parsed, password: src.password };
-}
-
-/** 拉取某源清单：http 型直接 GET；anyshare 型从云盘里下载 latest-<ts>.json（按前缀取最新）；
- *  ssio 型调 API 并把响应合成成清单（见 updater/ssio.ts） */
+/** 拉取某源清单：ssio 型调 API 合成清单（见 updater/ssio.ts）；其余按直链 GET latest.json。 */
 async function fetchManifestText(src: UpdateSource): Promise<string> {
   if (isSsioSource(src)) return fetchSsioManifestText(src);
-  const cfg = anyshareCfgFromSource(src);
-  if (!cfg) return fetchText(src.url);
-  const file =
-    (await findLatestByPrefix(cfg, 'latest', '.json')) ??
-    (await findShareFile(cfg, 'latest.json'));
-  if (!file) throw new Error('云盘分享里没有 latest.json');
-  return downloadTextFile(cfg, file, MAX_MANIFEST_BYTES);
+  return fetchText(src.url);
 }
 
-/** 挑第一个能解析 url 的 anyshare 源（活动源不行就遍历所有 enabled 源）。
-   * 返回 null 表示「非 http url 且没有可用的 anyshare 源」。 */
-  function pickAnyshareSource(sources: UpdateSource[], preferredIndex: number): { src: UpdateSource; cfg: AnyShareConfig } | null {
+/** 挑一个可用的 SSIO 源：优先当前活动源，其次任意启用中的 SSIO 源。 */
+  function pickSsioSource(sources: UpdateSource[], preferredIndex: number): UpdateSource | null {
     const ordered: UpdateSource[] = [];
     if (sources[preferredIndex]) ordered.push(sources[preferredIndex]);
     for (let i = 0; i < sources.length; i++) {
       if (i !== preferredIndex && sources[i]?.enabled !== false) ordered.push(sources[i]);
     }
-    for (const s of ordered) {
-      const cfg = anyshareCfgFromSource(s);
-      if (cfg) return { src: s, cfg };
-    }
-    return null;
+    return ordered.find((s) => isSsioSource(s)) ?? null;
   }
 
-  /** 解析安装包下载 URL：http(s) 直链原样返回；anyshare 类型按"<base>-<ts>.<ext>"前缀找最新一份 */
+  /**
+   * 解析下载地址。
+   *
+   * v1.2.15：清单里不再直接塞长效 URL，而是记 SSIO 的 id 引用 —— SSIO 的下载链接是
+   * **5 分钟过期的签名 URL**（见 updater/ssio.ts），而「早上弹更新、晚上才点安装」
+   * 是常态，那时候 URL 早就失效了，表现为「下载失败，重试还是失败」。
+   * 所以真正下载前才把引用换成新鲜地址：
+   *   https?://…          直链，原样返回（自建 http 镜像仍可用）
+   *   ssio:release:<id>  → GET /v1/releases/:id/download（整包）
+   *   ssio:file:<id>     → GET /v1/storage/files/:id/download（增量补丁 zip）
+   */
   async function resolveDownloadUrl(
     url: string,
     sources: UpdateSource[],
     preferredIndex: number,
   ): Promise<string> {
-    if (/^https?:\/\//i.test(url)) return url;
-    const picked = pickAnyshareSource(sources, preferredIndex);
-    if (!picked) {
-      const sourceSummary = sources.map((s, i) => `${i}:${s?.name || '?'}(type=${s?.type || '?'},enabled=${s?.enabled !== false})`).join(', ');
-      // 写诊断日志到任意临时路径（packaged 模式 stdout 被吞），便于排查 manifest.patches[].url 不是 http 的来源
-      try {
-        const debugLog = path.join(app.getPath('temp'), 'taskmanager-updater-debug.log');
-        fs.appendFileSync(
-          debugLog,
-          `[${new Date().toISOString()}] resolveDownloadUrl 失败 url=${JSON.stringify(url)} sources=[${sourceSummary}]\n`,
-        );
-      } catch {}
-      throw new Error('下载地址无效（需以 http/https 开头，或该源为北科云盘且 url 填文件名）');
+    const raw = String(url || '').trim();
+    if (/^https?:\/\//i.test(raw)) return raw;
+
+    const ref = raw.match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
+    if (ref) {
+      const picked = pickSsioSource(sources, preferredIndex);
+      if (!picked) throw new Error('清单引用了 SSIO 资源，但当前没有可用的 SSIO 更新源');
+      return fetchSsioDownloadUrl(picked, ref[1].toLowerCase() === 'release' ? 'release' : 'file', ref[2]);
     }
-    const cfg = picked.cfg;
-    const m = url.match(/^(.+?)(\.[^.]+)$/);
-    if (m) {
-      const base = m[1];
-      const ext = m[2];
-      const file = (await findLatestByPrefix(cfg, base, ext)) ?? (await findShareFile(cfg, url));
-      if (!file) throw new Error(`云盘分享里没有安装包「${url}」（也没找到 ${base}-<ts>${ext}）`);
-      return getFileDownloadUrl(cfg, file);
-    }
-    const f = await findShareFile(cfg, url);
-    if (!f) throw new Error(`云盘分享里没有「${url}」`);
-    return getFileDownloadUrl(cfg, f);
+
+    const sourceSummary = sources
+      .map((s, i) => `${i}:${s?.name || '?'}(type=${s?.type || '?'},enabled=${s?.enabled !== false})`)
+      .join(', ');
+    // 写诊断日志到临时目录（packaged 模式 stdout 被吞），便于排查清单里的 url 来源
+    try {
+      const debugLog = path.join(app.getPath('temp'), 'taskmanager-updater-debug.log');
+      fs.appendFileSync(
+        debugLog,
+        `[${new Date().toISOString()}] resolveDownloadUrl 失败 url=${JSON.stringify(raw)} sources=[${sourceSummary}]\n`,
+      );
+    } catch {}
+    throw new Error('下载地址无效（需以 http/https 开头，或写成 ssio:release:<id> / ssio:file:<id>）');
   }
 
 export async function checkForUpdate(
@@ -478,9 +452,7 @@ export async function checkForUpdate(
   try {
     text = await fetchManifestText(src);
   } catch (e: any) {
-    const cfg = anyshareCfgFromSource(src);
-    const hint = cfg ? '（北科云盘源：请确认在校园网内、提取码正确、分享里有 latest.json）' : '';
-    return { ...base, reason: 'network', message: describeError(e) + hint, latencyMs: Date.now() - t0 };
+    return { ...base, reason: 'network', message: describeError(e), latencyMs: Date.now() - t0 };
   }
   const latencyMs = Date.now() - t0;
 
@@ -516,7 +488,9 @@ export async function checkForUpdate(
     hasUpdate,
     skipped,
     notes: manifest.notes,
-    downloadUrl: manifest.url,
+    // 清单只给了 releaseId（比如自建 http 镜像同步 SSIO 的 KV 清单）时，
+    // 拼成引用交给 resolveDownloadUrl，下载前自然会换成新签名地址
+    downloadUrl: manifest.url ?? (manifest.releaseId ? `ssio:release:${manifest.releaseId}` : null),
     downloadUrlMirrors: manifest.urlMirrors ?? null,
     pageUrl: manifest.page || src.url,
     sha256: manifest.sha256,
@@ -902,7 +876,7 @@ export function registerUpdater(db: DB | null) {
         const sources = getSources(db);
         patchUrl = await resolveDownloadUrl(patch.url, sources, getActiveSourceIndex(db));
       } catch (e: any) {
-        return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
+        return { ok: false, error: `解析补丁下载地址失败：${e?.message || e}` };
       }
     }
     const entry: import('./patchApply').PatchEntry = {
@@ -949,7 +923,7 @@ export function registerUpdater(db: DB | null) {
         const sources = getSources(db);
         patchUrl = await resolveDownloadUrl(patch.url, sources, getActiveSourceIndex(db));
       } catch (e: any) {
-        return { ok: false, error: `解析云盘补丁失败：${e?.message || e}` };
+        return { ok: false, error: `解析补丁下载地址失败：${e?.message || e}` };
       }
     }
     const entry: import('./patchApply').PatchEntry = {

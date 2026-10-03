@@ -35,6 +35,46 @@ export function ssioBaseUrl(src: SsioSourceLike): string {
   return String(src.url ?? '').slice(SSIO_PREFIX.length).replace(/\/+$/, '');
 }
 
+/**
+ * 用 SSIO 资源引用换一条**新鲜**下载地址。
+ *
+ * 服务端两个 download 端点返回的是有时效的签名 URL（5 分钟），所以只能现取现用：
+ * 清单里存的是引用（`ssio:release:<id>` / `ssio:file:<id>`），真正下载的前一刻才来换。
+ * 需要的 scope（release:read / storage:read）内置 Key 都具备。
+ */
+export async function fetchSsioDownloadUrl(
+  src: SsioSourceLike,
+  kind: 'release' | 'file',
+  id: string,
+): Promise<string> {
+  const base = ssioBaseUrl(src);
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    ...(src.password ? { 'X-API-Key': src.password } : {}),
+  };
+  const apiPath =
+    kind === 'release'
+      ? `/v1/releases/${encodeURIComponent(id)}/download`
+      : `/v1/storage/files/${encodeURIComponent(id)}/download`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await net.fetch(`${base}${apiPath}`, {
+      method: 'GET',
+      headers,
+      signal: ctrl.signal,
+    } as RequestInit);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
+    const text = await res.text();
+    const j = JSON.parse(text) as { url?: string };
+    if (!j?.url) throw new Error('SSIO 没返回下载地址');
+    return j.url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** SSIO 的 platform 枚举是 win|linux|android|any，不是 Electron 的 win32/darwin。 */
 function ssioPlatform(): string {
   switch (process.platform) {
@@ -84,12 +124,26 @@ const MANIFEST_KV_KEY = 'taskmgr/latest.json';
 interface SsioLatestResponse {
   hasUpdate?: boolean;
   version?: string;
+  /** 发行记录 id。下载前要用它换一次签名 URL，见下方 SsioRelease 注释。 */
+  releaseId?: string | null;
   url?: string | null;
   sha256?: string | null;
   size?: number | null;
   notes?: string | null;
   mandatory?: boolean;
 }
+
+/**
+ * v1.2.15：releaseId 为什么要往清单里塞？
+ *
+ * SSIO 的下载地址是**签名 URL，5 分钟过期**（服务端 DEFAULT_TTL_SEC）。
+ * 而更新流程的真实节奏是：早上弹通知 → 用户晚上才点「立即更新」，
+ * 中间可能隔几小时 —— 直接拿 `releases/latest` 返回的 url 去下载，
+ * 到点时必然 404/401，表现为「更新到一半失败，重试也一样」。
+ *
+ * 所以清单里只记 releaseId，真正下载前再调一次 `/v1/releases/:id/download`
+ * 换一张新鲜签名。这一条同时也是 SSIO 官方文档里反复强调的红线。
+ */
 
 /** 拉 SSIO KV 里的权威清单；拿不到（未同步 / 无权限 / 超时）返回 null，由调用方退化。 */
 async function fetchKvManifest(
@@ -190,7 +244,10 @@ export async function fetchSsioManifestText(src: SsioSourceLike): Promise<string
   return JSON.stringify({
     version,
     notes: data.notes ?? synced?.notes ?? null,
-    url: data.url ?? null,
+    // 有 releaseId 就记引用而不是现成的 url：后者是 5 分钟过期的签名地址，
+    // 「早上检查更新、晚上才点安装」的场景下必然失效。下载前会按引用重新签一次。
+    url: data.releaseId ? `ssio:release:${data.releaseId}` : (data.url ?? null),
+    releaseId: data.releaseId ?? null,
     sha256: data.sha256 ?? null,
     size: data.size ?? null,
     // SSIO 的 mandatory 对应 latest.json 的 force

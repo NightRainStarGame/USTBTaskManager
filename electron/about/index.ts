@@ -3,11 +3,11 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { DB } from '../db/index';
-import {
-  parseAnyShareUrl, downloadTextFile, findShareFile, findLatestByPrefix,
-  type AnyShareConfig,
-} from '../anyshare';
 import { getSources, type UpdateSource } from '../updater/index';
+import { isSsioSource } from '../updater/ssio';
+
+/** 关于文本在 SSIO KV 里的键（发版脚本会把仓库根的 about.txt 同步到这里）。 */
+const ABOUT_KV_KEY = 'taskmgr/about.txt';
 
 function getSetting(db: DB | null, key: string): string {
   if (!db) return '';
@@ -28,13 +28,12 @@ const KEY_PINNED = 'about_pinned_local';
 
 const MAX_ABOUT_BYTES = 512 * 1024;
 
+/**
+ * 直链型源（自建 http 镜像）的 about.txt 地址。
+ * v1.2.15：删掉北科云盘与 GitHub raw 两个分支 —— 前者依赖校园网，后者在国内常被 DNS 投毒。
+ * SSIO 源不走这里，它从 KV 取（见 fetchFromSsio）。
+ */
 export function aboutUrlForSource(src: UpdateSource): string {
-  if (src.type === 'anyshare' || /^https?:\/\/(yunpan|anyshare|share)\./i.test(src.url) || /\/link\/[A-Z0-9]{20,}/i.test(src.url)) {
-    return src.url;
-  }
-  if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(src.url)) {
-    return src.url.replace(/\/[^/]+\.json(\?[^#]*)?$/i, '/about.txt$1');
-  }
   if (/\/latest\.json(\?[^#]*)?$/i.test(src.url)) {
     return src.url.replace(/\/latest\.json(\?[^#]*)?$/i, '/about.txt$1');
   }
@@ -55,27 +54,31 @@ async function fetchFromHttp(url: string, timeoutMs = 8000): Promise<string> {
   }
 }
 
-async function fetchFromCloud(src: UpdateSource): Promise<string> {
-  const cfg = anyshareCfgFromSource(src);
-  if (!cfg) throw new Error('云盘源配置缺失');
-  const file =
-    (await findLatestByPrefix(cfg, 'about', '.txt')) ??
-    (await findShareFile(cfg, 'about.txt'));
-  if (!file) throw new Error('云盘分享里没有 about.txt');
-  return downloadTextFile(cfg, file, MAX_ABOUT_BYTES);
-}
+/**
+ * v1.2.15：SSIO 源的 about.txt 存在 KV 里（`taskmgr/about.txt`）。
+ * 以前它躺在 GitHub raw / 北科云盘里，随这两个通道一起下线；
+ * 现在改由发版流程同步一份到 SSIO，国内外都能取。
+ */
+async function fetchFromSsio(src: UpdateSource): Promise<string> {
+  const base = String(src.url || '').replace(/^ssio\+/i, '').replace(/\/+$/, '');
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (src.password) headers['X-API-Key'] = src.password;
 
-function anyshareCfgFromSource(src: UpdateSource): AnyShareConfig | null {
-  if (src.type !== 'anyshare') return null;
-  const parsed = parseAnyShareUrl(src.url);
-  if (!parsed) return null;
-  const m = src.url.match(/[?&]password=([^&]+)/);
-  const urlPwd = m ? decodeURIComponent(m[1]) : '';
-  return {
-    baseUrl: parsed.baseUrl,
-    linkId: parsed.linkId,
-    password: src.password || urlPwd,
-  };
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(`${base}/v1/kv?key=${encodeURIComponent(ABOUT_KV_KEY)}`, {
+      headers,
+      signal: ctl.signal,
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const row = (await r.json()) as { value?: string } | null;
+    if (!row || typeof row.value !== 'string') throw new Error('SSIO 上还没有 about.txt');
+    if (row.value.length > MAX_ABOUT_BYTES) throw new Error('about.txt 超过 512KB 上限');
+    return row.value;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export function aboutCachePath(): string {
@@ -105,8 +108,8 @@ function shortUrl(u: string): string {
 }
 
 async function pullOne(src: UpdateSource): Promise<{ text: string; sha256: string; source: string }> {
-  const text = src.type === 'anyshare'
-    ? await fetchFromCloud(src)
+  const text = isSsioSource(src)
+    ? await fetchFromSsio(src)
     : await fetchFromHttp(aboutUrlForSource(src));
   const sha256 = crypto.createHash('sha256').update(text, 'utf8').digest('hex');
   return { text, sha256, source: `${src.name || src.type}（${shortUrl(src.url)}）` };
