@@ -281,9 +281,26 @@ const setupMirrorUrls = [
   `${REPO_RAW}/leastversion/${DIST_NAME(version)}`,       // raw CDN（92.85MB 接近 100MB 限制，做备援）
   `${JSDELIVR}/leastversion/${DIST_NAME(version)}`,       // jsdelivr CDN（50MB 限制，v1.2.7 setup 92.85MB 不适用，作 fallback 占位）
 ];
+// v1.2.13：只保留「应用后 == 本次目标 asar」的补丁。旧清单里可能残留上一版的补丁
+// （1.2.11→1.2.12 混进 1.2.13 的清单），而客户端 selectPatch 按 fromVersion +
+// baseAsarSha256 匹配、不校验产物版本 → 1.2.11 用户会被它「升到 1.2.12 就停」，
+// 得重启再升一次。这里从源头剔除。
+const targetAsar = newAsarInfo ? String(newAsarInfo.sha256).toLowerCase() : '';
+const stalePatches = prevPatches.filter(
+  (p) =>
+    p &&
+    (!targetAsar ||
+      typeof p.appAsarSha256 !== 'string' ||
+      String(p.appAsarSha256).toLowerCase() !== targetAsar),
+);
+if (stalePatches.length) {
+  console.log(`    剔除目标版本不符的历史补丁：${stalePatches.map((p) => p.fromVersion).join(', ')}`);
+}
+const keepPatches = prevPatches.filter((p) => !stalePatches.includes(p));
+
 const newPatches = patchInfo
   ? [
-      ...prevPatches.filter((p) => p && p.fromVersion !== patchInfo.fromVersion),
+      ...keepPatches.filter((p) => p && p.fromVersion !== patchInfo.fromVersion),
       {
         fromVersion: patchInfo.fromVersion,
         // GitHub Release asset 名 = basename（无目录结构），URL 不能带 /patches/ 段

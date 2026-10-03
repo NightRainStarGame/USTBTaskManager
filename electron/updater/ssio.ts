@@ -172,7 +172,20 @@ export async function fetchSsioManifestText(src: SsioSourceLike): Promise<string
   // 只有 KV 清单与 SSIO 发行版本一致时才敢用它的补丁：版本对不上说明两边没同步，
   // 这时下发补丁会让客户端拿错基线（baseAsarSha256 不匹配必然应用失败）。
   const synced = kvManifest && String(kvManifest.version) === version ? kvManifest : null;
-  const patches = synced && Array.isArray(synced.patches) ? synced.patches : [];
+  // 二次过滤：只保留「应用后正好是本次目标版本」的补丁。
+  // 清单里可能残留上一版留下的补丁（例如 1.2.11→1.2.12 混在 1.2.13 的清单里），
+  // 而 selectPatch 只按 fromVersion + baseAsarSha256 匹配，不校验产物版本 ——
+  // 误选会让 1.2.11 用户升完停在 1.2.12，得再重启升一次。这里直接挡掉。
+  const targetAsar = typeof synced?.asarSha256 === 'string' ? String(synced.asarSha256).toLowerCase() : '';
+  const patches = synced && Array.isArray(synced.patches)
+    ? synced.patches.filter(
+        (p: any) =>
+          p &&
+          (!targetAsar ||
+            typeof p.appAsarSha256 !== 'string' ||
+            String(p.appAsarSha256).toLowerCase() === targetAsar),
+      )
+    : [];
 
   return JSON.stringify({
     version,
