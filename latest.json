@@ -1,15 +1,15 @@
 {
-  "version": "1.2.12",
-  "notes": "v1.2.12：云服务主源统一切换到自建 SSIO + 班级成员修复 + Android UI 重做\r\n\r\n【云主源统一为 SSIO】\r\n· 自动更新 / 班级（公告·接龙·投票·成员）/ 作业同步，主源全部切换为自建 SSIO 服务器\r\n· GitHub 与北科云盘降级为备源，SSIO 不可达时自动回退\r\n· 不再需要自己申请 GitHub 令牌：内置客户端 Key 开箱即用，想用个人 PAT 仍可（变备源）\r\n· 强一致：绕开 GitHub raw 最长 5 分钟的 CDN 缓存，发布后对方立刻能收到\r\n· 移动端可用：SSIO 支持 CORS，Android WebView 直连（北科云盘在移动端依然不可用）\r\n· 内置 Key 只有 release:read + storage:read/write（无写权限），源码公开也发不了恶意更新包\r\n\r\n【班级：修「成员一个都看不到」】\r\n· 创建班级时只有配了 GitHub PAT 才写云端（没配就整段跳过）→ 班级只躺在本机 → 别人按邀请码加不进来\r\n· 加入班级同理，没 PAT 就不把自己写进云端成员表 → 加入者永远不出现在其他人的成员列表\r\n· 现在云端写入不受令牌有无影响，失败只记 warning，不再静默跳过\r\n\r\n【Android】\r\n· 修「按钮点不上」真因：页面切换动画终态保留了 transform，使页面容器变成后代 fixed 的包含块并被裁剪 → 保存条 / 抽屉 / 弹窗全部脱离视口\r\n· 修「菜单与状态栏重叠」真因：安全区只在启动时读一次，而 Activity 早期恒为 0；改为原生主动推送 + 多轮探测 + 本地缓存 + 兜底值\r\n· Toast 层级下调（原来正好压住抽屉右上角关闭按钮）；页面底部给悬浮球留出空间\r\n· versionCode 提升到 9，装了旧包的机器可正常覆盖升级",
-  "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe",
+  "version": "1.2.13",
+  "notes": "# TaskManager v1.2.13\r\n\r\n## 修复：增量补丁板块消失（v1.2.12 回归）\r\n\r\nv1.2.12 把桌面端更新主源切换到 SSIO 后，设置页的「增量补丁」按钮不再出现，所有人只能下载 93MB 整包。两个独立原因叠加：\r\n\r\n**1. SSIO 源合成清单时硬编码了空补丁表**\r\n\r\n`electron/updater/ssio.ts` 把 SSIO 的 API 响应合成成 `latest.json` 文本时写了 `patches: []`（当时的注释是「SSIO 不做增量补丁」）。而补丁面板 `PatchPanel.tsx` 完全靠 `manifest.patches` 渲染，空数组 → 按钮不渲染 → 板块消失。\r\n\r\n改为：整包信息仍取 SSIO 的 `/v1/releases/latest`（国内下载快），**补丁清单改从 SSIO KV 读取**发版时同步的完整 `latest.json`。只有当 KV 里的版本与 SSIO 发行版本一致时才下发补丁，避免版本没同步时客户端拿到错误基线（baseAsarSha256 不匹配必然应用失败）。KV 不可达时自动退化为整包更新。\r\n\r\n**2. v1.2.12 发版时补丁根本没生成成功**\r\n\r\n发版脚本在生成 1.2.11→1.2.12 补丁时，缓存里缺 `1.2.12.asar`，异常被 `try/catch` 静默吞掉（只打印一行警告），`latest.json` 的 `patches` 因此继承为空数组。\r\n\r\n已补生成 `TaskManager-Patch-1.2.11-to-1.2.12.zip`（22.30 MB）并上传到 v1.2.12 Release。此前漏生成的历史版本补丁同样可回溯补齐。\r\n\r\n## 改进：发版流程补上清单同步\r\n\r\n新增 `scripts/publish-manifest-kv.js`，发版脚本在写好 `latest.json` 之后自动把它同步到 SSIO KV（key `taskmgr/latest.json`）并回读校验版本与补丁条数。漏掉这步 = 增量补丁不可用，所以现在它是发版流程的一环，同步失败会明确告警。\r\n\r\n## 影响面\r\n\r\n- 桌面端：更新时重新出现「增量补丁 22.3 MB」按钮（整装 93 MB），补丁 zip 走 GitHub raw / jsDelivr 镜像链\r\n- 移动端：不受影响（APK 更新走 KV 清单，本来就是整包）\r\n- 已装 v1.2.12 的用户：升级到本版后，下次更新即可使用增量补丁",
+  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.13/TaskManager-Setup-1.2.13.exe",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12",
-  "sha256": "7a9afa9db125a9d4aac5276cbba00e1fa519a9ec4599aefe9f83e1c133bf69d3",
-  "size": 97523499,
-  "fileName": "TaskManager-Setup-1.2.12.exe",
+  "sha256": "da5a1a281a78236f526a5eae217d5e261fcd51796e0c6d1e9e4203f6067baec7",
+  "size": 97525397,
+  "fileName": "TaskManager-Setup-1.2.13.exe",
   "releasedAt": "2026-10-02T15:10:00.000Z",
-  "releaseDate": "2026-10-02T15:10:00.000Z",
-  "asarSha256": null,
-  "asarSize": null,
+  "releaseDate": "2026-10-03T01:20:23.782Z",
+  "asarSha256": "1dd5de30271031a94bb22668af4fad591945efbbc43a4879ff2e8581357fe385",
+  "asarSize": 76183940,
   "patches": [
     {
       "fromVersion": "1.2.11",
@@ -25,6 +25,21 @@
       "appAsarSha256": "7c0b22552f7732fbd638e994c263bf46c75f308aa3f662c1baf3f82ffc62436e",
       "appAsarSize": 76179893,
       "createdAt": "2026-10-03T00:41:31.038Z"
+    },
+    {
+      "fromVersion": "1.2.12",
+      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.13/TaskManager-Patch-1.2.12-to-1.2.13.zip",
+      "urlMirrors": [
+        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.12-to-1.2.13.zip",
+        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.12-to-1.2.13.zip"
+      ],
+      "sha256": "8ae655def4ed6bbf09224343d62c2f5ccd113fad6ff8840791c8980fcb09156f",
+      "size": 23389543,
+      "baseAsarSha256": "7c0b22552f7732fbd638e994c263bf46c75f308aa3f662c1baf3f82ffc62436e",
+      "baseAsarSize": 76179893,
+      "appAsarSha256": "1dd5de30271031a94bb22668af4fad591945efbbc43a4879ff2e8581357fe385",
+      "appAsarSize": 76183940,
+      "createdAt": "2026-10-03T01:20:22.075Z"
     }
   ],
   "android": {
@@ -40,8 +55,7 @@
     "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12"
   },
   "urlMirrors": [
-    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.12.exe",
-    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.12.exe",
-    "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.12/TaskManager-Setup-1.2.12.exe"
+    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.13.exe",
+    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.13.exe"
   ]
 }
