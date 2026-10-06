@@ -17,20 +17,6 @@ import type { DB } from '../db/index';
 import { computeCourseKey } from '../db/index';
 import { kvGetJson, kvPut } from '../cloud/ssioClient';
 
-export const HOMEWORK_REPO_OWNER = 'NightRainStarGame';
-/**
- * v1.2.10：作业数据迁到独立数据仓 USTBTaskManager-Class（与班级模块共用）。
- *
- * 为什么迁：主仓库 USTBTaskManager 里放着源码 + latest.json 更新清单，作业这种
- * 用户数据混在里面的代价是——作业同步必须依赖一张「对主仓库有 Contents 写权限」
- * 的 PAT，而这个令牌是要内置在客户端里开箱即用的，等于把源码写权限塞给每个用户。
- * 迁走之后和班级共用同一张 fine-grained PAT：它只对 Class 仓库有读写授权，
- * 泄露的爆炸半径锁在数据仓（主仓库写入实测 403），源码和更新清单改不动。
- *
- * 存储布局保持不变：`homework/<syncCode>.json`，只是换了仓库。
- */
-export const HOMEWORK_REPO_NAME = 'USTBTaskManager-Class';
-export const HOMEWORK_BRANCH = 'main';
 export const HOMEWORK_DIR = 'homework';
 
 /** 码对派生密钥（网站端生成码时必须使用同一字符串，改动会使已分发的发布码失效） */
@@ -42,10 +28,7 @@ export const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const SYNC_CODE_LEN = 8;
 const PUBLISH_CODE_LEN = 12;
 
-const API = `https://api.github.com/repos/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}`;
-const REPO_URL = `https://github.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}/tree/${HOMEWORK_BRANCH}/${HOMEWORK_DIR}`;
 
-const SETTING_TOKEN = 'homework_github_token';
 const SETTING_PUBLISHER = 'homework_publisher';
 const SETTING_LAST_SYNC = 'homework_last_sync';
 const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
@@ -53,17 +36,6 @@ const SETTING_CLOUD = 'homework_anyshare';
 /** v1.2.2：手动生成过的码对历史（JSON 数组，仅记 syncCode + 时间，publishCode 可 HMAC 派生） */
 const SETTING_MY_CODES = 'homework_my_codes';
 
-/**
- * v1.2.15：SSIO 不需要任何令牌。
- *
- * 以前这里返回「用户自己的 GitHub PAT → 内置公共令牌」，返回空串就跳过云端写入；
- * 现在恒返回非空，让历史上成片的 `if (token)` 分支照旧走通过路径。
- * 顺带修掉旧版的一个真 bug：原实现写成 `return resolveToken(db) || ...`，
- * 自己调自己 —— 一旦走到这条路径就是无限递归到栈溢出。
- */
-function resolveToken(_db: DB): string {
-  return 'ssio';
-}
 
 const FETCH_TIMEOUT_MS = 20000;
 
@@ -213,62 +185,24 @@ export function courseSlug(name: string): string {
     .slice(0, 60) || 'course';
 }
 
-function decodeBase64Utf8(b64: string): string {
-  return Buffer.from(b64, 'base64').toString('utf8');
-}
-
-export async function ghFetch(path: string, opts: { method?: string; token?: string; body?: any; raw?: boolean; ifNoneMatch?: string } = {}) {  const url = path.startsWith('http') ? path : `${API}${path}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const headers: Record<string, string> = {
-      Accept: opts.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
-      'User-Agent': 'TaskManager-Homework',
-      // GitHub Contents API 默认 max-age=60，库里的 cache-Control=public 会让浏览器/中间 CDN 命中 60s 内返回旧值
-      // 发 no-store 强制每次回源（多发连点「再发一条」能拿到最新 sha，不会 409 死循环）
-      'Cache-Control': 'no-store',
-      'Pragma': 'no-cache',
-    };
-    if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
-    if (opts.ifNoneMatch) headers['If-None-Match'] = opts.ifNoneMatch;
-    let body: string | undefined;
-    if (opts.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      body = JSON.stringify(opts.body);
-    }
-    const res = await net.fetch(url, { method: opts.method || 'GET', headers, body, signal: controller.signal });
-    const text = await res.text();
-    return { status: res.status, ok: res.ok, text, etag: res.headers.get('etag') || '' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
+// v1.2.16：GitHub 的错误码分支随通道一起下线，这里只保留通用网络语义
 function describeError(e: any): string {
   const msg = String(e?.message || e || '');
-  if (/abort|timeout/i.test(msg)) return `请求超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒无响应），GitHub 可能暂时不可达`;
-  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(msg)) return '无法解析 api.github.com，请检查网络';
-  if (/ERR_CONNECTION|ECONNRESET|ETIMED_OUT|Failed to fetch/i.test(msg)) return '连接 GitHub 失败，网络不可达';
+  if (/abort|timeout/i.test(msg)) return `请求超时（超过 ${FETCH_TIMEOUT_MS / 1000} 秒无响应），SSIO 云可能暂时不可达`;
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(msg)) return '无法解析 SSIO 服务器地址，请检查网络';
+  if (/ERR_CONNECTION|ECONNRESET|ETIMED_OUT|Failed to fetch/i.test(msg)) return '连接 SSIO 云失败，网络不可达';
   return msg || '未知错误';
 }
 
-function describeStatus(status: number, text: string): string {
-  let detail = '';
-  try { detail = JSON.parse(text)?.message || ''; } catch {}
-  if (status === 401) return 'GitHub 令牌无效或已过期，请重新填写';
-  if (status === 403) return /rate limit/i.test(detail) ? 'GitHub API 速率限制（匿名每小时 60 次），稍后再试或配置发布令牌' : `没有权限（${detail || status}）。令牌需要对 ${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME} 的 Contents 读写权限`;
-  if (status === 404) return '作业包不存在（检查同步作业码是否输对）';
-  if (status === 409) return '文件已被其他人更新（写入冲突），请重试一次';
-  return `GitHub 返回 ${status}${detail ? '：' + detail : ''}`;
-}
 
 export interface HomeworkSource {
   name: string;
-  fetchBundle(syncCode: string, token?: string): Promise<{ file: HomeworkFile } | null>;
+  fetchBundle(syncCode: string): Promise<{ file: HomeworkFile } | null>;
 }
 
-const githubSource: HomeworkSource = {
-  name: 'github',
+// v1.2.16：随 GitHub 通道下线更名 —— 它现在就是（唯一的）SSIO 源
+const ssioSource: HomeworkSource = {
+  name: 'ssio',
   async fetchBundle(syncCode) {
     // 作业包就在 SSIO KV 里。相比旧的 GitHub raw + Contents API 双读：
     //  · 强一致，没有 raw CDN 5 分钟缓存（v1.1.8 的旧根因）；
@@ -333,16 +267,16 @@ function applyHomeworkTtl(hit: { source: string; file: HomeworkFile }): { source
   return { source: hit.source, file: { ...hit.file, entries } };
 }
 
-/** 多源全试、命中全并：GitHub / 云盘各自可能有对方没有的条目（比如某次发布单侧失败），
- *  合并后返回；所有源都确认「码不存在」才返回 null，网络错误不被遮蔽 */
-async function fetchBundleFromAnySource(syncCode: string, token?: string): Promise<{ source: string; file: HomeworkFile } | null> {
+/** 拉取码包（v1.2.15 起只有 SSIO 一个源，保留多源框架以便日后扩展镜像）。
+ *  「码不存在」返回 null；网络错误不被遮蔽，会带来源与原因上抛。 */
+async function fetchBundleFromAnySource(syncCode: string): Promise<{ source: string; file: HomeworkFile } | null> {
   const errors: string[] = [];
   let confirmedMissing = false;
   const hits: Array<{ source: string; file: HomeworkFile }> = [];
-  const sources: HomeworkSource[] = [githubSource];
+  const sources: HomeworkSource[] = [ssioSource];
   for (const src of sources) {
     try {
-      const hit = await src.fetchBundle(syncCode, token);
+      const hit = await src.fetchBundle(syncCode);
       if (hit) hits.push({ source: src.name, file: hit.file });
       else confirmedMissing = true;
     } catch (e: any) {
@@ -628,9 +562,8 @@ function mergeEntry(
 export async function fetchRemoteEntries(db: DB, syncCode: string): Promise<{ ok: boolean; error?: string; entries: HomeworkEntry[]; courseName?: string }> {
   const code = normalizeSyncCode(syncCode);
   if (!code) return { ok: false, error: '同步作业码格式不对', entries: [] };
-  const token = resolveToken(db);
   try {
-    const hit = await fetchBundleFromAnySource(code, token || undefined);
+    const hit = await fetchBundleFromAnySource(code);
     if (!hit) return { ok: true, entries: [], courseName: undefined };
     return { ok: true, entries: hit.file.entries, courseName: hit.file.courseName };
   } catch (e: any) {
@@ -652,10 +585,9 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
   }
   result.syncCode = syncCode;
 
-  const token = resolveToken(db);
   let hit: { source: string; file: HomeworkFile } | null;
   try {
-    hit = await fetchBundleFromAnySource(syncCode, token || undefined);
+    hit = await fetchBundleFromAnySource(syncCode);
   } catch (e: any) {
     result.error = e?.message || describeError(e);
     return result;

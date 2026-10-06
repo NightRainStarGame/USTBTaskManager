@@ -216,13 +216,14 @@ async function main() {
     JSON.stringify({ releaseId: rel.id || rel.releaseId, platform, arch, version }),
   );
 
-  // 5) 回读验证：用刚发的版本号当 current 查一次 —— 版本相同应 hasUpdate=false
-  // 且 version 一致（服务端确实登记上了）。
+  // 5) 回读验证：current 用一个必然落后的版本 —— 服务端在 hasUpdate=false 时
+  // 只返回 { hasUpdate: false }（不带 version），拿刚发的版本号当 current 会
+  // 让「回读版本不一致」的告警恒误报（v1.2.15/1.2.16 发版日志里那句 [!] 就是它）。
   const probe = await req(
     'GET',
-    `${BASE}/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=${version}&clientId=publish-probe`,
+    `${BASE}/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=0.0.1&clientId=publish-probe`,
   );
-  console.log(`  回读 latest（current=${version}）：hasUpdate=${probe.hasUpdate} version=${probe.version || '-'}`);
+  console.log(`  回读 latest（platform=${platform}）：hasUpdate=${probe.hasUpdate} version=${probe.version || '-'}`);
   if (probe.version !== version) console.log('  [!] 回读版本不一致，请检查服务端记录');
 }
 

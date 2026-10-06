@@ -392,13 +392,42 @@ const newPatches = patchInfo
 latest.version = version;
 latest.fileName = DIST_NAME(version);
 // v1.2.15：清单里不再写 GitHub URL。有 SSIO releaseId 就记引用，
-// 客户端下载前用 /v1/releases/:id/download 现换签名地址（写死必过期）。
+// 客户端下载前用 /v1/releases/latest 现换签名地址（写死必过期）。
 latest.releaseId = ssioReleaseId || null;
 latest.url = ssioReleaseId ? `ssio:release:${ssioReleaseId}` : setupPrimaryUrl;
 latest.urlMirrors = ssioReleaseId ? [] : setupMirrorUrls;
 latest.sha256 = sha256;
 latest.size = buf.length;
 latest.notes = notes;
+
+// v1.2.16 收尾：android 段也在这里组装。
+// 此前它由 scripts/release.js 单独维护，而一键发版不调用 release.js → 每次发版
+// android 字段都停留在上一版，v1.2.15 / v1.2.16 两版都得靠手工脚本补写。
+// 现在 APK 上传步骤已把 releaseId 落盘（.ssio-last-release-android.json），
+// versionCode 从 build.gradle 读，sha256/size 直接对本地 APK 计算。
+try {
+  const androidMarker = JSON.parse(fs.readFileSync(path.join(ROOT, '.ssio-last-release-android.json'), 'utf8'));
+  if (androidMarker && androidMarker.releaseId && String(androidMarker.version) === String(version)) {
+    const gradleText = fs.readFileSync(path.join(ROOT, 'android', 'app', 'build.gradle'), 'utf8');
+    const vcMatch = gradleText.match(/versionCode\s+(\d+)/);
+    const apkBuf = fs.readFileSync(apkPath);
+    latest.android = {
+      version,
+      versionCode: vcMatch ? Number(vcMatch[1]) : 0,
+      url: `ssio:release:${androidMarker.releaseId}`,
+      mirrors: [],
+      sha256: crypto.createHash('sha256').update(apkBuf).digest('hex'),
+      size: apkBuf.length,
+      fileName: `TaskManager-${version}.apk`,
+      page: null,
+    };
+    ok(`android 段已组装：v${version} versionCode=${latest.android.versionCode}（SSIO 引用）`);
+  } else {
+    console.log('    [i] 跳过 android 段（APK 未上传或版本不符，清单沿用上一版的 android）');
+  }
+} catch (e) {
+  console.log(`    [!] android 段组装失败：${e.message}（清单沿用上一版）`);
+}
 // v1.2.10 幂等修复：重跑同一版本时保留首次发布日期。以前每次 resume 都会把
 // releaseDate 刷成当前时间 → latest.json 永远有差异 → 每次重跑都多出一个空壳 release commit。
 latest.releaseDate =

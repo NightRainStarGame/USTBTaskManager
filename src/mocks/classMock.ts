@@ -36,18 +36,8 @@ export function createClassMockApi() {
   return {
     config: async () => ({
       ok: true,
-      repo: 'NightRainStarGame/USTBTaskManager-Class',
-      branch: 'main',
-      repoUrl: 'https://github.com/NightRainStarGame/USTBTaskManager-Class/tree/main/class',
-      tokenSet: false,
-      fallbackTokenAvailable: true,
-      usingFallbackToken: true,
-      cloudSourceEnabled: false,
-      cloud: null,
       localAlias: mockLocalAlias,
     }),
-    saveAuth: async () => ({ ok: true, tokenSet: false }),
-    saveCloud: async () => ({ ok: true }),
     saveLocalAlias: async (alias: string) => { mockLocalAlias = alias; return { ok: true, localAlias: alias }; },
     list: async () => ({ ok: true, classes: mockClasses }),
     info: async (id: number) => {
