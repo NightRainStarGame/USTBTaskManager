@@ -25,13 +25,13 @@
     }
   ],
   "android": {
-    "version": "1.2.15",
-    "versionCode": 10,
-    "url": "ssio:release:9d9c436b-8ff6-4c2f-abdf-ee29dbc59637",
+    "version": "1.2.16",
+    "versionCode": 11,
+    "url": "ssio:release:4115af92-6ef6-4df7-a0e7-9bfa7163d780",
     "mirrors": [],
-    "sha256": "faf2b851dbc6326e8fb47002af928b7d943da5b4de0519fec3abdd61fa4cfabc",
-    "size": 4711410,
-    "fileName": "TaskManager-1.2.15.apk",
+    "sha256": "7ef1090ff1e71ba5616c8f71867f8ae0ba50bfd421d7574fc329fe11f0fe99bd",
+    "size": 4711718,
+    "fileName": "TaskManager-1.2.16.apk",
     "page": null
   },
   "urlMirrors": [],
