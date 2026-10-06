@@ -5,9 +5,10 @@
  * 于是手机上的 APK 永远停在装的那一天，桌面修的 bug 一个都到不了手机上 ——
  * 这次的 v1.2.10 白屏事故，移动端用户就完全拿不到修复。
  *
- * 现在的链路：
- *   读 latest.json 的 android 字段（GitHub raw → jsDelivr 备援）
+ * 现在的链路（v1.2.15 起只有 SSIO 一个源）：
+ *   从 SSIO KV 读 latest.json 的 android 字段
  *   → versionCode 与 native BuildConfig 比对
+ *   → android.url 是 ssio:release:<id> 引用，安装前现换签名地址
  *   → ApkInstallerPlugin 下载到本地私有目录 + sha256 校验
  *   → FileProvider content:// Uri + ACTION_VIEW 拉起系统安装器
  *
@@ -15,7 +16,7 @@
  * 因此不会出现「下载进 IndexedDB、安装时抛 spawn 未定义」的经典翻车。
  */
 
-import { kvGetJson } from '../../electron/cloud/ssioClient';
+import { kvGetJson, SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../../electron/cloud/ssioClient';
 
 export interface AndroidUpdateInfo {
   version: string;
@@ -41,13 +42,12 @@ export interface ApkUpdateCheck {
 }
 
 /** v1.2.12：SSIO 主源。服务端 KV 里镜像了一份 latest.json（发版时同步上去），
- *  国内外都能取到，且不受 GitHub raw 缓存影响。取不到才回退下面的备源。 */
+ *  国内外都能取到，且不受 GitHub raw 缓存影响。 */
 const SSIO_LATEST_KEY = 'latest.json';
 
-const LATEST_SOURCES = [
-  'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json',
-  'https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/latest.json',
-];
+// v1.2.15：删掉 GitHub raw / jsDelivr 备源 —— 前者在国内被 DNS 投毒（实测解析成
+// 0.0.0.0），后者镜像的仓库 latest.json 已不再更新，拉到只会是一个更旧的
+// versionCode。备源非但帮不上忙，还可能把用户锁在旧版本上。
 const FETCH_TIMEOUT_MS = 12000;
 
 function pick(name: string): any {
@@ -101,11 +101,11 @@ export async function getCurrentVersion(): Promise<{ versionCode: number; versio
   return { versionCode: 0, versionName: fallbackName };
 }
 
-async function fetchJson(url: string): Promise<any> {
+async function fetchJson(url: string, headers?: Record<string, string>): Promise<any> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store', headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
@@ -113,16 +113,46 @@ async function fetchJson(url: string): Promise<any> {
   }
 }
 
+/**
+ * 把 ssio:release:<id> / ssio:file:<id> 引用换成**新鲜**下载地址。
+ *
+ * SSIO 的下载链接是 5 分钟过期的签名 URL —— 清单是拉取时缓存的，用户点「安装」
+ * 可能晚了好几分钟，直接用清单里的旧地址必 404。所以这一步必须在下载前一刻做。
+ * 与桌面端 electron/updater/ssio.ts 的 fetchSsioDownloadUrl 是同一套协议。
+ */
+async function resolveSsioRef(ref: string): Promise<string> {
+  const m = ref.match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
+  if (!m) throw new Error(`SSIO 引用格式无效：${ref}`);
+  const apiPath =
+    m[1].toLowerCase() === 'release'
+      ? `/v1/releases/${m[2]}/download`
+      : `/v1/storage/files/${m[2]}/download`;
+  const j = await fetchJson(`${SSIO_DEFAULT_BASE}${apiPath}`, {
+    accept: 'application/json',
+    'X-API-Key': SSIO_BUILTIN_KEY,
+  });
+  if (!j?.url) throw new Error('SSIO 没返回下载地址');
+  return String(j.url);
+}
+
+/** v1.2.15：清单里的地址既可以是 http(s) 直链，也可以是 ssio:release:<id> / ssio:file:<id> 引用 */
+function isUsableUrl(u: unknown): u is string {
+  return (
+    typeof u === 'string' &&
+    (/^https?:\/\//i.test(u) || /^ssio:(release|file):[A-Za-z0-9_-]+$/i.test(u))
+  );
+}
+
 function parseAndroid(obj: any, source: string): AndroidUpdateInfo | null {
   const a = obj?.android;
   if (!a || typeof a !== 'object') return null;
-  const url = typeof a.url === 'string' && /^https?:\/\//i.test(a.url) ? a.url : null;
+  const url = isUsableUrl(a.url) ? a.url : null;
   if (!url) return null;
   return {
     version: String(a.version || obj.version || '').replace(/^v/i, ''),
     versionCode: Number(a.versionCode) || 0,
     url,
-    mirrors: Array.isArray(a.mirrors) ? a.mirrors.filter((u: any) => typeof u === 'string' && /^https?:\/\//i.test(u)) : undefined,
+    mirrors: Array.isArray(a.mirrors) ? a.mirrors.filter((u: any) => isUsableUrl(u)) : undefined,
     sha256: typeof a.sha256 === 'string' ? a.sha256 : undefined,
     size: typeof a.size === 'number' ? a.size : undefined,
     fileName: typeof a.fileName === 'string' ? a.fileName : undefined,
@@ -132,28 +162,15 @@ function parseAndroid(obj: any, source: string): AndroidUpdateInfo | null {
   };
 }
 
-/** 从所有可用源里挑 android.versionCode 最高的那份。 */
 export async function fetchAndroidUpdate(): Promise<AndroidUpdateInfo | null> {
-  // 主源 SSIO：拿到就直接返回（备源只在 SSIO 不可达时才走）
+  // v1.2.15：只剩 SSIO 一个源（备源的下场见上方 LATEST_SOURCES 注释）
   try {
     const obj = await kvGetJson<any>(SSIO_LATEST_KEY);
-    const info = parseAndroid(obj, 'ssio');
-    if (info) return info;
+    return parseAndroid(obj, 'ssio');
   } catch (e) {
-    console.warn('[apk] SSIO 更新清单读取失败，回退 GitHub:', e);
+    console.warn('[apk] SSIO 更新清单读取失败:', e);
+    return null;
   }
-
-  const results = await Promise.allSettled(LATEST_SOURCES.map((u) => fetchJson(u)));
-  let best: AndroidUpdateInfo | null = null;
-
-  results.forEach((r, i) => {
-    if (r.status !== 'fulfilled') return;
-    const info = parseAndroid(r.value, LATEST_SOURCES[i]);
-    if (!info) return;
-    if (!best || (info.versionCode || 0) > (best.versionCode || 0)) best = info;
-  });
-
-  return best;
 }
 
 export async function checkAndroidUpdate(): Promise<ApkUpdateCheck> {
@@ -194,8 +211,8 @@ export type InstallResult =
 /**
  * 下载并安装（原生侧负责下载 + sha256 校验 + 拉起安装界面）。
  *
- * 主地址失败会自动依次尝试 mirrors —— raw.githubusercontent 在某些网络下抽风，
- * 以前这种「下载失败就永远装不上」正是移动端卡在旧版本的主因。
+ * v1.2.15：清单里的地址多是 ssio: 引用 —— 安装前先现签一条新鲜 URL
+ * （签名 5 分钟过期，见 resolveSsioRef）。多个候选依次尝试。
  */
 export async function installAndroidApk(info: AndroidUpdateInfo): Promise<InstallResult> {
   const plugin = pick('ApkInstaller');
@@ -206,8 +223,9 @@ export async function installAndroidApk(info: AndroidUpdateInfo): Promise<Instal
   const candidates = [info.url, ...(info.mirrors || [])].filter(Boolean);
   let lastReason = 'UNKNOWN';
 
-  for (const url of candidates) {
+  for (const raw of candidates) {
     try {
+      const url = /^ssio:/i.test(raw) ? await resolveSsioRef(raw) : raw;
       const r = await plugin.installApk({ url, sha256: info.sha256 || '' });
       if (r && r.ok === true) return { ok: true };
       lastReason = String(r?.reason || 'UNKNOWN');

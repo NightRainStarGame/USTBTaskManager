@@ -12,7 +12,8 @@ export type UpdateSourceDTO = {
   url: string;
   enabled: boolean;
   primary: boolean;
-  type?: 'anyshare' | 'http';
+  /** v1.2.15：'anyshare'（北科云盘）已随通道下线；'ssio' = 自托管 SSIO 发行服务 */
+  type?: 'ssio' | 'http';
   password?: string;
 };
 
@@ -203,6 +204,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       }>,
       /** v1.1.5：渲染层完成 React mount + store.refreshAll() 后调用，通知主进程关 splash */
       ready: () => send('app:ready-to-show'),
+      /** v1.2.15：关闭行为（ask / minimize / quit），点 X 时主进程按它决定问还是直接走 */
+      getCloseBehavior: () => invoke('app:getCloseBehavior') as Promise<'ask' | 'minimize' | 'quit'>,
+      setCloseBehavior: (v: 'ask' | 'minimize' | 'quit') =>
+        invoke('app:setCloseBehavior', v) as Promise<'ask' | 'minimize' | 'quit'>,
     },
     // 软件更新
     updater: {
@@ -354,19 +359,14 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       },
     },
     // 作业发布 / 接收（码制协议：作业包 = homework/<syncCode>.json）
+    // v1.2.15：后端只剩 SSIO —— GitHub 令牌与北科云盘源的配置项（saveCloud / tokenSet /
+    // cloud）随通道一起下线，saveAuth 只负责「发布人昵称」。
     homework: {
       config: () => invoke('homework:config') as Promise<{
-        repo: string; branch: string; dir: string; repoUrl: string;
-        tokenSet: boolean; publisher: string; lastSync: number | null;
-        cloudSourceEnabled: boolean;
-        /** v1.1.4：北科云盘作业同步源配置（null = 未配置） */
-        cloud: { baseUrl: string; linkId: string; password: string; enabled: boolean } | null;
+        dir: string; publisher: string; lastSync: number | null;
       }>,
-      /** 保存 GitHub 发布令牌 + 发布人昵称（只存本机） */
-      saveAuth: (token: string, publisher: string) => invoke('homework:saveAuth', token, publisher) as Promise<{ ok: boolean; error?: string; tokenSet?: boolean }>,
-      /** v1.1.4：保存北科云盘作业同步源（外链地址 + 提取码 + 启用开关） */
-      saveCloud: (cfg: { url?: string; password?: string; enabled?: boolean }) =>
-        invoke('homework:saveCloud', cfg) as Promise<{ ok: boolean; error?: string; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean } }>,
+      /** 保存发布人昵称（只存本机；第一个参数保留是为了兼容旧调用方） */
+      saveAuth: (_token: string, publisher: string) => invoke('homework:saveAuth', _token, publisher) as Promise<{ ok: boolean }>,
       /** 生成一对新码（同步作业码 + 作业发布码） */
       generateCodes: () => invoke('homework:generateCodes') as Promise<{ ok: boolean; syncCode: string; publishCode: string }>,
       /** v1.2.2：回看已生成的作业码（手动生成历史 + 课程绑定码，同码去重） */
@@ -547,8 +547,8 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         cloud: {
           ranAt: number;
           codes: string[];
-          github: { checked: number; rewritten: number; deleted: number; removedEntries: number; errors: string[] };
-          cloud: { checked: number; rewritten: number; removedEntries: number; errors: string[] };
+          /** v1.2.15：云端清理只剩 SSIO，原 github/cloud 两份报告合并为一份 */
+          ssio: { checked: number; rewritten: number; deleted: number; removedEntries: number; errors: string[] };
         };
       }>,
       bin: (opts?: { kind?: string; limit?: number }) => invoke('cleanup:bin', opts) as Promise<Array<{
@@ -621,21 +621,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       syncVouchers: () => invoke('billing:syncVouchers') as Promise<{ ok: boolean; activated: number; error?: string }>,
     },
 
-    // v1.2.7 起 P2P 班级复活（v1.2.9 R9：独立仓库 + 内置公共写入令牌；北科云盘降为可选备源）
+    // v1.2.7 起 P2P 班级复活（v1.2.15：后端只剩 SSIO，无任何需要配置的凭据）
     class: {
       config: () => invoke('class:config') as Promise<{
-        ok: boolean; repo: string; branch: string; repoUrl: string;
-        tokenSet: boolean; cloudSourceEnabled: boolean;
-        /** v1.2.9 R9：内置公共写入通道是否已内置（true = 无需个人 PAT 即可写云端） */
-        fallbackTokenAvailable?: boolean;
-        /** 当前是否正在用内置公共令牌（个人 PAT 未配置） */
-        usingFallbackToken?: boolean;
-        cloud: { baseUrl: string; linkId: string; password: string; enabled: boolean } | null;
-        localAlias: string;
-      }>,
-      saveAuth: (token: string) => invoke('class:saveAuth', token) as Promise<{ ok: boolean; tokenSet?: boolean; usingFallbackToken?: boolean; error?: string }>,
-      saveCloud: (cfg: { url?: string; password?: string; enabled?: boolean }) => invoke('class:saveCloud', cfg) as Promise<{
-        ok: boolean; cloud?: { baseUrl: string; linkId: string; password: string; enabled: boolean }; error?: string;
+        ok: boolean; localAlias: string;
       }>,
       saveLocalAlias: (alias: string) => invoke('class:saveLocalAlias', alias) as Promise<{ ok: boolean; localAlias?: string; error?: string }>,
       list: () => invoke('class:list') as Promise<{ ok: boolean; classes: any[] }>,

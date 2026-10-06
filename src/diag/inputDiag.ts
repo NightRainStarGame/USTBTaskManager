@@ -33,6 +33,8 @@ export interface InputDiagSnapshot {
   recent: Array<EventRecord>;
   /** 当前 composition 状态相关 */
   pendingComposition?: { dataLen: number; compositionStartAt: number } | null;
+  /** v1.2.15：本条快照上报前已自动做过 blur→focus 自愈 */
+  healed?: boolean;
   /** 渲染层版本号 */
   appVersion: string;
   /** Electron 版本（无则 NA） */
@@ -181,9 +183,15 @@ export function installInputDiag(opts: InputDiagOptions = {}): InputDiagHandle {
     pushEvent({ t: 'compositionend', ms: nowMs(), dataLen: (e.data || '').length, target: elToPath(e.target as Element | null) });
   };
   const onFocus = (e: FocusEvent) => {
+    // v1.2.15：焦点切换时若残留悬挂组合态（compositionstart 后 end 丢失），
+    // 直接清掉——它会让新焦点上的输入也打不进字。
+    if (state.pendingComposition) state.pendingComposition = null;
     pushEvent({ t: 'focus', ms: nowMs(), target: elToPath(e.target as Element | null) });
   };
   const onBlur = (e: FocusEvent) => {
+    // v1.2.15：同上。窗口/元素失焦是 compositionend 丢失的高发时刻
+    // （Electron + 部分中文输入法在托盘切换、最小化恢复时丢这个事件）。
+    if (state.pendingComposition) state.pendingComposition = null;
     pushEvent({
       t: 'blur',
       ms: nowMs(),
@@ -271,7 +279,24 @@ export function installInputDiag(opts: InputDiagOptions = {}): InputDiagHandle {
 
     state.stallCount += 1;
     state.lastReportAt = now;
+
+    // v1.2.15：从「只上报」升级为「先自愈再上报」。
+    //
+    // 失灵的最常见形态是 IME 管道断裂：compositionend 丢了（或 keydown 根本
+    // 到不了页面）之后，受控输入对普通按键完全没反应——用户看到的就是
+    // 「点进输入框也打不了字，重启才好」。诊断模块 v1.1.6 上线后已抓到多例。
+    // 对策：blur → focus 一次当前元素。Chromium 会重建 IME 连接，立即恢复输入；
+    // 对正常用户零影响（此路径只在「焦点在输入框里 8 秒无任何键击」时才会走到）。
+    try {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable)) {
+        el.blur();
+        el.focus();
+      }
+    } catch { /* 自愈失败也不影响上报 */ }
+
     const snap = snapshot(idle > STALL_MS * 2 ? 'input_focus_no_composition_end' : 'input_focus_no_keydown');
+    snap.healed = true;
     sendIfPossible(snap);
   };
 

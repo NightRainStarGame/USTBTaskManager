@@ -136,6 +136,22 @@ async function main() {
     process.exit(1);
   }
   console.log('  ✓ KV 清单已同步');
+
+  // v1.2.15：顺带同步 about.txt。客户端 electron/about/index.ts 已改从 KV 取
+  // （`taskmgr/about.txt`），不再依赖 GitHub raw / 云盘 —— 不同步这里，关于页就
+  // 只能显示本地内置版。失败只警告，不阻断发版。
+  const aboutPath = path.join(ROOT, 'about.txt');
+  if (fs.existsSync(aboutPath)) {
+    try {
+      const about = fs.readFileSync(aboutPath, 'utf8');
+      await put(`${BASE}/v1/kv?key=${encodeURIComponent('taskmgr/about.txt')}`, { value: about });
+      console.log(`  ✓ about.txt 已同步（${about.length} 字符）`);
+    } catch (e) {
+      console.log(`  [!] about.txt 同步失败：${e && e.message ? e.message : e}`);
+    }
+  } else {
+    console.log('  [i] 仓库根没有 about.txt，跳过（关于页将用本地兜底）');
+  }
 }
 
 main().catch((e) => {

@@ -14,13 +14,8 @@
  */
 import { ipcMain } from 'electron';
 import type { DB } from './db';
-import {
-  ghFetch, HOMEWORK_DIR, HOMEWORK_BRANCH, mergeBundleFiles, derivePublishCode,
-  getAnyShareConfig, normalizeSyncCode, type HomeworkFile,
-} from './homework';
-import {
-  getShareRoot, ensureShareDir, listDir, downloadTextFile, uploadTextFileToDir,
-} from './anyshare';
+import { HOMEWORK_DIR, normalizeSyncCode, type HomeworkFile } from './homework';
+import { kvGetJson, kvPut, kvDelete } from './cloud/ssioClient';
 
 const DAY = 86400000;
 
@@ -317,8 +312,8 @@ export function runLocalCleanup(db: DB, opts?: { force?: boolean }): CleanupRepo
 export interface CloudCleanupReport {
   ranAt: number;
   codes: string[];
-  github: { checked: number; rewritten: number; deleted: number; removedEntries: number; errors: string[] };
-  cloud: { checked: number; rewritten: number; removedEntries: number; errors: string[] };
+  /** v1.2.15：后端只剩 SSIO，原来的 github / cloud 两份报告合并成一份 */
+  ssio: { checked: number; rewritten: number; deleted: number; removedEntries: number; errors: string[] };
 }
 
 /** 收集本机用过的所有同步作业码（settings homework_sync_*） */
@@ -332,113 +327,48 @@ function collectSyncCodes(db: DB): string[] {
   return Array.from(set);
 }
 
-/** 上传的作业云端清理：publishedAt 超过 TTL 的条目从云端移除。
- *  GitHub：GET → 过滤 → PUT 回写；条目删空 → DELETE 文件。
- *  云盘：匿名删不了文件 → 下载合并 → 过滤 → 上传一份新快照（旧快照沉底，接收端 TTL 兜底）。 */
+/**
+ * 上传的作业云端清理：publishedAt 超过 TTL 的条目从 SSIO 移除。
+ *
+ * v1.2.15：以前要分别处理两个后端 —— GitHub 走 GET→过滤→PUT（条目删空则 DELETE 文件），
+ * 北科云盘因为匿名删不了文件，只能「下载合并 → 过滤 → 上传一份新快照」，靠接收端 TTL
+ * 让旧快照沉底。现在 KV 支持真正的 upsert 与 delete，两个套路收敛成一个：
+ *   读一个包 → 过滤过期条目 → 还有剩余就写回，删空就直接删除 key。
+ */
 export async function runCloudHomeworkCleanup(db: DB): Promise<CloudCleanupReport> {
   const rules = getCleanupRules(db);
   const cutoff = Date.now() - rules.homeworkDays * DAY;
   const codes = collectSyncCodes(db);
   const report: CloudCleanupReport = {
     ranAt: Date.now(), codes,
-    github: { checked: 0, rewritten: 0, deleted: 0, removedEntries: 0, errors: [] },
-    cloud: { checked: 0, rewritten: 0, removedEntries: 0, errors: [] },
+    ssio: { checked: 0, rewritten: 0, deleted: 0, removedEntries: 0, errors: [] },
   };
   if (rules.homeworkDays <= 0 || !codes.length) return report;
 
-  // ── GitHub ──
-  let token = '';
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'homework_github_token'").get() as { value?: string } | undefined;
-    token = (row?.value || '').trim();
-  } catch { /* 无 token 跳过 GitHub */ }
-
+  // ── SSIO ──
   for (const code of codes) {
-    if (!token) break;
-    const filePath = `${HOMEWORK_DIR}/${code}.json`;
     try {
-      const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
-      report.github.checked++;
-      if (r.status === 404) continue;
-      if (!r.ok) {
-        report.github.errors.push(`${code}: HTTP ${r.status}`);
-        continue;
-      }
-      const meta = JSON.parse(r.text);
-      const file = JSON.parse(Buffer.from(meta.content || '', 'base64').toString('utf8')) as HomeworkFile;
-      if (!Array.isArray(file.entries)) continue;
+      const file = await kvGetJson<HomeworkFile>(`${HOMEWORK_DIR}/${code}.json`);
+      if (!file || !Array.isArray(file.entries)) continue;
+      report.ssio.checked++;
       const keep = file.entries.filter((e) => (e?.publishedAt || 0) >= cutoff);
       const removed = file.entries.length - keep.length;
       if (!removed) continue;
-      report.github.removedEntries += removed;
+      report.ssio.removedEntries += removed;
       if (keep.length) {
-        const putRes = await ghFetch(`/contents/${filePath}`, {
-          method: 'PUT', token,
-          body: {
-            message: `homework-cleanup: [${code}] 移除 ${removed} 条过期条目（TTL ${rules.homeworkDays} 天）`,
-            content: Buffer.from(JSON.stringify({ ...file, entries: keep, updatedAt: Date.now() }, null, 2), 'utf8').toString('base64'),
-            branch: HOMEWORK_BRANCH,
-            sha: meta.sha,
-          },
-        });
-        if (putRes.ok) report.github.rewritten++;
-        else report.github.errors.push(`${code}: 回写失败 HTTP ${putRes.status}`);
+        await kvPut(
+          `${HOMEWORK_DIR}/${code}.json`,
+          JSON.stringify({ ...file, entries: keep, updatedAt: Date.now() }, null, 2),
+        );
+        report.ssio.rewritten++;
       } else {
-        const delRes = await ghFetch(`/contents/${filePath}`, {
-          method: 'DELETE', token,
-          body: {
-            message: `homework-cleanup: [${code}] 全部条目过期，删除作业包`,
-            sha: meta.sha,
-            branch: HOMEWORK_BRANCH,
-          },
-        });
-        if (delRes.ok) report.github.deleted++;
-        else report.github.errors.push(`${code}: 删除失败 HTTP ${delRes.status}`);
+        await kvDelete(`${HOMEWORK_DIR}/${code}.json`);
+        report.ssio.deleted++;
       }
     } catch (e: any) {
-      report.github.errors.push(`${code}: ${e?.message || e}`);
+      report.ssio.errors.push(`${code}: ${e?.message || e}`);
     }
   }
-
-  // ── 北科云盘 ──
-  const cfg = (() => { try { return getAnyShareConfig(db); } catch { return null; } })();
-  if (cfg && cfg.enabled) {
-    for (const code of codes) {
-      try {
-        const root = await getShareRoot(cfg);
-        const hwDir = await ensureShareDir(cfg, root.docid, 'homework');
-        const pubDir = await ensureShareDir(cfg, hwDir.docid, derivePublishCode(code));
-        const { files } = await listDir(cfg, pubDir.docid);
-        const jsonFiles = files.filter((f) => f.name.endsWith('.json'));
-        if (!jsonFiles.length) continue;
-        report.cloud.checked++;
-        const bundles: HomeworkFile[] = [];
-        for (const f of jsonFiles) {
-          try {
-            const text = await downloadTextFile(cfg, f, 1024 * 1024);
-            const parsed = JSON.parse(text) as HomeworkFile;
-            if (parsed && Array.isArray(parsed.entries)) bundles.push(parsed);
-          } catch { /* 单文件损坏跳过 */ }
-        }
-        if (!bundles.length) continue;
-        const merged = mergeBundleFiles(bundles, code);
-        const keep = (merged.entries || []).filter((e) => (e?.publishedAt || 0) >= cutoff);
-        const removed = (merged.entries || []).length - keep.length;
-        if (!removed) continue;
-        report.cloud.removedEntries += removed;
-        // 匿名无法覆盖/删除旧文件 → 写一份过滤后的新快照（接收端 mergeBundleFiles 按 id/三元组去重，
-        // 旧快照里的过期条目已被本端 TTL 过滤，不会再回到任何新版客户端）
-        const courseKey = (merged.courseKey || code).replace(/[\\/:*?"<>|#%&{}$!'@+`=\s]+/g, '-');
-        const newName = `${courseKey}-${Date.now()}.json`;
-        const fresh: HomeworkFile = { ...merged, entries: keep, updatedAt: Date.now() };
-        await uploadTextFileToDir(cfg, pubDir.docid, newName, JSON.stringify(fresh, null, 2));
-        report.cloud.rewritten++;
-      } catch (e: any) {
-        report.cloud.errors.push(`${code}: ${e?.message || e}`);
-      }
-    }
-  }
-
   setSetting(db, K.lastCloud, String(Date.now()));
   return report;
 }

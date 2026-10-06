@@ -23,11 +23,11 @@ interface UpdatePayload {
   patches?: any[] | null;
   asarSize?: number | null;
   size?: number | null;
-  /** 多源聚合结果：每个源的独立结果（type/password 供北科云盘源换签名直链） */
+  /** 多源聚合结果：每个源的独立结果（type/password 供 SSIO 源换签名直链） */
   perSource?: Array<{
     name: string; url: string; ok: boolean; latestVersion: string | null;
     reason?: string; message?: string;
-    type?: 'anyshare' | 'http'; password?: string; sourceIndex?: number;
+    type?: 'ssio' | 'http'; password?: string; sourceIndex?: number;
     latencyMs?: number; downloadUrl?: string | null; sha256?: string | null; pageUrl?: string | null;
   }>;
 }
@@ -164,7 +164,7 @@ export default function UpdateNotification({ externalTrigger }: Props) {
     setDl({ running: true, percent: 0, received: 0, total: 0 });
     setErr(null);
     setDlPath(null);
-    // 北科云盘源：downloadUrl 是云盘里的文件名，需带上源信息（提取码）让主进程换签名直链
+    // SSIO 源的 downloadUrl 可能是 ssio: 引用，带上源信息（APIKey）让主进程换签名直链
     const ps = payload.sourceIndex != null
       ? payload.perSource?.find((p) => p.sourceIndex === payload.sourceIndex)
       : undefined;

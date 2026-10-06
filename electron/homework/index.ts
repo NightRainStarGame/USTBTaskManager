@@ -15,15 +15,6 @@ import { net, ipcMain } from 'electron';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import type { DB } from '../db/index';
 import { computeCourseKey } from '../db/index';
-import {
-  parseAnyShareUrl, getFileDownloadUrl,
-  getShareRoot, ensureShareDir, listDir, listShareFiles, uploadTextFileToDir,
-  type AnyShareConfig, type AnyShareFile,
-} from '../anyshare';
-// v1.2.10：复用班级那张 fine-grained PAT 作为作业同步的内置令牌（同仓库、同权限）
-import { CLASS_FALLBACK_TOKEN } from '../class/storage';
-// v1.2.12：SSIO 立为主源 —— 内置 Key 无需用户配 PAT，且强一致（GitHub raw 有最多 5 分钟
-// CDN 缓存，发布后立刻接收会拿到旧包，v1.1.8 就栽在这）。GitHub 降为可选镜像。
 import { kvGetJson, kvPut } from '../cloud/ssioClient';
 
 export const HOMEWORK_REPO_OWNER = 'NightRainStarGame';
@@ -63,41 +54,15 @@ const SETTING_CLOUD = 'homework_anyshare';
 const SETTING_MY_CODES = 'homework_my_codes';
 
 /**
- * v1.2.10：令牌优先级 = 用户自己的 PAT > 内置公共令牌（与班级共用同一张，见 CLASS_FALLBACK_TOKEN）。
- * 以前没个人令牌发布就硬失败，等于人人都得去 GitHub 开 PAT 才能用作业同步；
- * 现在内置令牌兜底 → 开箱即用，想用自己的 PAT 仍可在设置里覆盖。
+ * v1.2.15：SSIO 不需要任何令牌。
+ *
+ * 以前这里返回「用户自己的 GitHub PAT → 内置公共令牌」，返回空串就跳过云端写入；
+ * 现在恒返回非空，让历史上成片的 `if (token)` 分支照旧走通过路径。
+ * 顺带修掉旧版的一个真 bug：原实现写成 `return resolveToken(db) || ...`，
+ * 自己调自己 —— 一旦走到这条路径就是无限递归到栈溢出。
  */
-function resolveToken(db: DB): string {
-  return resolveToken(db) || CLASS_FALLBACK_TOKEN || '';
-}
-
-/** v1.2.10 迁移兜底：老作业包还躺在主仓库 homework/ 下，只读不写 */
-const LEGACY_RAW_BASE = 'https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main';
-
-/** 北科云盘默认外链。仅在北京科技大学校园网内可达；用户可在设置里改/关 */
-export const DEFAULT_ANYSHARE_CONFIG: AnyShareConfig & { enabled: boolean } = {
-  baseUrl: 'https://yunpan.ustb.edu.cn',
-  linkId: 'AADAAEA94FBE6B4435B8D14A236FAC6469',
-  password: 'kc26',
-  enabled: true,
-};
-
-export function getAnyShareConfig(db: DB): (AnyShareConfig & { enabled: boolean }) | null {
-  const raw = getSetting(db, SETTING_CLOUD);
-  if (raw) {
-    try {
-      const j = JSON.parse(raw);
-      if (j && j.linkId) {
-        return {
-          baseUrl: String(j.baseUrl || DEFAULT_ANYSHARE_CONFIG.baseUrl),
-          linkId: String(j.linkId),
-          password: String(j.password || ''),
-          enabled: j.enabled !== false,
-        };
-      }
-    } catch {}
-  }
-  return { ...DEFAULT_ANYSHARE_CONFIG };
+function resolveToken(_db: DB): string {
+  return 'ssio';
 }
 
 const FETCH_TIMEOUT_MS = 20000;
@@ -302,116 +267,23 @@ export interface HomeworkSource {
   fetchBundle(syncCode: string, token?: string): Promise<{ file: HomeworkFile } | null>;
 }
 
-const RAW_BASE = `https://raw.githubusercontent.com/${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}/${HOMEWORK_BRANCH}`;
-
-/** v1.2.10 迁移兼容：新仓在读不到时才去主仓库找历史作业包（只读，新发布一律写数据仓） */
-async function fetchLegacyBundle(syncCode: string): Promise<HomeworkFile | null> {
-  try {
-    const r = await ghFetch(`${LEGACY_RAW_BASE}/${HOMEWORK_DIR}/${syncCode}.json`, { raw: true });
-    if (!r.ok) return null;
-    const file = JSON.parse(r.text) as HomeworkFile;
-    if (file && Array.isArray(file.entries) && file.syncCode === syncCode) return file;
-  } catch { /* 主仓库不可达当作没有，不能把网络错误伪装成「码不存在」以外的东西 */ }
-  return null;
-}
-
 const githubSource: HomeworkSource = {
   name: 'github',
-  async fetchBundle(syncCode, token) {
-    const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
-    // v1.2.12：SSIO 主源（强一致 + 免令牌 + 国内外可达）
+  async fetchBundle(syncCode) {
+    // 作业包就在 SSIO KV 里。相比旧的 GitHub raw + Contents API 双读：
+    //  · 强一致，没有 raw CDN 5 分钟缓存（v1.1.8 的旧根因）；
+    //  · 免令牌，不需要用户开 PAT；国内外都可达。
     try {
       const sf = await kvGetJson<HomeworkFile>(`${HOMEWORK_DIR}/${syncCode}.json`);
       if (sf && Array.isArray(sf.entries) && sf.syncCode === syncCode) return { file: sf };
-    } catch (e) {
-      console.warn('[homework] SSIO 读取失败，回退 GitHub:', e);
-    }
-    // Contents API（no-store）优先：raw CDN 的缓存键忽略 query string，?t= 绕不过
-    // 它最长 5 分钟的缓存——发布第二条后立刻接收会拿到只剩第一条的旧包（v1.1.8 实测根因）。
-    // raw 降级为 Contents API 网络失败时的兜底（有缓存总比拿不到强）。
-    let lastErr: any = null;
-    try {
-      const r = await ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
-      if (r.status === 404) {
-        // v1.2.10：数据仓里没有 → 回退主仓库找历史包，保证迁移前发出去的老同步码继续可用
-        const legacy = await fetchLegacyBundle(syncCode);
-        return legacy ? { file: legacy } : null;
-      }
-      if (r.ok) {
-        try {
-          const meta = JSON.parse(r.text);
-          const file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-          if (file && Array.isArray(file.entries)) return { file };
-          lastErr = new Error('远端作业包损坏（entries 缺失）');
-        } catch {
-          lastErr = new Error('远端作业包损坏（JSON 解析失败）');
-        }
-      } else {
-        lastErr = new Error(describeStatus(r.status, r.text));
-      }
     } catch (e: any) {
-      lastErr = e;
+      throw new Error(`读取 SSIO 作业包失败：${e?.message || e}`);
     }
-    try {
-      const r = await ghFetch(`${RAW_BASE}/${filePath}`, { raw: true });
-      if (r.ok) {
-        try {
-          const file = JSON.parse(r.text) as HomeworkFile;
-          if (file && Array.isArray(file.entries) && file.syncCode === syncCode) return { file };
-        } catch {}
-      }
-    } catch {}
-    throw lastErr || new Error('GitHub 作业包拉取失败');
+    return null;
   },
 };
 
-/**
- * 北科云盘源（v1.1.4 起；v1.1.7 目录转接范式；v1.1.9 全量合并）：
- *   新结构 homework/<publishCode>/<courseKey>-<时间戳>.json
- *   旧结构 <syncCode>-<时间戳>.json（扁平）
- * 同一个码包目录下可能有多个文件（每次发布写一个、跨课程各写各的 courseKey 前缀），
- * 只取「最新一个」会丢其余文件的条目——v1.1.9 起全部下载后条目级合并。
- */
-const anyshareSource: HomeworkSource = {
-  name: 'ustb-cloud',
-  async fetchBundle(syncCode) {
-    const cfg = anyshareCtx();
-    if (!cfg || !cfg.enabled) return null;
-    const candidates: AnyShareFile[] = [];
-    let usedLegacy = false;
-    try {
-      const publishCode = derivePublishCode(syncCode);
-      const root = await getShareRoot(cfg);
-      const { dirs } = await listDir(cfg, root.docid);
-      const hwDir = dirs.find((d) => d.name === 'homework');
-      if (hwDir?.docid) {
-        const { dirs: subs } = await listDir(cfg, hwDir.docid);
-        const pubDir = subs.find((d) => d.name === publishCode);
-        if (pubDir?.docid) {
-          const { files } = await listDir(cfg, pubDir.docid);
-          candidates.push(...files.filter((f) => f.name.endsWith('.json')));
-        }
-      }
-    } catch {}
-    if (!candidates.length) {
-      // 旧扁平结构：同码所有历史文件全并（不只是 prefix 命中的第一个）
-      try {
-        const files = await listShareFiles(cfg);
-        candidates.push(...files.filter((f) => f.name.startsWith(`${syncCode}-`) && f.name.endsWith('.json')));
-        usedLegacy = candidates.length > 0;
-      } catch {}
-    }
-    if (!candidates.length) return null;
-    const bundles: HomeworkFile[] = [];
-    for (const f of candidates) {
-      try {
-        bundles.push(await downloadBundleFile(cfg, f));
-      } catch { /* 单个文件损坏不拖累整个码包 */ }
-    }
-    if (!bundles.length) return null;
-    return { file: mergeBundleFiles(bundles, syncCode, usedLegacy) };
-  },
-};
+
 
 /** 多份历史快照合并成一份（条目级去重：id 命中或 课程名+日期+标题 命中 → 后写的覆盖） */
 export function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
@@ -440,20 +312,7 @@ export function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, pref
   return merged;
 }
 
-async function downloadBundleFile(cfg: AnyShareConfig, file: AnyShareFile): Promise<HomeworkFile> {
-  const url = await getFileDownloadUrl(cfg, file);
-  const r = await ghFetch(url, { raw: true });
-  if (!r.ok) throw new Error(`北科云盘下载作业包失败（HTTP ${r.status}）`);
-  const parsed = JSON.parse(r.text) as HomeworkFile;
-  if (!parsed || !Array.isArray(parsed.entries)) throw new Error('北科云盘作业包损坏（entries 缺失）');
-  return parsed;
-}
-
 let _db: DB | null = null;
-function anyshareCtx(): (AnyShareConfig & { enabled: boolean }) | null {
-  if (!_db) return null;
-  try { return getAnyShareConfig(_db); } catch { return null; }
-}
 
 /** v1.1.9：作业云端 TTL（settings.cleanup_homework_days，默认 7 天；0 = 永久保留）。
  *  过期条目不再参与接收挂载——所有新版客户端统一执行，等效于从云端删除（云盘匿名删不了文件）。 */
@@ -480,7 +339,7 @@ async function fetchBundleFromAnySource(syncCode: string, token?: string): Promi
   const errors: string[] = [];
   let confirmedMissing = false;
   const hits: Array<{ source: string; file: HomeworkFile }> = [];
-  const sources: HomeworkSource[] = [githubSource, anyshareSource];
+  const sources: HomeworkSource[] = [githubSource];
   for (const src of sources) {
     try {
       const hit = await src.fetchBundle(syncCode, token);
@@ -650,7 +509,6 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
   }
   if (!normalizedEntries.length) return { ok: false, error: '请至少填写一条作业（标题必填）' };
 
-  const target = payload.target === 'cloud' ? 'cloud' : 'github';
   const publisher = getSetting(db, SETTING_PUBLISHER).trim() || '佚名';
   const courseGuid = getOrCreateCourseGuid(db, payload.courseId ?? (payload as any).courseId);
 
@@ -668,213 +526,54 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     }
   }
 
-  const filePath = `${HOMEWORK_DIR}/${syncCode}.json`;
-
-  if (target === 'cloud') {
-    const cfg = getAnyShareConfig(db);
-    if (!cfg || !cfg.enabled) return { ok: false, error: '北科云盘同步源未启用（设置 → 作业同步）' };
-
-    const publishCode = derivePublishCode(syncCode);
-    let pubDir: { docid: string; name: string } | null = null;
-    try {
-      const root = await getShareRoot(cfg);
-      const hwDir = await ensureShareDir(cfg, root.docid, 'homework');
-      pubDir = await ensureShareDir(cfg, hwDir.docid, publishCode);
-    } catch (e: any) {
-      return { ok: false, error: `创建云盘作业目录失败：${e?.message || e}` };
-    }
-
-    let file: HomeworkFile = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
-    try {
-      // v1.1.9：目录里所有 json 全下载合并（每个都是历史快照；跨课程同码发布时
-      // 各条目会写到不同 courseKey 前缀的文件里，只按本次前缀找 base 会丢其他课程的条目）
-      const { files } = await listDir(cfg, pubDir.docid);
-      const bundles: HomeworkFile[] = [];
-      for (const f of files.filter((x) => x.name.endsWith('.json'))) {
-        try {
-          bundles.push(await downloadBundleFile(cfg, f));
-        } catch { /* 单个损坏文件跳过 */ }
-      }
-      if (bundles.length) {
-        file = mergeBundleFiles(bundles, syncCode);
-        // 元信息以「包含本次 courseKey 的那份」优先（保留包级 courseKey 匹配能力）
-        const withKey = bundles.find((b) => b.courseKey === courseKey);
-        if (withKey) {
-          file.courseKey = withKey.courseKey;
-          file.courseGuid = withKey.courseGuid || file.courseGuid;
-          if (withKey.courseName) file.courseName = withKey.courseName;
-        }
-      }
-    } catch {}
-
-    // 批量合并（按 sessionDate+title 去重 + 追加）
-    let lastEntry: HomeworkEntry | undefined;
-    let hasNew = false;
-    for (const e of normalizedEntries) {
-      const r = mergeEntry(file, {
-        syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
-        payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
-        publisher, courseGuid, courseKey,
-      });
-      file = r.file;
-      lastEntry = r.entry;
-      if (!r.existing) hasNew = true;
-    }
-    // 匿名无法覆盖同名 → 每次发布写一个新文件 <courseKey>-<时间戳>.json
-    // 时间戳用真实单调的 Date.now()，并在末尾加毫秒+随机后缀保证唯一（同一毫秒内多次上传也能区分）
-    const tsNow = Date.now();
-    const cloudName = `${courseKey || syncCode}-${tsNow}.json`;
-    try {
-      await uploadTextFileToDir(cfg, pubDir.docid, cloudName, JSON.stringify(file, null, 2));
-    } catch (e: any) {
-      const raw = (e as any)?.anyshareRaw;
-      return {
-        ok: false,
-        error: `上传北科云盘失败：${e?.message || e}`,
-        anyshareRaw: raw ? JSON.stringify(raw) : undefined,
-      };
-    }
-    return {
-      ok: true,
-      entry: lastEntry,
-      fileUrl: `${cfg.baseUrl}/link/${cfg.linkId}`,
-      syncCode,
-      bundleCreated: hasNew,
-      entriesCount: file.entries.length,
-      entriesPublished: normalizedEntries.length,
-    };
-  }
-
-  // GitHub 目标
-  const token = resolveToken(db);
-  // v1.2.12：SSIO 主源。内置 Key 不需要用户配 PAT —— 先探一次 SSIO，
-  // 可达时即使没有 GitHub 令牌也能发布（GitHub 退化为可选镜像）。
+  // v1.2.15：作业包只写 SSIO KV。
+  // 以前这里是「先判断有没有 GitHub 令牌 → 有则读写 Contents API → 再和 SSIO 双写」，
+  // 还要处理 sha 冲突重试、raw CDN 缓存滞后。现在一条 kvGet + 一条 kvPut 就够了：
+  // KV 是强一致的 upsert，既不需要 sha，也没有 "../raw 可能返回旧包" 的问题。
   const ssioKey = `${HOMEWORK_DIR}/${syncCode}.json`;
-  let ssioFile: HomeworkFile | null = null;
-  let ssioUp = true;
-  try {
-    ssioFile = await kvGetJson<HomeworkFile>(ssioKey);
-  } catch (e) {
-    ssioUp = false;
-    console.warn('[homework] SSIO 不可用，回退 GitHub:', e);
-  }
-  if (!token && !ssioUp) {
-    return { ok: false, error: '未找到 GitHub 发布令牌，且 SSIO 云不可达（请在「设置 → 作业同步」填一张 PAT，或检查网络）' };
-  }
 
   let file: HomeworkFile;
-  let sha: string | undefined;
-  // 最多两次 GET（一次主、一次 409 重试）。每次都发 no-store 头防 CDN 60s 缓存命中旧 sha
-  const fetchFile = async () => ghFetch(`/contents/${filePath}?ref=${HOMEWORK_BRANCH}&t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { token });
-
-  // SSIO 上有包 → 直接当基线（强一致，不存在「发布后收不到」的缓存滞后）
-  if (ssioFile && Array.isArray(ssioFile.entries)) {
-    file = mergeBundleFiles([ssioFile], syncCode);
-    file.courseName = courseName;
-    if (courseKey && !file.courseKey) file.courseKey = courseKey;
-    if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
-  } else if (token) {
-    const r = await fetchFile();
-    if (r.status === 404) {
-      file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
-    } else if (!r.ok) {
-      return { ok: false, error: describeStatus(r.status, r.text) };
+  try {
+    const remote = await kvGetJson<HomeworkFile>(ssioKey);
+    if (remote && Array.isArray(remote.entries)) {
+      // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
+      file = mergeBundleFiles([remote], syncCode);
     } else {
-      try {
-        const meta = JSON.parse(r.text);
-        sha = meta.sha;
-        file = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-        if (!Array.isArray(file.entries)) file.entries = [];
-        // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
-        file = mergeBundleFiles([file], syncCode);
-        file.courseName = courseName;
-        if (courseKey && !file.courseKey) file.courseKey = courseKey;
-        if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
-      } catch {
-        return { ok: false, error: '远端作业包损坏（JSON 解析失败），可到仓库里手动修正后重试' };
-      }
+      file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
     }
-  } else {
-    // 没有 GitHub 令牌、SSIO 上也没有历史包：本地起一个新包，写进 SSIO
-    file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
+  } catch (e: any) {
+    return { ok: false, error: `读取 SSIO 作业包失败：${e?.message || e}` };
   }
+  file.courseName = courseName;
+  if (courseKey && !file.courseKey) file.courseKey = courseKey;
+  if (courseGuid && !file.courseGuid) file.courseGuid = courseGuid;
 
-  // 批量合并到内存 file，最后一次性 PUT（避免 N 次远端 IO）
+  // 批量合并到内存，最后一次写回（避免 N 次远端 IO）
   let lastEntry: HomeworkEntry | undefined;
-  let lastExisting: HomeworkEntry | undefined;
   let hasNew = false;
   for (const e of normalizedEntries) {
     const r = mergeEntry(file, {
       syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
       payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
-      publisher, courseGuid,
+      publisher, courseGuid, courseKey,
     });
     file = r.file;
     lastEntry = r.entry;
-    lastExisting = r.existing;
     if (!r.existing) hasNew = true;
   }
   const mergedFile = file;
 
-  // 一次 409/422 冲突重试；重试时也用 no-store 重新拿最新 sha
-  const put = async (currentSha?: string) => {
-    const firstEntry = normalizedEntries[0];
-    const msg = normalizedEntries.length === 1
-      ? `homework: ${lastExisting ? '更新' : '发布'} [${syncCode}] ${courseName} ${firstEntry.sessionDate} ${firstEntry.title}`
-      : `homework: 批量发布 ×${normalizedEntries.length} [${syncCode}] ${courseName}（${firstEntry.sessionDate} 起）`;
-    const body = {
-      message: msg,
-      content: Buffer.from(JSON.stringify(mergedFile, null, 2), 'utf8').toString('base64'),
-      branch: HOMEWORK_BRANCH,
-      ...(currentSha ? { sha: currentSha } : {}),
-    };
-    return ghFetch(`/contents/${filePath}`, { method: 'PUT', token, body });
-  };
-  let putRes = await put(sha);
-  if (putRes.status === 409 || putRes.status === 422) {
-    // 真冲突：别人改了 → 重新 GET 拿最新内容 + sha，再合并本次所有新条目（避免覆盖别人的提交）
-    const g = await fetchFile();
-    if (g.ok) {
-      try {
-        const meta = JSON.parse(g.text);
-        sha = meta.sha;
-        const fresh = JSON.parse(decodeBase64Utf8(meta.content || '')) as HomeworkFile;
-        if (Array.isArray(fresh.entries)) {
-          // v1.2.0：先自愈历史重复条目，再合并本次条目
-          fresh.entries = mergeBundleFiles([fresh], syncCode).entries;
-          // 在最新的远端包基础上把所有本次条目再合并一次
-          for (const e of normalizedEntries) {
-            const rebased = mergeEntry(fresh, {
-              syncCode, courseName, sessionDate: e.sessionDate!, title: e.title,
-              payload: { ...payload, title: e.title, content: e.content, sessionDate: e.sessionDate!, type: e.type, dueDate: e.dueDate, sessionTime: e.sessionTime },
-              publisher, courseGuid,
-            });
-            fresh.entries = rebased.file.entries;
-            fresh.updatedAt = rebased.file.updatedAt;
-          }
-          // 替换 mergedFile 用最新的合并产物
-          mergedFile.entries = fresh.entries;
-          mergedFile.updatedAt = fresh.updatedAt;
-        }
-      } catch { /* fall through 保留原 mergedFile */ }
-    }
-    putRes = await put(sha);
-  }
-  // v1.2.12：SSIO 主源写回（与 GitHub 双写，任一成功即算发布成功）
-  let ssioErr = '';
   try {
     await kvPut(ssioKey, JSON.stringify(mergedFile, null, 2));
   } catch (e: any) {
-    ssioErr = String(e?.message || e);
-  }
-  if (!putRes.ok && ssioErr) {
-    return { ok: false, error: `${describeStatus(putRes.status, putRes.text)}；SSIO 写入也失败：${ssioErr}` };
+    return { ok: false, error: `写入 SSIO 失败：${e?.message || e}` };
   }
 
   return {
     ok: true,
     entry: lastEntry,
-    fileUrl: `${REPO_URL}/${syncCode}.json`,
+    // 不再向用户暴露 GitHub 仓库地址（作业包只存在 SSIO 上）
+    fileUrl: undefined,
     syncCode,
     bundleCreated: hasNew,
     entriesCount: mergedFile.entries.length,
@@ -1133,43 +832,18 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
 
 export function registerHomework(db: DB) {
   _db = db;
-  ipcMain.handle('homework:config', () => {
-    const cloud = getAnyShareConfig(db);
-    return {
-      repo: `${HOMEWORK_REPO_OWNER}/${HOMEWORK_REPO_NAME}`,
-      branch: HOMEWORK_BRANCH,
-      dir: HOMEWORK_DIR,
-      repoUrl: REPO_URL,
-      tokenSet: !!resolveToken(db),
-      publisher: getSetting(db, SETTING_PUBLISHER),
-      lastSync: Number(getSetting(db, SETTING_LAST_SYNC)) || null,
-      cloudSourceEnabled: !!(cloud && cloud.enabled),
-      cloud: cloud ? { baseUrl: cloud.baseUrl, linkId: cloud.linkId, password: cloud.password, enabled: cloud.enabled } : null,
-    };
-  });
+  // v1.2.15：作业后端只剩 SSIO，「仓库地址 / GitHub 令牌 / 云盘外链」这些配置项全部下线，
+  // homework:config 只保留昵称与上次同步时间，homework:saveCloud 不再需要。
+  ipcMain.handle('homework:config', () => ({
+    dir: HOMEWORK_DIR,
+    publisher: getSetting(db, SETTING_PUBLISHER),
+    lastSync: Number(getSetting(db, SETTING_LAST_SYNC)) || null,
+  }));
 
-  ipcMain.handle('homework:saveCloud', (_e, cfg: { url?: string; password?: string; enabled?: boolean }) => {
-    const current = getAnyShareConfig(db) || { ...DEFAULT_ANYSHARE_CONFIG };
-    let next: AnyShareConfig & { enabled: boolean };
-    if (cfg?.url && String(cfg.url).trim()) {
-      const parsed = parseAnyShareUrl(String(cfg.url));
-      if (!parsed) return { ok: false, error: '外链地址不像北科云盘分享链接（形如 https://yunpan.ustb.edu.cn/link/XXXX…）' };
-      next = { ...parsed, password: String(cfg.password ?? current.password ?? '').trim(), enabled: cfg.enabled !== false };
-    } else {
-      next = { ...current, password: String(cfg?.password ?? current.password ?? '').trim(), enabled: cfg?.enabled !== false };
-    }
-    setSetting(db, SETTING_CLOUD, JSON.stringify(next));
-    return { ok: true, cloud: next };
-  });
-
-  ipcMain.handle('homework:saveAuth', (_e, token: string, publisher: string) => {
-    const t = (token || '').trim();
-    if (t && !/^(gh[a-z]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)$/.test(t)) {
-      return { ok: false, error: '令牌格式不像 GitHub PAT（应以 ghp_ / github_pat_ 开头）' };
-    }
-    if (t) setSetting(db, SETTING_TOKEN, t);
+  ipcMain.handle('homework:saveAuth', (_e, _token: string, publisher: string) => {
+    // token 参数仅为了兼容旧调用方保留（SSIO 不需要令牌）
     if ((publisher || '').trim()) setSetting(db, SETTING_PUBLISHER, publisher.trim());
-    return { ok: true, tokenSet: !!resolveToken(db) };
+    return { ok: true };
   });
 
   ipcMain.handle('homework:generateCodes', () => {

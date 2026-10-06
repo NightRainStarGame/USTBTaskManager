@@ -2,12 +2,14 @@
  * 班级系统主入口（v1.2.7 P2P 班级）
  *
  * 流程：
+ *   v1.2.15：远端只有 SSIO 一个后端（KV），GitHub 数据仓库与北科云盘已下线。
+ *
  *   1. 创建：class:create → 生成 classCode + inviteCode → owner_token + 本地 alias →
- *      写本地 classes 表 → 上传 manifest.json 到 GitHub + AnyShare
+ *      写本地 classes 表 → 上传 manifest.json 到 SSIO
  *   2. 加入：class:join → 解析 inviteCode → 拉 manifest.json → 写本地 classes 表（role=member）
  *   3. 同步：class:sync → 拉新 manifest → 拉新公告/作业条目 → 写本地缓存
  *   4. 发布：class:publishAnnouncement / class:publishTask → 写条目文件 →
- *       update manifest（含新 lastAnnouncementId/lastTaskId）→ 写回 GitHub + AnyShare
+ *       update manifest（含新 lastAnnouncementId/lastTaskId）→ 写回 SSIO
  *
  * 权限模型：
  *   - 创建者持有 owner_token，本机用 HMAC 计算签名 → 写操作必须验签
@@ -21,7 +23,7 @@
  *   - NOT_FOUND            云端没有此班级
  *   - ALREADY_JOINED       本机已加入过此班级（按 inviteCode 去重）
  *   - NOT_OWNER            非 owner 试图发布
- *   - TOKEN_REQUIRED       GitHub 写入需要 PAT
+ *   - 已废弃 TOKEN_REQUIRED：SSIO 不需要任何令牌，写通道始终可用
  */
 import { ipcMain, app } from 'electron';
 import type { DB } from '../db/index';
@@ -29,24 +31,18 @@ import {
   generateClassCode, generateOwnerToken, deriveInviteCode,
   signMember, verifyMember, signEntry, verifyEntry, normalizeInviteCode,
 } from './crypto';
+// v1.2.15：班级云端后端只有 SSIO 一个，不再需要 GitHub / 云盘那一套导入。
 import {
-  ghFetch, ghPut, ghGetSha, ghDelete,
-  asPut,
+  putClassFile, deleteClassFile, fetchManifest,
   fetchClassSnapshot, fetchChain, fetchPoll,
-  githubSource, anyshareSource,
-  signManifest, setClassAnyShareConfig, CLASS_FALLBACK_TOKEN,
-  CLASS_REPO_OWNER, CLASS_REPO_NAME, CLASS_BRANCH,
-  DEFAULT_CLASS_ANYSHARE,
+  signManifest,
   type ClassManifest, type MemberEntry, type AnnouncementEntry, type ClassTaskEntry,
   type ChainEntry, type ChainItem, type PollEntry, type PollVote,
 } from './storage';
-import { parseAnyShareUrl } from '../anyshare';
 
 // ============================================================
-// Settings 助手（GitHub PAT / AnyShare 单独存）
+// Settings 助手
 // ============================================================
-const SETTING_GH_TOKEN = 'class_github_token';
-const SETTING_AS_CONFIG = 'class_anyshare';   // JSON: { baseUrl, linkId, password, enabled }
 const SETTING_LAST_SYNC_PREFIX = 'class_last_sync_';
 const SETTING_LOCAL_ALIAS = 'class_local_alias';  // 用户在本机所有班级的默认昵称
 
@@ -55,31 +51,6 @@ function getSetting(db: DB, key: string): string {
 }
 function setSetting(db: DB, key: string, value: string) {
   db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(key, value);
-}
-
-function getPersonalToken(db: DB): string {
-  return getSetting(db, SETTING_GH_TOKEN).trim();
-}
-
-/** v1.2.9 R9：写入令牌 = 个人 PAT（独立配额）→ 内置公共令牌（开箱即用） */
-function getGitHubToken(db: DB): string {
-  return getPersonalToken(db) || CLASS_FALLBACK_TOKEN;
-}
-
-function getClassAnyShareConfig(db: DB): { baseUrl: string; linkId: string; password: string; enabled: boolean } {
-  const raw = getSetting(db, SETTING_AS_CONFIG);
-  if (raw) {
-    try {
-      const j = JSON.parse(raw);
-      if (j?.linkId) return {
-        baseUrl: String(j.baseUrl || DEFAULT_CLASS_ANYSHARE.baseUrl),
-        linkId: String(j.linkId),
-        password: String(j.password || ''),
-        enabled: j.enabled !== false,
-      };
-    } catch {}
-  }
-  return { ...DEFAULT_CLASS_ANYSHARE };
 }
 
 function getLocalAlias(db: DB): string {
@@ -147,23 +118,12 @@ function updateLastIds(classId: number, lastAnn: number, lastTask: number) {
 // module-level db reference
 // ============================================================
 let _db: DB | null = null;
-const asRootCache = new Map<string, { docid: string; name: string }>();
-
-async function getAsRoot(cfg: { baseUrl: string; linkId: string; password: string; enabled: boolean }) {
-  if (asRootCache.has(cfg.linkId)) return asRootCache.get(cfg.linkId)!;
-  const { getShareRoot } = await import('../anyshare');
-  const r = await getShareRoot(cfg);
-  asRootCache.set(cfg.linkId, r);
-  return r;
-}
 
 // ============================================================
 // 主入口
 // ============================================================
 export function registerClass(db: DB) {
   _db = db;
-  // v1.2.9 R9：把 settings 里的云盘配置注入 storage 层（之前 storage 硬编码读 DEFAULT，用户配置被无视）
-  setClassAnyShareConfig(getClassAnyShareConfig(db));
 
   // v1.2.8 块 O：UPSERT helper（自动合并：已存在的条目更新 content，保留本地 status / is_read）
   // v1.2.9 R1 修复：INSERT 显式写云端时间戳 id + author_alias（之前自增 id 与云端 id 对不上 → sync 重复插入 + 作者恒空）
@@ -239,60 +199,37 @@ export function registerClass(db: DB) {
   (db as any).__classUpsertAnnouncement = upsertAnnouncement;
   (db as any).__classUpsertTask = upsertTask;
 
-  // v1.2.9 R9：按优先级执行 GitHub 写操作（个人 PAT → 内置公共令牌）。
-  // 个人令牌 401/403/429（无效/无权限/限流）时自动降级公共令牌重试——「至少一个源能写」落到实处。
-  async function ghTryWrite<T>(op: (token: string) => Promise<T>): Promise<T> {
-    const personal = getPersonalToken(db);
-    const tokens = personal && CLASS_FALLBACK_TOKEN && personal !== CLASS_FALLBACK_TOKEN
-      ? [personal, CLASS_FALLBACK_TOKEN]
-      : [personal || CLASS_FALLBACK_TOKEN].filter(Boolean);
-    if (tokens.length === 0) {
-      throw new Error('没有可用的 GitHub 写入令牌（个人 PAT 未配置且内置公共通道未就绪，见 docs/CLASS-P2P.md）');
-    }
-    let lastErr: any = null;
-    for (const t of tokens) {
-      try {
-        return await op(t);
-      } catch (e: any) {
-        lastErr = e;
-        const msg = String(e?.message || e);
-        // 仅认证/权限/限流类错误值得换令牌重试；409（sha 冲突）、404（路径不存在）等原样上抛
-        if (!/HTTP 40[13]|HTTP 429/i.test(msg) || t === tokens[tokens.length - 1]) throw e;
-      }
-    }
-    throw lastErr;
+  /**
+   * v1.2.15：SSIO 不需要任何令牌，云端写通道永远可用。
+   *
+   * 历史上这里返回的是「用户配没配 GitHub PAT」，没配就跳过云端、只写本机。
+   * 现在保留这个判断的形状（返回非空即视为可用），让十几处 `if (ghToken)` 分支
+   * 照旧走通过路径 —— 与其为了改名把整文件的写逻辑翻一遍（容易漏），不如让语义
+   * 先到位。用户侧的表现是：班级功能开箱即用，不再需要手动填令牌。
+   */
+  function cloudCredential(_db: DB): string {
+    return 'ssio';
   }
 
-  /** GitHub 写错误 → 带行动指引的提示（不静默，用户知道下一步该干什么） */
-  function friendlyGhErr(prefix: string, e: any): string {
-    const msg = String(e?.message || e);
-    let out = `${prefix}：${msg}`;
-    if (/HTTP 401/.test(msg)) out += ' → 令牌无效或已过期：到「班级 → 配置」更新个人令牌';
-    else if (/HTTP 403/.test(msg)) out += ' → 无仓库写权限或触发限流：稍后重试，或到「班级 → 配置」填个人 PAT';
-    else if (/HTTP 404/.test(msg)) out += ' → 仓库或文件不存在（班级仓库未就绪？）';
-    else if (/HTTP 429/.test(msg)) out += ' → API 限流：稍等 1 分钟重试，或配置个人 PAT 用独立配额';
-    return out;
+  /** 云端操作失败 → 带上错误原文，让用户看到具体原因而不是一句「失败」。 */
+  function friendlyCloudErr(prefix: string, e: any): string {
+    return `${prefix}：${e?.message || e}`;
   }
 
-  // v1.2.9 R1：远端 manifest 原子更新（fetch → mutate → 重签 → PUT sha；409 冲突重拉重试 2 次）
-  async function mutateManifestRemote(inviteCode: string, message: string, mutate: (m: ClassManifest) => void): Promise<ClassManifest | null> {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const cur = await githubSource.fetchManifest(inviteCode);
-      if (!cur) throw new Error('云端 manifest 拉取失败（班级可能已被解散或网络不通）');
-      mutate(cur);
-      cur.updatedAt = Date.now();
-      cur.sig = signManifest(cur);
-      const sha = await ghGetSha(inviteCode, ['manifest.json'], getGitHubToken(db));
-      try {
-        await ghTryWrite((t) => ghPut(inviteCode, ['manifest.json'], JSON.stringify(cur, null, 2), t, sha || undefined, message));
-        return cur;
-      } catch (e: any) {
-        const msg = String(e?.message || e);
-        if (attempt < 2 && /409/i.test(msg)) continue;  // sha 过期冲突 → 重拉重试
-        throw e;
-      }
-    }
-    return null;
+  /**
+   * 远端 manifest 更新：拉最新 → 改 → 重签 → 写回。
+   * v1.2.15：SSIO KV 是 upsert，不需要「先读 sha 再 PUT」，也就不会再有 409
+   * （旧实现的重拉重试就是为了处理 GitHub Contents API 那个 sha 冲突）。
+   * 这里仍按 读-改-写 的语义执行，保证对 manifest 的修改不会互相覆盖。
+   */
+  async function mutateManifestRemote(inviteCode: string, _message: string, mutate: (m: ClassManifest) => void): Promise<ClassManifest | null> {
+    const cur = await fetchManifest(inviteCode);
+    if (!cur) throw new Error('云端 manifest 拉取失败（班级可能已被解散或网络不通）');
+    mutate(cur);
+    cur.updatedAt = Date.now();
+    cur.sig = signManifest(cur);
+    await putClassFile(inviteCode, ['manifest.json'], JSON.stringify(cur, null, 2));
+    return cur;
   }
 
   // v1.2.8 块 O：30s 后台轮询（所有 class 自动 sync）
@@ -378,91 +315,33 @@ export function registerClass(db: DB) {
       };
     };
 
-    let lastError = '';
     try {
       const snap = await fetchClassSnapshot(
         row.invite_code,
         { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0, annIds: localAnnIds, taskIds: localTaskIds },
-        'github',
       );
       if (!snap) {
-        lastError = '云端拉取返回 null（SSIO 与 GitHub 都未命中）';
-      } else {
-        if (snap.manifest.sig !== signManifest(snap.manifest)) {
-          return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
-        }
-        return applySnapshot(snap);
+        return { ok: false, error: '云端拉取不到 manifest（班级可能已解散，或 SSIO 暂时不可达）' };
       }
-    } catch (e: any) {
-      lastError = `GitHub 同步失败：${e?.message || e}`;
-    }
-    // 降级到 AnyShare（接龙/投票仅 GitHub 源，降级时自然为空）
-    try {
-      const snap = await fetchClassSnapshot(
-        row.invite_code,
-        { lastAnnId: row.last_announcement_id || 0, lastTaskId: row.last_task_id || 0, annIds: localAnnIds, taskIds: localTaskIds },
-        'anyshare',
-      );
-      if (snap) {
-        if (snap.manifest.sig !== signManifest(snap.manifest)) {
-          return { ok: false, error: 'AnyShare manifest 签名校验失败' };
-        }
-        return applySnapshot(snap);
+      if (snap.manifest.sig !== signManifest(snap.manifest)) {
+        return { ok: false, error: 'manifest 签名校验失败（文件损坏或被篡改）' };
       }
+      return applySnapshot(snap);
     } catch (e: any) {
-      return { ok: false, error: `${lastError}；AnyShare 兜底也失败：${e?.message || e}` };
+      return { ok: false, error: `云端同步失败：${e?.message || e}` };
     }
-    return { ok: false, error: lastError || '两源都拉不到 manifest' };
   }
   // 给 IPC handler 用，避免重复实现
   (db as any).__classSyncCore = syncClassCore;
 
   // ----------------- 配置类 -----------------
 
-  ipcMain.handle('class:config', () => {
-    const personal = getPersonalToken(db);
-    const cloud = getClassAnyShareConfig(db);
-    return {
-      ok: true,
-      repo: `${CLASS_REPO_OWNER}/${CLASS_REPO_NAME}`,
-      branch: CLASS_BRANCH,
-      repoUrl: `https://github.com/${CLASS_REPO_OWNER}/${CLASS_REPO_NAME}/tree/${CLASS_BRANCH}/class`,
-      tokenSet: !!personal,
-      /** v1.2.9 R9：内置公共写入通道（开箱即用；false = 尚未内置，需个人 PAT） */
-      fallbackTokenAvailable: !!CLASS_FALLBACK_TOKEN,
-      usingFallbackToken: !personal && !!CLASS_FALLBACK_TOKEN,
-      cloudSourceEnabled: !!cloud.enabled && !!cloud.linkId,
-      cloud: cloud?.linkId ? { baseUrl: cloud.baseUrl, linkId: cloud.linkId, password: cloud.password, enabled: cloud.enabled } : null,
-      localAlias: getLocalAlias(db),
-    };
-  });
-
-  ipcMain.handle('class:saveAuth', (_e, token: string) => {
-    const t = (token || '').trim();
-    if (t && !/^(gh[a-z]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)$/.test(t)) {
-      return { ok: false, error: '令牌格式不像 GitHub PAT（应以 ghp_ / github_pat_ 开头）' };
-    }
-    if (t) setSetting(db, SETTING_GH_TOKEN, t);
-    else db.prepare('DELETE FROM settings WHERE key = ?').run(SETTING_GH_TOKEN);  // v1.2.9 R9：传空 = 清除个人令牌，回落内置公共通道
-    const personal = !!getPersonalToken(db);
-    return { ok: true, tokenSet: personal, usingFallbackToken: !personal && !!CLASS_FALLBACK_TOKEN };
-  });
-
-  ipcMain.handle('class:saveCloud', (_e, cfg: { url?: string; password?: string; enabled?: boolean }) => {
-    const current = getClassAnyShareConfig(db);
-    let next: { baseUrl: string; linkId: string; password: string; enabled: boolean };
-    if (cfg?.url && String(cfg.url).trim()) {
-      const parsed = parseAnyShareUrl(String(cfg.url));
-      if (!parsed) return { ok: false, error: '外链地址不像北科云盘分享链接' };
-      next = { ...parsed, password: String(cfg.password ?? current.password ?? '').trim(), enabled: cfg.enabled !== false };
-    } else {
-      next = { ...current, password: String(cfg?.password ?? current.password ?? '').trim(), enabled: cfg?.enabled !== false };
-    }
-    asRootCache.delete(next.linkId);
-    setSetting(db, SETTING_AS_CONFIG, JSON.stringify(next));
-    setClassAnyShareConfig(next);  // v1.2.9 R9：立即生效到 storage 层
-    return { ok: true, cloud: next };
-  });
+  // v1.2.15：班级后端只有 SSIO，不再有「仓库地址 / 个人令牌 / 云盘外链」这些配置项，
+  // 所以 class:config 只剩昵称，原本的 class:saveAuth / class:saveCloud 一并下线。
+  ipcMain.handle('class:config', () => ({
+    ok: true,
+    localAlias: getLocalAlias(db),
+  }));
 
   ipcMain.handle('class:saveLocalAlias', (_e, alias: string) => {
     const a = String(alias || '').trim().slice(0, 20);
@@ -539,30 +418,14 @@ export function registerClass(db: DB) {
     };
     manifest.sig = signManifest(manifest);
 
-    const ghToken = getGitHubToken(db);
     const errors: string[] = [];
-    // v1.2.12：SSIO 内置 Key 不需要用户配置任何令牌，所以「有没有 GitHub PAT」
-    // 不再决定班级能不能上云。以前没配 PAT 就整段跳过云端写入 → 班级只躺在本机
-    // → 其他人按邀请码加入时读不到 manifest → 表现为「成员一个都看不到」。
-    // 现在无条件尝试写云端（SSIO 主源，失败才回退 GitHub），失败才记 warning。
+    // 写 SSIO 不需要用户配任何令牌。以前没配 GitHub PAT 就整段跳过云端写入 →
+    // 班级只躺在本机 → 别人按邀请码加入时读不到 manifest → 「成员一个都看不到」。
     try {
-      await ghPut(inviteCode, ['manifest.json'], JSON.stringify(manifest, null, 2), ghToken || '', undefined, `创建班级 ${name}`);
+      await putClassFile(inviteCode, ['manifest.json'], JSON.stringify(manifest, null, 2));
       db.prepare('UPDATE classes SET cloud_synced = 1 WHERE id = ?').run(classId);
-      // manifest_sha 只有走 GitHub 才有意义（SSIO 用 version 做乐观锁）
-      const sha = ghToken ? await ghGetSha(inviteCode, ['manifest.json'], ghToken) : null;
-      if (sha) db.prepare('UPDATE classes SET manifest_sha = ? WHERE id = ?').run(sha, classId);
     } catch (e: any) {
-      errors.push(`云端同步失败（班级已存在本机）：${friendlyGhErr('', e) || e?.message || e}`);
-    }
-
-    // AnyShare 双写（可选；v1.2.9 R9 起默认关闭——之前内置的占位链接根本不存在，纯报错噪音）
-    const cloud = getClassAnyShareConfig(db);
-    if (cloud.enabled && cloud.linkId) {
-      try {
-        await asPut(inviteCode, ['manifest.json'], JSON.stringify(manifest, null, 2));
-      } catch (e: any) {
-        errors.push(`AnyShare 同步失败：${e?.message || e}`);
-      }
+      errors.push(`云端同步失败（班级已存在本机）：${e?.message || e}`);
     }
 
     const row = fetchClassRow(classId)!;
@@ -587,20 +450,14 @@ export function registerClass(db: DB) {
     const exist = db.prepare('SELECT id FROM classes WHERE code = ?').get(classCode) as { id: number } | undefined;
     if (exist) return { ok: false, error: '本机已加入此班级', errorCode: 'ALREADY_JOINED', classId: exist.id };
 
-    // 拉远端 manifest（首选源内部：SSIO 优先 → GitHub 回退；再 AnyShare 兜底）
-    let manifest: ClassManifest | null = null;
-    let source: 'github' | 'anyshare' | null = null;
-    try {
-      manifest = await githubSource.fetchManifest(inviteCode);
-      if (manifest) source = 'github';
-    } catch {}
+    const manifest = await fetchManifest(inviteCode);
     if (!manifest) {
-      try {
-        manifest = await anyshareSource.fetchManifest(inviteCode);
-        if (manifest) source = 'anyshare';
-      } catch {}
+      return {
+        ok: false,
+        error: '远端找不到该班级（SSIO 上没有这份 manifest，邀请码可能有误或班级已解散）',
+        errorCode: 'NOT_FOUND',
+      };
     }
-    if (!manifest) return { ok: false, error: '远端找不到该班级（SSIO + GitHub + AnyShare 都未命中）', errorCode: 'NOT_FOUND' };
 
     // 验证每个成员签名（防云端被中间人篡改）
     for (const m of manifest.members) {
@@ -648,11 +505,11 @@ export function registerClass(db: DB) {
           .run(JSON.stringify(updated.members), updated.members.length, classId);
       }
     } catch (e: any) {
-      warnings.push(`成员列表未更新到云端：${friendlyGhErr('', e) || e?.message || e}`);
+      warnings.push(`成员列表未更新到云端：${friendlyCloudErr('', e) || e?.message || e}`);
     }
 
     return {
-      ok: true, source,
+      ok: true, source: 'ssio' as const,
       classId, className: manifest.name, role: 'member' as const,
       memberCount: manifest.members.length + (warnings.length === 0 ? 1 : 0),
       warnings,
@@ -686,9 +543,9 @@ export function registerClass(db: DB) {
     if (m.role === 'owner') return { ok: false, error: '不能调整 owner 本人' };
     if (m.role === target) return { ok: true, role: target, warnings: [] };
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         // 云端原子更新：改角色 + 重算该成员 sig + manifest 重签
         const updated = await mutateManifestRemote(row.invite_code, `${alias} ${target === 'admin' ? '设为管理员' : '撤销管理员'}`, (mm) => {
@@ -702,10 +559,10 @@ export function registerClass(db: DB) {
           db.prepare('UPDATE classes SET members_json = ? WHERE id = ?').run(JSON.stringify(updated.members), classId);
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端更新失败', e));
+        errors.push(friendlyCloudErr('云端更新失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：角色变更仅本机生效，其他成员看不到。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     // 本机镜像也更新（即使云端失败，本地 UI 一致）
     m.role = target;
@@ -733,9 +590,9 @@ export function registerClass(db: DB) {
     if (!m) return { ok: false, error: `成员 ${alias} 不在成员列表`, errorCode: 'NOT_FOUND' };
     if (row.role === 'admin' && m.role !== 'member') return { ok: false, error: 'admin 只能移除普通成员', errorCode: 'NOT_ALLOWED' };
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         const updated = await mutateManifestRemote(row.invite_code, `移除成员 ${alias}`, (mm) => {
           mm.members = mm.members.filter((x) => x.alias !== alias);
@@ -746,10 +603,10 @@ export function registerClass(db: DB) {
           return { ok: errors.length === 0, warnings: errors };
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端更新失败', e));
+        errors.push(friendlyCloudErr('云端更新失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：移除仅本机生效，被移除者不会收到通知。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     // 本地镜像兜底
     const rest = members.filter((x) => x.alias !== alias);
@@ -769,15 +626,12 @@ export function registerClass(db: DB) {
     const r = db.prepare('DELETE FROM class_announcements WHERE class_id = ? AND id = ?').run(classId, annIdNum);
     if ((r.changes || 0) === 0) return { ok: false, error: '公告不存在（可能已删除）' };
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
-        // 云端条目文件删除（Contents DELETE 需 sha）
-        const sha = await ghGetSha(row.invite_code, ['announcements', annIdNum + '.json'], ghToken);
-        if (sha) {
-          await ghTryWrite((t) => ghDelete(row.invite_code, ['announcements', annIdNum + '.json'], t, sha, `删除公告 #${annIdNum}`));
-        }
+        // 云端条目文件删除（KV 删除幂等，key 不存在也不报错）
+        await deleteClassFile(row.invite_code, ['announcements', annIdNum + '.json']);
         // manifest：索引移除 + tombstone 记录
         await mutateManifestRemote(row.invite_code, `删除公告 #${annIdNum}`, (m) => {
           if (Array.isArray(m.announcementIds)) m.announcementIds = m.announcementIds.filter((x) => x !== annIdNum);
@@ -785,10 +639,10 @@ export function registerClass(db: DB) {
           if (!m.deletedAnnouncementIds.includes(annIdNum)) m.deletedAnnouncementIds.push(annIdNum);
         });
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端删除失败', e) + '（本地已删除，其他成员同步后仍会看到）');
+        errors.push(friendlyCloudErr('云端删除失败', e) + '（本地已删除，其他成员同步后仍会看到）');
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：仅本机删除，其他成员仍会看到这条公告。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -856,11 +710,11 @@ export function registerClass(db: DB) {
     upsertAnnouncement(classId, entry);
 
     // 写远端：先 put announcement，再 update manifest（索引 + lastAnnouncementId）
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
-        await ghTryWrite((t) => ghPut(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2), t));
+        await putClassFile(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2));
         await mutateManifestRemote(row.invite_code, `发布公告 ${title}`, (m) => {
           m.lastAnnouncementId = Math.max(m.lastAnnouncementId || 0, annId);
           if (!Array.isArray(m.announcementIds)) m.announcementIds = [];
@@ -869,19 +723,11 @@ export function registerClass(db: DB) {
         });
         db.prepare('UPDATE classes SET last_announcement_id = ? WHERE id = ?').run(annId, classId);
       } catch (e: any) {
-        errors.push(friendlyGhErr('GitHub 发布失败', e));
+        errors.push(friendlyCloudErr('云端发布失败', e));
       }
     } else {
       // v1.2.9 R1：之前没 PAT 时静默「成功」，用户以为发了但云端什么都没有
-      errors.push('没有可用的 GitHub 写入令牌：公告仅保存在本机，其他成员看不到。到「班级 → 配置」填写 GitHub PAT');
-    }
-    const cloud = getClassAnyShareConfig(db);
-    if (cloud.enabled && cloud.linkId) {
-      try {
-        await asPut(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2));
-      } catch (e: any) {
-        errors.push(`AnyShare 发布失败：${e?.message || e}`);
-      }
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
 
     return { ok: errors.length === 0, warnings: errors, annId };
@@ -911,11 +757,11 @@ export function registerClass(db: DB) {
     // v1.2.9 R1：显式 id + author_alias（v1.2.9 起 UI 移除作业 tab，此 IPC 保留 API 兼容）
     upsertTask(classId, entry);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
-        await ghTryWrite((t) => ghPut(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2), t));
+        await putClassFile(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2));
         await mutateManifestRemote(row.invite_code, `发布作业 ${title}`, (m) => {
           m.lastTaskId = Math.max(m.lastTaskId || 0, taskId);
           if (!Array.isArray(m.taskIds)) m.taskIds = [];
@@ -923,18 +769,10 @@ export function registerClass(db: DB) {
         });
         db.prepare('UPDATE classes SET last_task_id = ? WHERE id = ?').run(taskId, classId);
       } catch (e: any) {
-        errors.push(friendlyGhErr('GitHub 发布失败', e));
+        errors.push(friendlyCloudErr('云端发布失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：作业仅保存在本机，其他成员看不到。到「班级 → 配置」填写 PAT');
-    }
-    const cloud = getClassAnyShareConfig(db);
-    if (cloud.enabled && cloud.linkId) {
-      try {
-        await asPut(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2));
-      } catch (e: any) {
-        errors.push(`AnyShare 发布失败：${e?.message || e}`);
-      }
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
 
     return { ok: errors.length === 0, warnings: errors, taskId };
@@ -986,20 +824,20 @@ export function registerClass(db: DB) {
     };
     upsertChain(classId, entry);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
-        await ghTryWrite((t) => ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(entry, null, 2), t));
+        await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(entry, null, 2));
         await mutateManifestRemote(row.invite_code, `发起接龙 ${title}`, (m) => {
           if (!Array.isArray(m.chainIds)) m.chainIds = [];
           if (!m.chainIds.includes(chainId)) m.chainIds.push(chainId);
         });
       } catch (e: any) {
-        errors.push(friendlyGhErr('GitHub 发布失败', e));
+        errors.push(friendlyCloudErr('云端发布失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：接龙仅保存在本机，其他成员看不到。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     return { ok: errors.length === 0, warnings: errors, chainId };
   });
@@ -1021,9 +859,9 @@ export function registerClass(db: DB) {
     db.prepare('UPDATE class_chains SET items_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
       .run(JSON.stringify(items), item.ts, classId, chainId);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         for (let attempt = 0; attempt < 3; attempt++) {
           const remote = await fetchChain(row.invite_code, chainId);
@@ -1031,9 +869,8 @@ export function registerClass(db: DB) {
           if (remote.closed) return { ok: false, error: '接龙已被发起人结束' };
           remote.items = mergeChainItems(remote.items || [], [item]);
           remote.updatedAt = Date.now();
-          const sha = await ghGetSha(row.invite_code, ['chains', chainId + '.json'], ghToken);
           try {
-            await ghTryWrite((t) => ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2), t, sha || undefined, `${alias} 参与接龙`));
+            await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
             break;
           } catch (e: any) {
             if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时接龙 → 重拉合并重试
@@ -1041,10 +878,10 @@ export function registerClass(db: DB) {
           }
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端参与失败', e));
+        errors.push(friendlyCloudErr('云端参与失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：参与记录仅保存在本机。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -1061,19 +898,18 @@ export function registerClass(db: DB) {
     }
     db.prepare('UPDATE class_chains SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, chainId);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         const remote = await fetchChain(row.invite_code, chainId);
         if (remote) {
           remote.closed = true;
           remote.updatedAt = Date.now();
-          const sha = await ghGetSha(row.invite_code, ['chains', chainId + '.json'], ghToken);
-          await ghTryWrite((t) => ghPut(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2), t, sha || undefined, `结束接龙 #${chainId}`));
+          await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端结束失败', e));
+        errors.push(friendlyCloudErr('云端结束失败', e));
       }
     }
     return { ok: errors.length === 0, warnings: errors };
@@ -1123,20 +959,20 @@ export function registerClass(db: DB) {
     };
     upsertPoll(classId, entry);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
-        await ghTryWrite((t) => ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(entry, null, 2), t));
+        await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(entry, null, 2));
         await mutateManifestRemote(row.invite_code, `发起投票 ${question}`, (m) => {
           if (!Array.isArray(m.pollIds)) m.pollIds = [];
           if (!m.pollIds.includes(pollId)) m.pollIds.push(pollId);
         });
       } catch (e: any) {
-        errors.push(friendlyGhErr('GitHub 发布失败', e));
+        errors.push(friendlyCloudErr('云端发布失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：投票仅保存在本机，其他成员看不到。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     return { ok: errors.length === 0, warnings: errors, pollId };
   });
@@ -1161,9 +997,9 @@ export function registerClass(db: DB) {
     db.prepare('UPDATE class_polls SET votes_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
       .run(JSON.stringify(votes), vote.ts, classId, pollId);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         for (let attempt = 0; attempt < 3; attempt++) {
           const remote = await fetchPoll(row.invite_code, pollId);
@@ -1171,9 +1007,8 @@ export function registerClass(db: DB) {
           if (remote.closed) return { ok: false, error: '投票已被结束' };
           remote.votes = { ...(remote.votes || {}), [alias]: vote };
           remote.updatedAt = Date.now();
-          const sha = await ghGetSha(row.invite_code, ['polls', pollId + '.json'], ghToken);
           try {
-            await ghTryWrite((t) => ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2), t, sha || undefined, `${alias} 投票`));
+            await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
             break;
           } catch (e: any) {
             if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时投票 → 重拉覆盖重试（同 alias 幂等）
@@ -1181,10 +1016,10 @@ export function registerClass(db: DB) {
           }
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端投票失败', e));
+        errors.push(friendlyCloudErr('云端投票失败', e));
       }
     } else {
-      errors.push('没有可用的 GitHub 写入令牌：投票仅保存在本机。到「班级 → 配置」填写 PAT');
+      errors.push('云端暂时不可写：本次改动仅本机生效');
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -1201,19 +1036,18 @@ export function registerClass(db: DB) {
     }
     db.prepare('UPDATE class_polls SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, pollId);
 
-    const ghToken = getGitHubToken(db);
+    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (ghToken) {
+    if (cloudWritable) {
       try {
         const remote = await fetchPoll(row.invite_code, pollId);
         if (remote) {
           remote.closed = true;
           remote.updatedAt = Date.now();
-          const sha = await ghGetSha(row.invite_code, ['polls', pollId + '.json'], ghToken);
-          await ghTryWrite((t) => ghPut(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2), t, sha || undefined, `结束投票 #${pollId}`));
+          await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
         }
       } catch (e: any) {
-        errors.push(friendlyGhErr('云端结束失败', e));
+        errors.push(friendlyCloudErr('云端结束失败', e));
       }
     }
     return { ok: errors.length === 0, warnings: errors };

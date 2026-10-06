@@ -4,48 +4,41 @@
 
 ## 下载安装
 
-**当前最新版：v1.2.14**
+**当前最新版：v1.2.15**
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.14.exe`
+下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=win&version=1.2.15`（备案完成前可临时用 `http://120.53.9.81:8100` 的应用内更新链路）。
 
-[Releases](https://github.com/NightRainStarGame/USTBTaskManager/releases/latest) 页面也能下载。
-
-> 国内访问 GitHub raw 偶尔慢，可加 jsDelivr 镜像作为兜底：
-> `https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.14.exe`
+> v1.2.15 起安装包**只发布在自建 SSIO 服务器**上：GitHub 仓库只保留源码（不发 Release 附件），
+> 北科云盘 / jsDelivr / GitHub raw 等旧下载通道已全部下线。
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
 ### Android 版（APK）
 
-同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.12**（versionCode 9）。
+同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.15**（versionCode 10）。
 
-最新版 raw：`https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.12.apk`
+下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=android&version=1.2.15`。
 
-镜像兜底：`https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.12.apk`
-
-- 手机装好后**无需再手动下载**：**设置 → 软件更新** 里会直接显示新版本并支持「下载并安装」（原生下载 + SHA-256 校验 + 拉起系统安装器，主源失败自动走镜像）
+- 手机装好后**无需再手动下载**：**设置 → 软件更新** 里会直接显示新版本并支持「下载并安装」（原生下载 + SHA-256 校验 + 拉起系统安装器）
 - 首次安装需授权「允许安装未知应用」，App 会引导跳转到对应开关页
-- 移动端为功能子集：班级 / 作业同步可用；北科云盘、贝壳课表因依赖 Node 模块或教务系统 CORS，不可用
+- 移动端为功能子集：班级 / 作业同步可用；贝壳课表因依赖教务系统 CORS，不可用
 - 系统栏已按 Android 16 edge-to-edge 适配（状态栏 / 手势条不会遮挡菜单与按钮）
 
 ## 自动更新
 
-应用内置更新模块，启动后（或手动点「检查更新」）会**同时检查所有启用的源**，取版本号最高的那个升级；
-**v1.2.12 起默认主源是自建的 SSIO 服务器**（国内外都能连）。v1.2.14 起默认只启用两个源：
-SSIO（主）+ jsDelivr（备）；GitHub raw 与北科云盘**默认关闭**（国内常连不上 / 需校园网，
-只会拖慢每次检查），需要可在「设置 → 软件更新 → 更新源」里勾选启用。任一源不可用不影响其他源。
-一个源连不上不影响其他源。
+应用内置更新模块，启动后（或手动点「检查更新」）检查更新源，发现新版本在右下角弹窗告知。
 
-App 自带默认两个源：
+**v1.2.15 起更新源只有 SSIO 一个**（自建服务器，国内外都能连）：
 
-| 源 | 清单地址 | 说明 |
-|---|---|---|
-| **GitHub / leastversion**（主源） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | 与仓库发布动作同步，国内偶尔慢 |
-| **北科云盘**（AnyShare，需校园网） | `https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469` + 提取码 `kc26` | 校园网内速度最快，非校园网会超时失败 |
+| 源 | 说明 |
+|---|---|
+| **SSIO 官方源**（主源，`ssio+http://120.53.9.81:8100`） | 清单与安装包都从 SSIO 取；GitHub raw / jsDelivr / 北科云盘通道已下线（国内常被 DNS 投毒 / 需校园网 / 清单早已过时） |
 
-> 应用启动时会**合并**内置源与本地已有源（按 URL + 密码三元组比对），新增的源自动并入、用户手动加的源不动。
+> 下载地址在清单里记的是 `ssio:release:<id>` 引用而非直链 —— SSIO 的下载链接是 **5 分钟过期的签名 URL**，
+> 应用会在真正下载前一刻用引用换新地址，所以「早上检查更新、晚上才点安装」也不会失效。
+> 应用启动时会自动清退指向已下线通道的存量源，并合并掉历史上重复堆积的同后端源。
 
-清单里的 `url` 指向该源自己的安装包，下载后校验 SHA-256，**不匹配会拒绝安装**。
+清单里的 `url` 指向安装包，下载后校验 SHA-256，**不匹配会拒绝安装**。
 
 > 想换源 / 加源：**设置 → 软件更新 → 更新源**，可以增删源、切换主源。
 
@@ -108,7 +101,7 @@ App 自带默认两个源：
 
 ### 2d. 小组（v1.2.3 新增）
 
-小组共享清单（和作业同步共用 GitHub 通道与令牌）：
+小组共享清单（和作业同步共用 SSIO 云通道，零配置）：
 
 1. 「创建小组」自动生成**组码**（GL-XXXXXXXX），发给同学即可加入
 2. 条目支持**认领**（负责人）、状态（待办 / 进行中 / 完成）、截止日期
@@ -152,18 +145,15 @@ App 自带默认两个源：
 
 ### 4. 班级作业发布 / 同步
 
-课程页**右下角**有一组「班级作业」按钮，用 GitHub 仓库的 `homework/` 文件夹当全班作业公告板：
+课程页**右下角**有一组「班级作业」按钮，作业包存在 **SSIO 云服务器的 `homework/` 命名空间**里（v1.2.15 前是 GitHub 仓库 + 北科云盘双源，已全部迁移并下线）：
 
 **发布作业**（课代表 / 知道密码的人用）：
 
 1. 点「发布作业」→ 输入**发布密码**（班级共享口令）
-2. 首次发布会要求填一个 GitHub 令牌（对仓库有写权限即可，只存在本机，填一次）
-3. 选择**课程**和**上课日期**（会自动列出这门课近期的上课日期，每节课的作业可以不一样）
-4. 选择**发布目标**（默认同时勾上 GitHub + 北科云盘，双通道发布；只勾一个也行）
-5. 写作业标题和具体内容，点「发布」
+2. 选择**课程**和**上课日期**（会自动列出这门课近期的上课日期，每节课的作业可以不一样）
+3. 写作业标题和具体内容，点「发布」
 
-> **双源发布** —— 一次填写会同时推到 GitHub 仓库和北科云盘（任一失败不影响另一个）。
-> 设置 → 作业同步里也能改默认发布目标，持久化到本机。
+> **零配置** —— SSIO 内置凭据开箱即用，不再需要 GitHub 令牌（历史作业包已整体迁移到 SSIO，老同步码继续有效）。
 
 **回看已生成的作业码**（v1.2.2 新增）：
 
@@ -217,15 +207,15 @@ App 自带默认两个源：
 - 📅 **日历** 月/周/日三视图 · 课程时段可视化 · 农历与节假日 · 新建事件
 - 📚 **课程** 课程卡片网格 · 课表日历视图 · 作业（课程要求）管理与完成度追踪
 - 🏫 **教务导入** 北京科技大学课表导入（按周展开为具名事件）
-- 📡 **班级作业同步** 密码发布作业到 GitHub 公告板，全班一键同步（按上课日期区分每节课）· 回看已生成的码对
+- 📡 **班级作业同步** 密码发布作业到 SSIO 云公告板，全班一键同步（按上课日期区分每节课）· 回看已生成的码对
 - 📂 **项目** 看板 / 列表 / 时间线 / 画布四种视图 · 拖拽切换状态 · 优先级旗标与过滤
 - 💾 **数据安全** 一键备份 / 恢复 · WebDAV 云同步（v1.2.3）· 数据库自检与修复
 - 🔐 **本地账号** 账号 + 密码（SHA-256 哈希存储，仅保存在本机）
-- 🔄 **软件更新** 多源（SSIO 主源 + GitHub + 北科云盘）聚合检查 / 下载 / SHA-256 校验 / 静默安装 / **增量补丁**（约 22MB，整装约 93MB）；输入框失灵自检与补焦
+- 🔄 **软件更新** SSIO 源检查 / 下载（引用现签） / SHA-256 校验 / 静默安装 / **增量补丁**（约 22MB，整装约 93MB）MB）；输入框失灵自检与补焦
 - 🎓 **学业**（v1.2.3）成绩录入 · 加权 GPA · 挂科预警 · 考试倒计时 + 复习任务生成 · 出勤打卡
 - ⏱ **番茄钟**（v1.2.3）全局悬浮 · 任务绑定 · 每日 / 各科专注统计
 - 🔥 **习惯打卡**（v1.2.3）连击统计 · 热力图 · 每周目标
-- 👥 **小组清单**（v1.2.3）GitHub 通道共享待办 · 认领分工 · 组码即用
+- 👥 **小组清单**（v1.2.3）SSIO 云通道共享待办 · 认领分工 · 组码即用
 - 📊 **统计复盘**（v1.2.3）周报 / 月报 · 按天按科分布图 · 出勤构成
 - 🔔 **系统提醒**（v1.2.3）托盘常驻 · 上课 / 作业 / 考试分级弹窗 · 全局快捷键快速添加
 - ⚙️ **设置** 主题 / 学期 / 数据导出 / 更新源 / 作业同步
@@ -253,22 +243,23 @@ npm run build:exe
 改完 `package.json` 里的 `version` 后：
 
 ```bash
-npm run release:one -- 1.2.12 --notes-file RELEASE-NOTES.md       # 一键：build + 双源分发 + commit + push + Release 附件
+npm run release:one -- 1.2.15 --notes-file RELEASE-NOTES.md --execute   # 一键：build + SSIO 分发 + commit + push（源码）
 # 或手动分步：
 npm run build:exe          # 打包
-npm run publish:github     # ① 同步一份到 GitHub（含 Release 附件）
-npm run publish:ustbcloud  # ② 上传到北科云盘（需校园网；校园网外会超时失败，不阻塞主流程）
+node scripts/publish-release-ssio.js <exe> <版本> [notes]                # ① 桌面整包 → SSIO（建 release 记录）
+node scripts/publish-release-ssio.js <apk> <版本> "" --platform android --arch arm64   # ② APK → SSIO
+node scripts/publish-release-ssio.js --storage taskmgr/patches/<zip 名> <补丁 zip>      # ③ 增量补丁 → SSIO storage
+node scripts/publish-manifest-kv.js                                    # ④ latest.json + about.txt → SSIO KV
 ```
 
-> **推荐用 `release:one`（一键脚本）**：自动完成打包 → 校验 → 分发目录滚动 → latest.json 写入 →
-> 增量补丁生成 → GitHub leastversion 推送 → GitHub Release 创建 → 草稿附件上传 → 云盘同步上传。
+> **推荐用 `release:one`（一键脚本）**：自动完成打包 → 校验 → 分发目录滚动 → 桌面包/APK/补丁上传 SSIO →
+> latest.json 写入（`ssio:release/ssio:file` 引用）→ KV 清单同步 → git commit/push（**只推源码**）。
 > `--execute` 才会真正改动文件；默认 dry-run 只预览计划。
 
-### 双源清单内容差异
+### 清单内容说明
 
-GitHub 源 `url` 字段是 raw 绝对链接；北科云盘源上传时会把 `url` 改写为**云盘内 basename**
-（匿名不能覆盖同名，安装包按 `<basename>-<ts>.exe` 上传）。App 端 `resolveDownloadUrl`
-按 basename 前缀找修改时间最新的一份再换签名直链下载。
+`url` 字段记的是 `ssio:release:<id>` 引用（APK 同理），补丁记 `ssio:file:<id>`；
+App 端 `resolveDownloadUrl` 在真正下载前用引用向 SSIO 换**新鲜签名直链**（5 分钟过期，现取现用）。
 
 `patches[]` 同样规则：GitHub 版是 raw 绝对链，云盘版改写成云盘内 basename。
 

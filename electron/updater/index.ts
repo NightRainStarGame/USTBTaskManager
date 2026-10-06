@@ -242,9 +242,29 @@ function normalizeSource(s: any, i: number): UpdateSource {
   };
 }
 
-/** 默认源 + 用户源合并：用户源不动，默认源里没出现的三元组追加到末尾；首启动后写回 settings */
+/**
+ * v1.2.15：判断一个源是否指向**已下线的老通道**（GitHub raw / jsDelivr / 北科云盘）。
+ * 它们托管的静态 latest.json 早已不再更新，留着只会白等超时、还把源列表塞得全是死源。
+ */
+function isObsoleteSource(s: UpdateSource): boolean {
+  return /^https?:\/\/(raw\.githubusercontent\.com|github\.com|cdn\.jsdelivr\.net|fastly\.jsdelivr\.net|gcore\.jsdelivr\.net|yunpan\.ustb\.edu\.cn|pan\.ustb\.edu\.cn)/i.test(s.url || '');
+}
+
+/**
+ * 归一化的源比较键。
+ *
+ * v1.2.15 修复「更新源里 SSIO 重复一堆」：旧 sourceKey 把 type、url 原文都算差异，
+ * 而 type 与 `ssio+` 前缀是后来才引入的 —— 同一个 SSIO 源在存量设置里是
+ * `http|http://120.53.9.81:8100|…`，默认源是 `ssio|ssio+http://120.53.9.81:8100|…`，
+ * 键不等 → 合并时又追加一份；几轮版本下来重复越积越多。
+ * 现在只比「剥掉前缀的 base + 凭据」，同一后端就是同一个源。
+ */
 function sourceKey(s: UpdateSource): string {
-  return `${s.type || 'http'}|${s.url}|${s.password || ''}`;
+  const base = String(s.url || '')
+    .replace(/^ssio\+/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  return `${base}|${(s.password || '').trim()}`;
 }
 
 export function getSources(db: DB | null): UpdateSource[] {
@@ -269,25 +289,38 @@ export function getSources(db: DB | null): UpdateSource[] {
   }
 
   if (userSources.length) {
-    const userKeys = new Set(userSources.map(sourceKey));
-    const toAdd = DEFAULT_UPDATE_SOURCES.filter((s) => !userKeys.has(sourceKey(s)));
-    if (toAdd.length) {
-      const merged = [
-        ...userSources,
-        ...toAdd.map((s) => ({ ...s, primary: false })),
-      ];
-      // v1.2.12：SSIO 是官方主源。老用户本机已存的源会挡住新默认源（合并只追加），
-      // 这里让新加入的 SSIO 源接管 primary，升级后自动切过去。
-      const ssioIdx = merged.findIndex((s) => isSsioSource(s));
-      if (ssioIdx >= 0) {
-        for (let i = 0; i < merged.length; i++) merged[i].primary = i === ssioIdx;
-      } else if (!merged.some((s) => s.primary)) {
-        merged[0] = { ...merged[0], primary: true };
+    // 1) 清退已下线通道的存量源
+    const alive = userSources.filter((s) => !isObsoleteSource(s));
+    // 2) 按 base+凭据去重；重复时保留「带 ssio+ 前缀 / 启用 / primary」的那份形态
+    const deduped: UpdateSource[] = [];
+    for (const s of alive) {
+      const dup = deduped.find((x) => sourceKey(x) === sourceKey(s));
+      if (!dup) {
+        deduped.push(s);
+      } else {
+        if (isSsioSource(s) && !isSsioSource(dup)) {
+          deduped[deduped.indexOf(dup)] = { ...s, enabled: dup.enabled || s.enabled, primary: dup.primary || s.primary };
+        } else {
+          dup.enabled = dup.enabled || s.enabled;
+          dup.primary = dup.primary || s.primary;
+        }
       }
-      if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(merged));
-      return merged;
     }
-    return userSources;
+    // 3) 默认源补充（真正的新后端才会加进来）
+    const toAdd = DEFAULT_UPDATE_SOURCES.filter((s) => !deduped.some((x) => sourceKey(x) === sourceKey(s)));
+    const merged = [...deduped, ...toAdd.map((s) => ({ ...s, primary: false }))];
+    // SSIO 接管 primary（有 SSIO 源就让它当主源）
+    const ssioIdx = merged.findIndex((s) => isSsioSource(s));
+    if (ssioIdx >= 0) {
+      for (let i = 0; i < merged.length; i++) merged[i].primary = i === ssioIdx;
+    } else if (!merged.some((s) => s.primary) && merged.length) {
+      merged[0].primary = true;
+    }
+    // 清退/去重真的产生了变化才回写，避免每次读都写
+    if (db && (merged.length !== userSources.length || JSON.stringify(merged) !== JSON.stringify(userSources))) {
+      setSetting(db, SETTING_SOURCES, JSON.stringify(merged));
+    }
+    return merged;
   }
 
   return DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s }));

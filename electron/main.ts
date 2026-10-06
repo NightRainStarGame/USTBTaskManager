@@ -51,13 +51,36 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+// ── v1.2.15 关闭行为：点 X 时问用户（最小化到托盘 / 完全退出），可记住 ──
+// 之前是「托盘活着就一律藏到托盘」，用户以为退干净了，结果进程还挂着。
+let isQuitting = false;
+app.on('before-quit', () => { isQuitting = true; });
+
+const CLOSE_BEHAVIOR_KEY = 'close_behavior';
+function getCloseBehavior(): 'ask' | 'minimize' | 'quit' {
+  try {
+    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(CLOSE_BEHAVIOR_KEY) as { value?: string } | undefined;
+    const v = row?.value;
+    return v === 'minimize' || v === 'quit' ? v : 'ask';
+  } catch { return 'ask'; }
+}
+function setCloseBehavior(v: 'ask' | 'minimize' | 'quit') {
+  try {
+    getDb()
+      .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run(CLOSE_BEHAVIOR_KEY, v);
+  } catch {}
+}
 let splashWindow: BrowserWindow | null = null;
 let splashHidden = false;
 let splashShownAt = 0;
 let splashLoaded = false;
 let splashLastMsg: { pct: number; text: string } | null = null;
 
-const SPLASH_MIN_MS = 1500;
+// v1.2.15：1500 → 700。splash 的职责是「让用户看到有东西在动」，不是品牌广告；
+// 冷启动最大的抱怨就是「界面明明渲染好了，还得陪 splash 站满 1.5 秒」。
+const SPLASH_MIN_MS = 700;
 const SPLASH_FADE_MS = 320;
 
 function splashProgress(pct: number, text: string) {
@@ -184,7 +207,45 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  mainWindow.once('ready-to-show', () => {});
+  // v1.2.15：点 X 的行为。默认每次问（最小化 / 退出 / 取消），勾选「记住我的选择」
+  // 后按记忆走；设置页可改回「每次询问」。托盘不可用时最小化选项自动退化为退出。
+  mainWindow.on('close', (e) => {
+    if (isQuitting) return;
+    const behavior = getCloseBehavior();
+    if (behavior === 'quit') return;
+    if (behavior === 'minimize' && trayActive) {
+      e.preventDefault();
+      mainWindow?.hide();
+      return;
+    }
+    e.preventDefault();
+    const win = mainWindow!;
+    dialog
+      .showMessageBox(win, {
+        type: 'question',
+        title: '关闭 TaskManager',
+        message: '要最小化到托盘，还是完全退出？',
+        detail: '勾选「记住我的选择」后不再询问；之后可到 设置 → 通用 修改。',
+        buttons: ['最小化到托盘', '完全退出', '取消'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+        checkboxLabel: '记住我的选择',
+        checkboxChecked: false,
+      })
+      .then(({ response, checkboxChecked }) => {
+        if (response === 2) return; // 取消：留在原地
+        const chosen: 'minimize' | 'quit' = response === 0 ? 'minimize' : 'quit';
+        if (checkboxChecked) setCloseBehavior(chosen);
+        if (chosen === 'minimize' && trayActive) {
+          win.hide();
+        } else {
+          isQuitting = true;
+          app.quit(); // 走 will-quit 统一清托盘 / 注销快捷键
+        }
+      })
+      .catch(() => {});
+  });
 
   let renderCrashCount = 0;
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
@@ -220,6 +281,11 @@ ipcMain.handle('window:maximize', () => {
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle('app:getCloseBehavior', () => getCloseBehavior());
+ipcMain.handle('app:setCloseBehavior', (_e, v: string) => {
+  if (v === 'ask' || v === 'minimize' || v === 'quit') setCloseBehavior(v);
+  return getCloseBehavior();
+});
 
 // ── v1.2.3 托盘常驻：关窗可从托盘唤回 ──────────────────────────
 let trayActive = false;
@@ -245,18 +311,6 @@ ipcMain.on('app:ready-to-show', () => {
 
 app.whenReady().then(() => {
   bootLog('app ready');
-
-  try {
-    const patchApply = require('./updater/patchApply');
-    const state = patchApply.checkPatchStateOnBoot();
-    if (state.applied) bootLog('patch state: APPLIED');
-    else if (state.failed) {
-      const b = state.baseline || { expected: '?', actual: '?' };
-      bootLog(`patch state: FAILED expected=${b.expected} actual=${b.actual}`);
-    }
-  } catch (e: any) {
-    bootLog('patch state check failed: ' + (e?.message || e));
-  }
 
   try {
     createSplash();
@@ -342,6 +396,23 @@ app.whenReady().then(() => {
     bootLog('WINDOW CREATE FAILED: ' + (e?.stack || String(e)));
     app.quit();
   }
+
+  // v1.2.15：补丁状态检查从首位移到这里（异步）。它要读 app.asar 算哈希，是同步
+  // IO——以前排在 createSplash 之前，splash 被它憋着白等几百毫秒，观感就是
+  // 「点了图标没反应」。结果只进日志，晚 50ms 毫无影响。
+  setTimeout(() => {
+    try {
+      const patchApply = require('./updater/patchApply');
+      const state = patchApply.checkPatchStateOnBoot();
+      if (state.applied) bootLog('patch state: APPLIED');
+      else if (state.failed) {
+        const b = state.baseline || { expected: '?', actual: '?' };
+        bootLog(`patch state: FAILED expected=${b.expected} actual=${b.actual}`);
+      }
+    } catch (e: any) {
+      bootLog('patch state check failed: ' + (e?.message || e));
+    }
+  }, 50);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v1.2.15：APK 自更新的下载地址来自 SSIO（http://120.53.9.81:8100，明文 HTTP）。
+  Android 9+ 默认禁止所有明文流量，不配这个的话更新包下载会直接失败。
+
+  白名单只放行这一个 IP，其余域仍然强制 HTTPS —— 不会把整个 App 的安全面摊开。
+  等 nrsc.games 备案下来、服务端配好 HTTPS 证书后，清单里的地址换成
+  https://nrsc.games/...，这个文件可以整个删掉（连同 Manifest 里的引用）。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">120.53.9.81</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

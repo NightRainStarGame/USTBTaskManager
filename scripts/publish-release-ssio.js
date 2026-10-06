@@ -124,11 +124,45 @@ async function main() {
   if (process.argv[2] === '--ping') return ping();
 
   requireKey();
+
+  // ── v1.2.15 纯存储模式：只传文件拿 fileId，不建 release ──
+  // 用途：增量补丁 zip（latest.json 里记 ssio:file:<id>）。
+  // 用法: node scripts/publish-release-ssio.js --storage <对象名> <文件路径>
+  if (process.argv[2] === '--storage') {
+    const key = process.argv[3];
+    const file = process.argv[4];
+    if (!key || !file || !fs.existsSync(file)) {
+      console.error('用法: node scripts/publish-release-ssio.js --storage <对象名> <文件路径>');
+      process.exit(1);
+    }
+    const buf = fs.readFileSync(file);
+    const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+    console.log(`上传到 SSIO storage：${key}  ${(buf.length / 1048576).toFixed(2)} MB  sha256=${sha256.slice(0, 16)}…`);
+    const init = await req('POST', `${BASE}/v1/storage/uploads`, {
+      body: { filename: path.basename(key), totalSize: buf.length, mime: 'application/zip' },
+    });
+    for (let i = 0; i < init.totalChunks; i++) {
+      const start = i * init.chunkSize;
+      const chunk = buf.slice(start, Math.min(start + init.chunkSize, buf.length));
+      await req('PUT', `${BASE}/v1/storage/uploads/${init.uploadId}/chunks/${i}`, { body: chunk });
+      process.stdout.write(`  上传 ${i + 1}/${init.totalChunks}\r`);
+    }
+    console.log('');
+    const done = await req('POST', `${BASE}/v1/storage/uploads/${init.uploadId}/complete`, { body: { sha256 } });
+    // 把 fileId 落盘给 release-one-click.js 读（比解析 stdout 稳）
+    fs.writeFileSync(path.join(process.cwd(), '.ssio-last-storage.json'), JSON.stringify({ fileId: done.fileId, key, sha256 }));
+    console.log(`  ✓ 存储就位：fileId=${done.fileId}  dedup=${done.dedup}`);
+    return;
+  }
+
+  // ── release 模式（默认）：传文件 + 建 release 记录 ──
   const exePath = process.argv[2];
   const version = process.argv[3];
   const notesFile = process.argv[4];
+  const platform = process.argv.includes('--platform') ? process.argv[process.argv.indexOf('--platform') + 1] : 'win';
+  const arch = process.argv.includes('--arch') ? process.argv[process.argv.indexOf('--arch') + 1] : 'x64';
   if (!exePath || !version) {
-    console.error('用法: node scripts/publish-release-ssio.js <exe 路径> <版本> [notes 文件]');
+    console.error('用法: node scripts/publish-release-ssio.js <exe 路径> <版本> [notes 文件] [--platform win|android] [--arch x64|arm64]');
     process.exit(1);
   }
   if (!fs.existsSync(exePath)) {
@@ -165,8 +199,8 @@ async function main() {
   const rel = await req('POST', `${BASE}/v1/releases`, {
     body: {
       channel: 'stable',
-      platform: 'win',
-      arch: 'x64',
+      platform,
+      arch,
       version,
       fileId: done.fileId,
       notesMd,
@@ -174,14 +208,22 @@ async function main() {
     },
   });
   console.log(`  ✓ release 建立：v${rel.version} ${rel.platform}/${rel.arch}  ${(rel.sizeBytes / 1048576).toFixed(2)} MB`);
+  // v1.2.15：releaseId 落盘给清单脚本读（latest.json 记 ssio:release:<id>）。
+  // 按 platform 分开落盘：一次发版会先传桌面包再传 APK，同一个标记文件会互相覆盖。
+  const marker = platform === 'android' ? '.ssio-last-release-android.json' : '.ssio-last-release.json';
+  fs.writeFileSync(
+    path.join(process.cwd(), marker),
+    JSON.stringify({ releaseId: rel.id || rel.releaseId, platform, arch, version }),
+  );
 
-  // 5) 回读验证：以「上一版」的身份查一次，确认客户端能拿到更新
+  // 5) 回读验证：用刚发的版本号当 current 查一次 —— 版本相同应 hasUpdate=false
+  // 且 version 一致（服务端确实登记上了）。
   const probe = await req(
     'GET',
-    `${BASE}/v1/releases/latest?platform=win&arch=x64&channel=stable&current=1.2.12&clientId=publish-probe`,
+    `${BASE}/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=${version}&clientId=publish-probe`,
   );
-  console.log(`  回读 latest（current=1.2.12）：hasUpdate=${probe.hasUpdate} version=${probe.version || '-'}`);
-  if (!probe.hasUpdate) console.log('  [!] 服务端没给出更新，请检查 published / channel / rollout');
+  console.log(`  回读 latest（current=${version}）：hasUpdate=${probe.hasUpdate} version=${probe.version || '-'}`);
+  if (probe.version !== version) console.log('  [!] 回读版本不一致，请检查服务端记录');
 }
 
 main().catch((e) => {

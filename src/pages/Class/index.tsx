@@ -421,10 +421,8 @@ function JoinClassModal({ cfg, onClose, onJoined }: any) {
 // ============================================================
 
 function ClassConfigModal({ cfg, onClose, onSaved }: any) {
-  const [ghToken, setGhToken] = useState('');
-  const [cloudUrl, setCloudUrl] = useState(cfg?.cloud?.linkId ? `${cfg.cloud.baseUrl}/link/${cfg.cloud.linkId}` : '');
-  const [cloudPassword, setCloudPassword] = useState(cfg?.cloud?.password || '');
-  const [cloudEnabled, setCloudEnabled] = useState(!!cfg?.cloudSourceEnabled);
+  // v1.2.15：后端只剩 SSIO —— GitHub 令牌 / 云盘外链的配置项随通道一起下线，
+  // 弹窗里只剩昵称。cfg 参数保留（调用方还在传），多余字段自然被忽略。
   const [alias, setAlias] = useState(cfg?.localAlias || '我');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -432,13 +430,7 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
-      if (ghToken.trim()) await window.taskAPI.class.saveAuth(ghToken.trim());
-      await window.taskAPI.class.saveCloud({
-        url: cloudUrl.trim(),
-        password: cloudPassword,
-        enabled: cloudEnabled,
-      });
-      const r = await window.taskAPI.class.saveLocalAlias(alias.trim());
+      await window.taskAPI.class.saveLocalAlias(alias.trim());
       const newCfg = await window.taskAPI.class.config();
       onSaved(newCfg);
     } catch (e: any) {
@@ -454,76 +446,11 @@ function ClassConfigModal({ cfg, onClose, onSaved }: any) {
       </>
     }>
       <div className="space-y-4 text-left">
-        {/* v1.2.13：SSIO 云同步是主源（内置 Key，开箱即用）；GitHub 令牌降级为可选备源 */}
+        {/* v1.2.15：后端只剩 SSIO —— 令牌/云盘配置区随通道下线 */}
         <div className="border border-neon-green/15 rounded p-3">
-          <div className="font-mono text-xs text-neon-green mb-2">☁️ SSIO 云同步（主源 · 内置已启用）</div>
-          <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
-            ✅ 数据读写走 SSIO 云服务器，无需任何配置
-            <span className="text-text-dim"> · 下方 GitHub 令牌仅作备源，留空即可</span>
-          </div>
-          {/* v1.2.9 R9：通道状态一目了然——不静默 */}
-          {cfg?.usingFallbackToken ? (
-            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
-              ✅ 内置公共写入通道已启用（开箱即用，无需配置）
-              <span className="text-text-dim"> · 高峰期可能限流，可填个人令牌用独立配额</span>
-            </div>
-          ) : cfg?.tokenSet ? (
-            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-green">
-              ✅ 个人令牌已配置（优先使用你的独立配额）
-            </div>
-          ) : (
-            <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 mb-2 text-[11px] font-mono text-neon-yellow">
-              ⚠ 没有可用的写入令牌：公告/接龙/投票只存本机，其他人看不到
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <input
-              type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)}
-              className="input-neon font-mono text-xs flex-1" placeholder="GitHub PAT（备源，可选）ghp_xxxx / github_pat_xxxx"
-            />
-            {cfg?.tokenSet && (
-              <button
-                onClick={async () => {
-                  try {
-                    await window.taskAPI.class.saveAuth('');
-                    const next = await window.taskAPI.class.config();
-                    setGhToken('');
-                    toast.success('已清除个人令牌' + (next.usingFallbackToken ? '（回落内置公共通道）' : ''));
-                    onSaved(next);
-                  } catch (e: any) { toast.error(e?.message || String(e)); }
-                }}
-                className="btn-ghost text-[10px] px-2 py-1 shrink-0"
-                title="清除已保存的个人令牌，回落内置公共通道"
-              >
-                清除
-              </button>
-            )}
-          </div>
-          <div className="text-[10px] font-mono text-text-dim mt-1">
-            备源仓库 <span className="text-neon-green">{cfg?.repo || 'NightRainStarGame/USTBTaskManager-Class'}</span> 需要 Contents 读写权限
-            <br />留空 = 只用 SSIO 主源（推荐，同学照样能看到）
-          </div>
-        </div>
-
-        {/* 北科云盘（可选备源） */}
-        <div className="border border-neon-green/15 rounded p-3">
-          <div className="font-mono text-xs text-neon-green mb-2 flex items-center gap-2">
-            ☁️ 北科云盘（备源，可选）
-            <label className="flex items-center gap-1 text-[10px] text-text-dim ml-auto">
-              <input type="checkbox" checked={cloudEnabled} onChange={(e) => setCloudEnabled(e.target.checked)} />
-              启用
-            </label>
-          </div>
-          <input
-            value={cloudUrl} onChange={(e) => setCloudUrl(e.target.value)}
-            className="input-neon text-xs mb-2" placeholder="https://yunpan.ustb.edu.cn/link/XXXXX…（自建分享链）"
-          />
-          <input
-            type="password" value={cloudPassword} onChange={(e) => setCloudPassword(e.target.value)}
-            className="input-neon text-xs" placeholder="提取码"
-          />
-          <div className="text-[10px] font-mono text-text-dim mt-1">
-            仅校园网内可达的可选备份；不填也能用（SSIO 主源已保证可用）
+          <div className="font-mono text-xs text-neon-green mb-2">☁️ SSIO 云同步（唯一后端 · 已启用）</div>
+          <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 text-[11px] font-mono text-neon-green">
+            ✅ 班级数据全部读写 SSIO 云服务器（强一致、国内外可达），无需任何配置
           </div>
         </div>
 

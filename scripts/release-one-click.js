@@ -293,6 +293,74 @@ const stalePatches = prevPatches.filter(
       typeof p.appAsarSha256 !== 'string' ||
       String(p.appAsarSha256).toLowerCase() !== targetAsar),
 );
+// ── v1.2.15：产物先上 SSIO，再组装清单 ──────────────────────────────
+// 清单里的下载地址全部改为「引用」（ssio:release:<id> / ssio:file:<id>）：
+// SSIO 的真实下载链接是 5 分钟过期的签名 URL，写进 latest.json 用户隔天点更新必 404。
+// 客户端在真正下载那一刻才用引用换新地址（electron/updater/ssio.ts fetchSsioDownloadUrl）。
+step('发布安装包到 SSIO（桌面端更新主源）');
+let ssioReleaseId = '';
+try {
+  const pubScript = path.join(ROOT, 'scripts', 'publish-release-ssio.js');
+  const r = spawnSync(process.execPath, [pubScript, exePath, version, notesFile || ''], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  if (r.status === 0) {
+    ok('SSIO 已发布 v' + version + '（主源用户可收到更新）');
+    try {
+      ssioReleaseId = String(JSON.parse(fs.readFileSync(path.join(ROOT, '.ssio-last-release.json'), 'utf8')).releaseId || '');
+    } catch {}
+  } else {
+    console.log(`    [!] SSIO 发布返回 ${r.status}`);
+  }
+} catch (e) {
+  console.log(`    [!] SSIO 发布失败：${e.message}`);
+}
+
+// 增量补丁 zip → SSIO storage（对象），清单里记 ssio:file:<id>
+let patchSsioFileId = '';
+if (patchInfo) {
+  step('上传增量补丁到 SSIO storage');
+  try {
+    const r = spawnSync(process.execPath, [
+      path.join(ROOT, 'scripts', 'publish-release-ssio.js'),
+      '--storage', `taskmgr/patches/${path.basename(patchInfo.path)}`,
+      path.join(ROOT, patchInfo.path),
+    ], { cwd: ROOT, stdio: 'inherit' });
+    if (r.status === 0) {
+      try {
+        patchSsioFileId = String(JSON.parse(fs.readFileSync(path.join(ROOT, '.ssio-last-storage.json'), 'utf8')).fileId || '');
+        ok(`补丁已上传（fileId=${patchSsioFileId.slice(0, 8)}…，${(patchInfo.size / 1048576).toFixed(1)}MB）`);
+      } catch {}
+    } else {
+      console.log(`    [!] 补丁上传返回 ${r.status}（fallback：清单记 GitHub URL）`);
+    }
+  } catch (e) {
+    console.log(`    [!] 补丁上传失败：${e.message}`);
+  }
+}
+
+// APK → SSIO（platform=android；APK 由 gradle 单独构建，这里只在产物存在时上传。
+// publish-release-ssio.js 会把 android 的 releaseId 写进 .ssio-last-release-android.json，
+// release.js 生成清单时读它写 ssio:release:<id> 引用。）
+const apkPath = path.join(ROOT, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
+if (fs.existsSync(apkPath)) {
+  step('上传 APK 到 SSIO（移动端更新源）');
+  try {
+    const r = spawnSync(process.execPath, [
+      path.join(ROOT, 'scripts', 'publish-release-ssio.js'),
+      apkPath, version, '',
+      '--platform', 'android', '--arch', 'arm64',
+    ], { cwd: ROOT, stdio: 'inherit' });
+    if (r.status === 0) ok('APK 已上传（android/arm64）');
+    else console.log(`    [!] APK 上传返回 ${r.status}（移动端本次收不到更新）`);
+  } catch (e) {
+    console.log(`    [!] APK 上传失败：${e.message}`);
+  }
+} else {
+  console.log('[i] 未找到 android/…/app-release.apk，跳过 APK 上传（纯桌面发版）');
+}
+
 if (stalePatches.length) {
   console.log(`    剔除目标版本不符的历史补丁：${stalePatches.map((p) => p.fromVersion).join(', ')}`);
 }
@@ -303,11 +371,10 @@ const newPatches = patchInfo
       ...keepPatches.filter((p) => p && p.fromVersion !== patchInfo.fromVersion),
       {
         fromVersion: patchInfo.fromVersion,
-        // GitHub Release asset 名 = basename（无目录结构），URL 不能带 /patches/ 段
-        // （1.2.7/1.2.8 曾因此 404；raw/jsdelivr mirrors 指向 git 里的 leastversion/patches/ 是活的）
-        url: `${REPO_RELEASES}/${path.basename(patchInfo.path)}`,
-        // 补丁约 22MB，jsdelivr 50MB 限制下完全够用，做备援
-        urlMirrors: [
+        // v1.2.15：补丁 zip 传 SSIO storage，清单只记引用 —— `ssio:file:<id>`
+        // 由客户端下载前现签（签名 URL 5 分钟过期，写死必失效）。
+        url: patchSsioFileId ? `ssio:file:${patchSsioFileId}` : `${REPO_RELEASES}/${path.basename(patchInfo.path)}`,
+        urlMirrors: patchSsioFileId ? [] : [
           `${REPO_RAW}/${patchInfo.path.replace(/\\/g, '/')}`,
           `${JSDELIVR}/${patchInfo.path.replace(/\\/g, '/')}`,
         ],
@@ -324,8 +391,11 @@ const newPatches = patchInfo
 
 latest.version = version;
 latest.fileName = DIST_NAME(version);
-latest.url = setupPrimaryUrl;                              // v1.2.7 主源改用 GitHub Releases（突破 100MB）
-latest.urlMirrors = setupMirrorUrls;                       // raw + jsdelivr 备援
+// v1.2.15：清单里不再写 GitHub URL。有 SSIO releaseId 就记引用，
+// 客户端下载前用 /v1/releases/:id/download 现换签名地址（写死必过期）。
+latest.releaseId = ssioReleaseId || null;
+latest.url = ssioReleaseId ? `ssio:release:${ssioReleaseId}` : setupPrimaryUrl;
+latest.urlMirrors = ssioReleaseId ? [] : setupMirrorUrls;
 latest.sha256 = sha256;
 latest.size = buf.length;
 latest.notes = notes;
@@ -362,20 +432,9 @@ try {
   console.log(`    [!] KV 同步失败：${e.message}（整包更新不受影响）`);
 }
 
-// v1.2.13：桌面端主源是 SSIO，光发 GitHub / 云盘**用户收不到更新** ——
-// SSIO 上没有这个版本，主源查询只会返回 hasUpdate=false。必须把安装包传上去并建 release。
-step('发布安装包到 SSIO（桌面端更新主源）');
-try {
-  const pubScript = path.join(ROOT, 'scripts', 'publish-release-ssio.js');
-  const r = spawnSync(process.execPath, [pubScript, exePath, version, notesFile || ''], {
-    cwd: ROOT,
-    stdio: 'inherit',
-  });
-  if (r.status === 0) ok('SSIO 已发布 v' + version + '（主源用户可收到更新）');
-  else console.log(`    [!] SSIO 发布返回 ${r.status}（GitHub / 云盘备源仍可用）`);
-} catch (e) {
-  console.log(`    [!] SSIO 发布失败：${e.message}（GitHub / 云盘备源仍可用）`);
-}
+// v1.2.15：这一步已**前移**到「组装 latest.json 之前」—— 清单要引用 releaseId /
+// fileId，必须先上传拿到 id 才能写清单。见上方「产物先上 SSIO，再组装清单」。
+
 
 step('git 提交推送');
 run('git', ['add', '-A']);
@@ -407,120 +466,12 @@ if (localHead && remoteHead && localHead === remoteHead) {
   die(`push 未成功且远端未同步：local=${localHead.slice(0, 8)} remote=${remoteHead.slice(0, 8) || '(未知)'}`);
 }
 
-if (!NO_RELEASE_PAGE) {
-  step('创建 GitHub Release + 上传附件');
-  try {
-    const token = getToken();
-    const tag = `v${version}`;
-    let releaseId = null;
-    const exists = JSON.parse(curlJson(token, `${REPO_API}/releases/tags/${tag}`, 'GET'));
-    if (exists && exists.id) {
-      releaseId = exists.id;
-      console.log(`    Release ${tag} 已存在（id=${releaseId}），补附件`);
-    } else {
-      const createBody = JSON.stringify({
-        tag_name: tag, name: `TaskManager v${version}`, body: notes,
-        draft: false, prerelease: false,
-      });
-      fs.writeFileSync(path.join(ROOT, '_rel-body.tmp.json'), createBody);
-      const created = JSON.parse(curlJson(token, REPO_API + '/releases', 'POST', path.join(ROOT, '_rel-body.tmp.json')));
-      if (!created.id) throw new Error(created.message || 'create failed');
-      releaseId = created.id;
-      console.log(`    Release id=${releaseId}`);
-    }
-
-    let existingNames = new Set();
-    try {
-      const assetsJson = curlJson(token, `${REPO_API}/releases/${releaseId}/assets?per_page=100`, 'GET');
-      const arr = JSON.parse(assetsJson);
-      if (Array.isArray(arr)) existingNames = new Set(arr.map((a) => a.name));
-      if (existingNames.size) console.log(`    已有附件 ${existingNames.size} 个：${[...existingNames].join(', ')}`);
-    } catch (e) {
-      console.log(`    [!] 拉取附件列表失败：${e.message}`);
-    }
-
-    const assetsToUpload = [
-      { path: path.join(leastDir, DIST_NAME(version)), name: DIST_NAME(version), type: 'application/octet-stream' },
-    ];
-    if (patchInfo) {
-      assetsToUpload.push({
-        path: path.join(ROOT, patchInfo.path),
-        name: path.basename(patchInfo.path),
-        type: 'application/zip',
-      });
-    }
-    // v1.2.10 幂等修复：不能只依赖当次生成的 patchInfo —— 重跑（--resume）不会重建补丁，
-    // Release 里就会缺补丁附件，而 latest.json 的主源 URL 恰恰指向 Release 资源（会 404）。
-    // 改为从更新清单反查「本版 Release 该有哪些补丁」，漏了就补。
-    for (const p of Array.isArray(latest.patches) ? latest.patches : []) {
-      if (!p || !String(p.url || '').includes(`/download/v${version}/`)) continue;
-      const name = String(p.url).split('/').pop();
-      if (!name || assetsToUpload.some((a) => a.name === name)) continue;
-      assetsToUpload.push({
-        path: path.join(leastDir, 'patches', name),
-        name,
-        type: 'application/zip',
-      });
-    }
-    for (const a of assetsToUpload) {
-      if (!fs.existsSync(a.path)) {
-        console.log(`    [!] 附件不存在，跳过 ${a.name}`);
-        continue;
-      }
-      if (existingNames.has(a.name)) {
-        // v1.2.3 重发支持：删除同名旧附件后重传（否则 Release 页会一直挂着旧文件）
-        try {
-          const assetsArr = JSON.parse(curlJson(token, `${REPO_API}/releases/${releaseId}/assets?per_page=100`, 'GET'));
-          const oldAsset = Array.isArray(assetsArr) && assetsArr.find((x) => x.name === a.name);
-          if (oldAsset) {
-            curlJson(token, `https://api.github.com/repos/NightRainStarGame/USTBTaskManager/releases/assets/${oldAsset.id}`, 'DELETE');
-            console.log(`    附件 ${a.name} 已存在 → 已删除旧附件（id=${oldAsset.id}），重新上传`);
-          }
-        } catch (e) {
-          console.log(`    [!] 删除旧附件失败：${e.message}，跳过上传`);
-          continue;
-        }
-      }
-      const sizeMB = fs.statSync(a.path).size / 1024 / 1024;
-      console.log(`    上传 ${a.name}（${sizeMB.toFixed(1)} MB）…`);
-      const uploadUrl = `https://uploads.github.com/repos/NightRainStarGame/USTBTaskManager/releases/${releaseId}/assets?name=${encodeURIComponent(a.name)}`;
-      const args = ['-sS', '-X', 'POST',
-        '-H', `Authorization: Bearer ${token}`,
-        '-H', 'Content-Type: ' + a.type,
-        '--data-binary', `@${a.path}`,
-        uploadUrl];
-      const out = run('curl', args);
-      try {
-        const j = JSON.parse(out);
-        if (j.id) console.log(`      ✓ asset id=${j.id} → ${j.browser_download_url}`);
-        else throw new Error(j.message || 'no id in response');
-      } catch (e) {
-        throw new Error(`上传 ${a.name} 失败：${e.message}`);
-      }
-    }
-    ok('Release 页 + 附件就绪');
-  } catch (e) {
-    console.log(`    [!] Release 页/附件失败：${e.message}（不影响 leastversion 直链 + App 更新）`);
-  } finally {
-    try { fs.rmSync(path.join(ROOT, '_rel-body.tmp.json'), { force: true }); } catch {}
-  }
-}
-
-if (!NO_CLOUD) {
-  step('上传到北科云盘（AnyShare 校园网内最快；失败不影响主流程）');
-  try {
-    const uploader = path.join(ROOT, 'scripts', 'upload-release-to-ustbcloud.js');
-    const r = spawnSync(process.execPath, [uploader, exePath, latestPath], {
-      cwd: ROOT,
-      stdio: 'inherit',
-      env: { ...process.env },
-    });
-    if (r.status !== 0) throw new Error(`upload-release-to-ustbcloud.js exit ${r.status}`);
-    ok('北科云盘已上传 latest-<ts>.json + 安装包 <basename>-<ts>.exe');
-  } catch (e) {
-    console.log(`    [!] 云盘上传失败：${e.message}`);
-  }
-}
+// v1.2.15：GitHub 只存源码 —— 这里原本的「创建 GitHub Release + 上传附件（exe/补丁）」整段删除。
+// 桌面安装包与增量补丁全部走 SSIO（上方两步），git push 只负责源码仓库本身。
+// 用户要求过：不要往 GitHub 塞二进制，仓库里也别留冗余产物。
+// v1.2.15：原本这里有一步「上传到北科云盘（AnyShare）」，已随云盘通道一起下线
+// （只有校园网可达，且它托管的 latest-<ts>.json 与 SSIO 上的清单长期不一致）。
+// 桌面包的下载地址现在是 SSIO 的 `ssio:release:<id>` 引用，见 scripts/publish-release-ssio.js。
 
 console.log(`\n========================================\n  v${version} 发版完成\n  更新源: ${latest.url}\n  sha256: ${sha256}\n========================================`);
 

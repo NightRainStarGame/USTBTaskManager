@@ -23,9 +23,9 @@ interface UpdateSource {
   url: string;
   enabled: boolean;
   primary: boolean;
-  /** v1.1.4：'anyshare' = 北科云盘外链源 */
-  type?: 'anyshare' | 'http';
-  /** anyshare 源的提取码 */
+  /** v1.2.15：只剩 'ssio'（自托管发行服务）与 'http'（自定义直链镜像）两种源 */
+  type?: 'ssio' | 'http';
+  /** SSIO 源的 APIKey（只需要 release:read 权限） */
   password?: string;
 }
 
@@ -164,16 +164,13 @@ export default function SettingsPage() {
   const [dl, setDl] = useState<{ running: boolean; percent: number; received: number; total: number } | null>(null);
   const [dlPath, setDlPath] = useState<string | null>(null);
   const [updateAuto, setUpdateAuto] = useState(true);
+  // v1.2.15：关闭按钮行为（主进程拦截 close 弹三选框；这里改的是「不再询问」的默认值）
+  const [closeBehavior, setCloseBehaviorState] = useState<'ask' | 'minimize' | 'quit'>('ask');
   const [showSrcEditor, setShowSrcEditor] = useState(false);
 
-  // ===== 作业同步（v1.1.4：GitHub 令牌 + 北科云盘源） =====
-  const [hwToken, setHwToken] = useState('');
+  // ===== 作业同步（v1.2.15：只剩 SSIO 一个后端，要配的只有发布人昵称） =====
   const [hwPublisher, setHwPublisher] = useState('');
-  const [hwTokenSet, setHwTokenSet] = useState(false);
   const [hwAuthSaved, setHwAuthSaved] = useState(false);
-  const [hwCloud, setHwCloud] = useState<{ url: string; password: string; enabled: boolean }>({ url: '', password: '', enabled: true });
-  const [hwCloudSaved, setHwCloudSaved] = useState(false);
-  const [hwCloudErr, setHwCloudErr] = useState('');
 
   // ===== 自动清理 & 回收站（v1.1.9） =====
   const [cleanRules, setCleanRules] = useState<{
@@ -203,9 +200,9 @@ export default function SettingsPage() {
       const b = r.local.binned;
       const lines = [`本地：作业 ${b.requirements} · 任务 ${b.tasks} · 日程 ${b.events} · 项目 ${b.projects} 项移入回收站；回收站过期清除 ${r.local.purgedBin} 项`];
       if (r.cloud.codes.length) {
-        const gh = r.cloud.github, cl = r.cloud.cloud;
-        lines.push(`云端（${r.cloud.codes.join('、')}）：GitHub 重写 ${gh.rewritten} 个文件 / 清理 ${gh.removedEntries} 条${gh.deleted ? ` / 删空文件 ${gh.deleted} 个` : ''}；云盘快照重写 ${cl.rewritten} 个 / 清理 ${cl.removedEntries} 条`);
-        const errs = [...gh.errors, ...cl.errors];
+        const s = r.cloud.ssio;
+        lines.push(`云端（${r.cloud.codes.join('、')}）：SSIO 重写 ${s.rewritten} 个包 / 清理 ${s.removedEntries} 条${s.deleted ? ` / 删空 ${s.deleted} 个` : ''}`);
+        const errs = s.errors || [];
         if (errs.length) lines.push('部分错误：' + errs.slice(0, 3).join('；'));
       } else {
         lines.push('云端：本轮未执行（每天最多一次，或未配置发布码）');
@@ -264,16 +261,12 @@ export default function SettingsPage() {
         setUpdateAuto(cfg.autoCheck);
       } catch { /* 忽略 */ }
       try {
+        const cb = await window.taskAPI.app.getCloseBehavior();
+        if (cb) setCloseBehaviorState(cb);
+      } catch { /* 移动端无此 IPC */ }
+      try {
         const hw = await window.taskAPI.homework.config();
-        setHwTokenSet(!!hw.tokenSet);
         setHwPublisher(hw.publisher || '');
-        if (hw.cloud) {
-          setHwCloud({
-            url: `${hw.cloud.baseUrl}/link/${hw.cloud.linkId}`,
-            password: hw.cloud.password || '',
-            enabled: hw.cloud.enabled !== false,
-          });
-        }
       } catch { /* 忽略 */ }
     })();
   }, []);
@@ -285,27 +278,12 @@ export default function SettingsPage() {
     })();
   }, []);
 
-  /** 保存 GitHub 发布令牌 + 发布人昵称 */
+  /** 保存发布人昵称（v1.2.15：GitHub 令牌已随通道下线，SSIO 不需要凭据） */
   const saveHwAuth = async () => {
-    const r = await window.taskAPI.homework.saveAuth(hwToken.trim(), hwPublisher.trim());
-    if (!r.ok) { alert(r.error || '保存失败'); return; }
-    setHwTokenSet(!!r.tokenSet);
-    setHwToken('');
+    const r = await window.taskAPI.homework.saveAuth('', hwPublisher.trim());
+    if (!r.ok) { alert('保存失败'); return; }
     setHwAuthSaved(true);
     setTimeout(() => setHwAuthSaved(false), 1800);
-  };
-
-  /** 保存北科云盘作业同步源 */
-  const saveHwCloud = async () => {
-    setHwCloudErr('');
-    const r = await window.taskAPI.homework.saveCloud({
-      url: hwCloud.url.trim(),
-      password: hwCloud.password.trim(),
-      enabled: hwCloud.enabled,
-    });
-    if (!r.ok) { setHwCloudErr(r.error || '保存失败'); return; }
-    setHwCloudSaved(true);
-    setTimeout(() => setHwCloudSaved(false), 1800);
   };
 
   // 下载进度订阅
@@ -449,12 +427,6 @@ export default function SettingsPage() {
     const u = url || aggregate?.winner?.pageUrl || sources[activeIndex]?.url || '';
     if (!u) return;
     const r = await window.taskAPI.updater.openExternal(u);
-    if (!r.ok) setUpdateMsg(r.error || '打开链接失败');
-  };
-
-  /** GitHub 连不上时的解决教程（dogfight360 hosts 修复） */
-  const openGithubFix = async () => {
-    const r = await window.taskAPI.updater.openExternal('https://www.dogfight360.com/blog/18682/');
     if (!r.ok) setUpdateMsg(r.error || '打开链接失败');
   };
 
@@ -1064,7 +1036,7 @@ export default function SettingsPage() {
       <Section icon={<Trash2 size={14} />} title="自动清理 & 回收站">
         <div className="p-3 rounded-md bg-ink-base/40 border border-neon-green/10 text-xs text-text-secondary space-y-1 mb-3">
           <div>· 完成的作业/任务、过期日程、完结项目到期后自动移入<strong className="text-neon-green">回收站</strong>，回收站到期后彻底删除</div>
-          <div>· 上传到 SSIO 云/北科云盘的共享作业超过保留天数后云端同步清理（云盘为写过滤快照，旧客户端也不再挂载过期条目）</div>
+          <div>· 上传到 SSIO 云的共享作业超过保留天数后自动云端清理（重写过期包 / 删空整包）</div>
           <div>· 手动删除的数据同样先进回收站，可随时恢复</div>
         </div>
         {cleanRules ? (
@@ -1239,9 +1211,6 @@ export default function SettingsPage() {
                   ) : (
                     <button onClick={() => setAsPrimary(i)} className="px-1.5 py-0.5 rounded text-[9px] border border-text-dim/30 text-text-dim hover:border-neon-green hover:text-neon-green" title="设为主源">置主</button>
                   )}
-                  {s.type === 'anyshare' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/40 shrink-0" title="北科云盘外链源（需北京科技大学校园网）">云盘</span>
-                  )}
                   {String(s.url || '').toLowerCase().startsWith('ssio+') && (
                     <span className="px-1.5 py-0.5 rounded text-[9px] bg-neon-cyan/15 text-neon-cyan border border-neon-cyan/40 shrink-0" title="SSIO 自托管更新服务（ssio+ 前缀，提取码填 APIKey）">SSIO</span>
                   )}
@@ -1257,13 +1226,13 @@ export default function SettingsPage() {
                     placeholder="JSON 直链 / 网盘分享页 / ssio+http://host:8100"
                     className="input-neon flex-1 py-0.5 px-2 text-xs"
                   />
-                  {(s.type === 'anyshare' || String(s.url || '').toLowerCase().startsWith('ssio+')) && (
+                  {String(s.url || '').toLowerCase().startsWith('ssio+') && (
                     <input
                       value={s.password || ''}
                       onChange={(e) => updateSourceLocal(i, { password: e.target.value })}
-                      placeholder={String(s.url || '').toLowerCase().startsWith('ssio+') ? 'APIKey' : '提取码'}
+                      placeholder="APIKey"
                       className="input-neon w-24 py-0.5 px-2 text-xs"
-                      title={String(s.url || '').toLowerCase().startsWith('ssio+') ? 'SSIO APIKey（需要 release:read scope）' : '北科云盘提取码'}
+                      title="SSIO APIKey（需要 release:read scope）"
                     />
                   )}
                   <button onClick={() => removeSource(i)} className="btn-ghost text-neon-danger p-1" title="删除该源">
@@ -1278,27 +1247,6 @@ export default function SettingsPage() {
                 <Plus size={12} /> 添加源
               </button>
               <button
-                onClick={() => {
-                  if (sources.some((s) => s.type === 'anyshare' || /\/link\//.test(s.url))) {
-                    alert('已存在北科云盘源');
-                    return;
-                  }
-                  setSources([...sources, {
-                    name: '北科云盘（需校园网）',
-                    url: 'https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469',
-                    password: 'kc26',
-                    type: 'anyshare',
-                    enabled: true,
-                    primary: false,
-                  }]);
-                  setShowSrcEditor(true);
-                }}
-                className="btn-ghost text-xs py-1"
-                title="添加北科云盘更新源（需要北京科技大学校园网）"
-              >
-                <Plus size={12} /> 北科云盘源
-              </button>
-              <button
                 onClick={() => saveSources(sources, activeIndex)}
                 disabled={!sources.length}
                 className="btn-neon text-xs py-1"
@@ -1306,11 +1254,9 @@ export default function SettingsPage() {
                 {srcSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : <><Save size={12} /> 保存源</>}
               </button>
               <span className="font-mono text-[10px] text-text-dim">
-                {/* v1.2.13：默认只启用两个源，其余默认关闭——开太多只会让每次检查都等超时 */}
-                默认启用两个源：<strong className="text-neon-green">SSIO 官方源</strong>为主源，
-                <strong className="text-neon-green">jsDelivr CDN</strong>为备源；
-                检查更新时一起查，取版本最高的那个升级。
-                GitHub raw 与北科云盘默认关闭（国内常连不上 / 需校园网），需要可在上面的列表里勾选启用。
+                {/* v1.2.15：更新源只剩 SSIO 一个 —— GitHub raw / jsDelivr / 北科云盘已随通道下线 */}
+                默认 <strong className="text-neon-green">SSIO 官方源</strong>（主源，国内外可达）；
+                上面的列表里可添加自定义直链镜像。
               </span>
             </div>
 
@@ -1328,6 +1274,31 @@ export default function SettingsPage() {
             </details>
           </div>
         </Row>
+
+        {!IS_MOBILE && (
+        <Row label="关闭按钮行为">
+          <div className="flex items-center gap-4">
+            {([['ask', '每次询问'], ['minimize', '最小化到托盘'], ['quit', '完全退出']] as const).map(([v, label]) => (
+              <label key={v} className="flex items-center gap-1.5 cursor-pointer select-none text-xs">
+                <input
+                  type="radio"
+                  name="close-behavior"
+                  checked={closeBehavior === v}
+                  onChange={() => {
+                    setCloseBehaviorState(v);
+                    try { void window.taskAPI.app.setCloseBehavior(v); } catch { /* ignore */ }
+                  }}
+                  className="accent-[#00FF88]"
+                />
+                <span className={closeBehavior === v ? 'text-neon-green' : 'text-text-secondary'}>{label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="font-mono text-[10px] text-text-dim mt-1">
+            点窗口 ✕ 时按这里走；选「每次询问」会当场弹窗让你决定（可勾选记住选择）。
+          </div>
+        </Row>
+        )}
 
         {!IS_MOBILE && (
         <Row label="启动时自动检查">
@@ -1364,9 +1335,6 @@ export default function SettingsPage() {
           {aggregate?.winner?.hasUpdate && (
             <button onClick={ignoreVersion} className="btn-ghost text-text-dim">忽略 v{aggregate.winner.latestVersion}</button>
           )}
-          <button onClick={openGithubFix} className="btn-ghost text-text-dim" title="默认源打不开 / 下载慢的解决教程（主源 SSIO 不受影响）">
-            <ExternalLink size={14} /> 更新源打不开？点这
-          </button>
         </div>
         ) : (
           // v1.2.11：移动端不再是「不支持更新」的空壳，走 APK 自更新链路
@@ -1455,9 +1423,6 @@ export default function SettingsPage() {
         {updateMsg && (
           <div className="mt-1 p-3 rounded-md border border-neon-danger/50 text-neon-danger bg-neon-danger/5 font-mono text-xs whitespace-pre-wrap break-all">
             <div>✗ {updateMsg}</div>
-            <button onClick={openGithubFix} className="mt-2 underline underline-offset-2 hover:opacity-80">
-              更新源连不上？点这（解决教程）
-            </button>
           </div>
         )}
 
@@ -1477,30 +1442,10 @@ export default function SettingsPage() {
 
       {/* 作业同步（v1.1.4） */}
       <Section icon={<CloudUpload size={14} />} title="作业同步">
-        {/* v1.2.13：作业同步主源也是 SSIO（内置通道，开箱即用），GitHub PAT 降级为可选备源 */}
-        <Row label="GitHub 令牌（备源，可选）">
-          <div className="space-y-1.5">
-            <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 text-[10px] font-mono text-neon-green mb-1">
-              ✅ 作业已默认读写 <strong>SSIO 云服务器</strong>，无需配置任何令牌
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="password"
-                value={hwToken}
-                onChange={(e) => setHwToken(e.target.value)}
-                placeholder={hwTokenSet ? '已配置（留空不修改）' : 'ghp_… / github_pat_…（备源用，可不填）'}
-                className="input-neon flex-1"
-              />
-              <button onClick={saveHwAuth} className="btn-neon text-xs py-1.5 shrink-0">
-                {hwAuthSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : '保存'}
-              </button>
-            </div>
-            <div className="font-mono text-[10px] text-text-dim">
-              只在你想额外镜像一份到 GitHub 仓库时才需要（fine-grained PAT，勾选该仓库 Contents 读写）。
-              留空不影响使用：接收作业<strong className="text-neon-green">不需要令牌</strong>，且 SSIO 是强一致的（发布后立刻能收到）。
-            </div>
-          </div>
-        </Row>
+        {/* v1.2.15：GitHub 令牌与北科云盘源的配置项已随通道下线 —— SSIO 内置凭据，开箱即用 */}
+        <div className="bg-neon-green/10 border border-neon-green/30 rounded p-2 text-[10px] font-mono text-neon-green mb-1">
+          ✅ 作业读写全部走 <strong>SSIO 云服务器</strong>（强一致），无需配置任何令牌或外链
+        </div>
 
         <Row label="发布人昵称">
           <input
@@ -1511,50 +1456,6 @@ export default function SettingsPage() {
           />
         </Row>
 
-        <Row label="北科云盘同步源">
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={hwCloud.enabled}
-                onChange={(e) => setHwCloud({ ...hwCloud, enabled: e.target.checked })}
-                className="accent-[#00FF88]"
-              />
-              <span className="text-xs text-text-secondary">
-                启用后「接收作业」除 SSIO 云外也会查北科云盘；「发布作业」可选发布到云盘。
-                <strong className="text-neon-yellow">需要北京科技大学校园网</strong>。
-              </span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                value={hwCloud.url}
-                onChange={(e) => setHwCloud({ ...hwCloud, url: e.target.value })}
-                placeholder="https://yunpan.ustb.edu.cn/link/XXXX…"
-                className="input-neon flex-1 font-mono text-xs"
-              />
-              <input
-                value={hwCloud.password}
-                onChange={(e) => setHwCloud({ ...hwCloud, password: e.target.value })}
-                placeholder="提取码"
-                className="input-neon w-24 font-mono text-xs"
-              />
-              <button onClick={saveHwCloud} className="btn-neon text-xs py-1.5 shrink-0">
-                {hwCloudSaved ? <><CheckCircle2 size={12} className="text-neon-green" /> 已保存</> : '保存'}
-              </button>
-            </div>
-            {hwCloudErr && (
-              <div className="font-mono text-[10px] text-neon-danger">✗ {hwCloudErr}</div>
-            )}
-            {IS_MOBILE && (
-              <div className="font-mono text-[10px] text-neon-yellow">
-                ⚠ 手机端不支持云盘（依赖 Node 原生 HTTPS）；作业同步走 SSIO 云即可，不受影响
-              </div>
-            )}
-            <div className="font-mono text-[10px] text-text-dim">
-              作业包存在云盘分享根目录（文件名 <code>&lt;同步码&gt;-&lt;时间戳&gt;.json</code>），接收方按前缀取最新一份。云盘里旧文件不会自动清理，可偶尔登录云盘手动删。
-            </div>
-          </div>
-        </Row>
       </Section>
 
       {/* v1.1.6：输入框失灵诊断（块 3 埋点 + 导出） */}

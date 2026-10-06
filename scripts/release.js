@@ -91,22 +91,36 @@ function main() {
   if (args['min-version']) manifest.minVersion = String(args['min-version']);
 
   // v1.2.11：APK 也要进清单，否则移动端「永远是最新版」= 永远装不上新 APK。
+  // v1.2.15：下载地址改为 SSIO 引用（ssio:release:<id>）——GitHub raw 在国内被
+  // DNS 投毒、jsDelivr 镜像不再更新，都靠不住了。移动端在安装前用引用现签
+  // 签名 URL（src/mobile/apkUpdater.ts resolveSsioRef）。
   // 找不到 APK 不阻塞桌面发布（可能本次只为桌面 hotfix）。
   const apk = resolveApk();
   if (apk) {
     const info = androidVersionInfo();
-    const base = String(args['apk-base-url'] || APK_BASE_URL).replace(/\/+$/, '');
     const apkName = path.basename(apk);
-    manifest.android = {
-      version: info.versionName || version,
-      versionCode: info.versionCode || 0,
-      url: `${base}/${encodeURIComponent(apkName)}`,
-      mirrors: APK_MIRROR_BASES.map((b) => `${b.replace(/\/+$/, '')}/${encodeURIComponent(apkName)}`),
-      sha256: hashFile(apk),
-      size: fs.statSync(apk).size,
-      fileName: apkName,
-      page: `${APK_RELEASES_PAGE}${version ? `/tag/v${version}` : ''}`,
-    };
+    const ssioAndroid = (() => {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(ROOT, '.ssio-last-release-android.json'), 'utf8'));
+        return j && j.releaseId && String(j.version) === String(version) ? j : null;
+      } catch { return null; }
+    })();
+    if (ssioAndroid) {
+      manifest.android = {
+        version: info.versionName || version,
+        versionCode: info.versionCode || 0,
+        url: `ssio:release:${ssioAndroid.releaseId}`,
+        mirrors: [],
+        sha256: hashFile(apk),
+        size: fs.statSync(apk).size,
+        fileName: apkName,
+        page: null,
+      };
+    } else {
+      console.log('    [i] SSIO 上没有本版 APK（.ssio-last-release-android.json 缺失或版本不符）。');
+      console.log('        先跑: node scripts/publish-release-ssio.js <apk路径> <版本> "" --platform android --arch arm64');
+      console.log('        本次清单不写 android 字段（移动端将收不到本版更新）');
+    }
   }
 
   // 写出产物
