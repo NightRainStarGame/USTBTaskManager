@@ -1,30 +1,27 @@
 {
-  "version": "1.2.14",
-  "notes": "# TaskManager v1.2.14\r\n\r\n## 修复：增量补丁「应用后退出就没下文」（最严重）\r\n\r\n现象：点「应用补丁并重启」→ App 退出 → 然后再也没有动静，版本号也没变。\r\n\r\n根因在 `electron/resources/patch-helper.cjs`：helper 自身是以 `ELECTRON_RUN_AS_NODE=1` 启动的（否则打包后的 exe 跑不了 Node 脚本），而它拉起新版本时**原样继承了 env**：\r\n\r\n```js\r\nspawn(process.execPath, [], { env: { ...process.env, TASKMGR_PATCH_APPLIED: '1' } })\r\n```\r\n\r\n于是新拉起来的 TaskManager.exe 进入 **Node 模式** —— 没有 GUI、没有入口参数，起来就退出。用户看到的就是「退出后再也没下文」。这是 AGENTS.md §7 明令的红线（spawn 打包 exe 前必须 delete `ELECTRON_RUN_AS_NODE` / `NODE_OPTIONS`），这次是被自己违反了。\r\n\r\n修复：\r\n- 拉起前清掉 `ELECTRON_RUN_AS_NODE` 与 `NODE_OPTIONS`\r\n- 拉起前等 1.2s（主进程刚退出，单实例锁释放有延迟，否则新进程会被判成「第二个实例」直接 quit —— 同样表现为没下文）\r\n- 拉起后校验应用进程确实在跑，没起来就再试一次\r\n- 三处重复的 spawn 统一收敛到 `relaunchApp()`\r\n\r\n补丁本身（下载、基线校验、落盘）一直是对的，只有最后「拉起来」这一步是坏的。\r\n\r\n## 精简更新源：默认只启用 2 个\r\n\r\n以前 4 个源全开，其中 GitHub raw 国内常被墙 / DNS 劫持、北科云盘只有校园网可达，每次检查更新都要干等它们超时（各 15s），表现为「检查更新半天没反应、一堆源都不好使」。\r\n\r\n现在默认只启用：**SSIO 官方源（主）+ jsDelivr CDN（备）**。GitHub raw 与北科云盘改为默认关闭，需要的人在「设置 → 软件更新 → 更新源」里勾选即可启用。\r\n\r\n## 班级 / 作业同步：不再显示 GitHub\r\n\r\n后端其实 v1.2.12 就已经是 SSIO 主源（SSIO KV 优先、GitHub 仅回退），但**界面文案从头到尾还写着 GitHub**，导致看起来「还在用 GitHub」。本次把面向用户的文案全部改正：\r\n\r\n- 班级页：副标题、空列表引导、创建班级提示、配置弹窗（「GitHub 写入通道（主源）」→「SSIO 云同步（主源 · 内置已启用）」）\r\n- 删掉「你还没配置 GitHub PAT，班级数据将仅存本机」的误导警告 —— SSIO 内置通道配不配令牌都能用\r\n- 同步成功提示：`同步完成 · github` → `同步完成 · SSIO 云`\r\n- 作业同步：发布目标「GitHub」→「SSIO 云（主源）」，发布按钮、结果行、接收说明同步改正\r\n- 设置里 GitHub 令牌标注为「备源，可选」，并说明留空不影响使用\r\n\r\n## 其它\r\n\r\n- 云端返回的 `source` 字段仍是历史值 `github`（那个分支内部是 SSIO 优先），UI 层已按真实主源展示，不再误导",
-  "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.14/TaskManager-Setup-1.2.14.exe",
+  "version": "1.2.15",
+  "notes": "# v1.2.15 · 云端链路全 SSIO 化\r\n\r\n## 最重要的变化\r\n- **GitHub 与北科云盘通道全部下线**：更新、班级、作业、关于页都只走自建 SSIO 云。GitHub 仓库此后只保留源码（不再发 Release 附件），仓库不再有二进制冗余。\r\n- **下载地址全部改为现签引用**：清单里记 `ssio:release:<id>` / `ssio:file:<id>`，应用在真正下载前一刻才向 SSIO 换签名地址（签名 URL 5 分钟过期，写死必失效）。以前「早上弹更新、晚上点安装就 404」的问题根治。\r\n\r\n## 修复\r\n- **更新源堆积**：历史上同一 SSIO 源因类型/前缀演进被反复追加（设置页显示一堆重复源），现在按后端地址归一去重，并自动清退指向 GitHub raw / jsDelivr / 云盘的存量死源。\r\n- **输入框偶尔打不进字**：底层根因是 IME 组合态悬挂（compositionend 丢失后受控输入永久哑火，重启才能恢复）。现在失灵检出时自动 blur→focus 重建输入管道，自愈后落盘诊断快照；焦点切换时也会清理悬挂组合态。\r\n- **作业同步 `resolveToken` 无限递归**：自己调自己，走到就爆栈 —— 已修。\r\n\r\n## 新增\r\n- **关闭按钮可选**：点窗口 ✕ 不再直接藏到托盘，弹窗让选「最小化到托盘 / 完全退出 / 取消」，可勾选记住；设置 → 软件更新 → 关闭按钮行为 可改默认（每次询问 / 最小化 / 退出）。\r\n- **冷启动提速**：splash 强制最短展示 1500ms → 700ms；启动首位的补丁哈希检查（同步 IO）移到 splash 出现之后异步执行。多开防护（单实例锁）此前已有，保持不变。\r\n- **移动端**：更新检查只剩 SSIO 源；Android 为 SSIO 下载通道开放了仅限该 IP 的明文白名单（备案后切 HTTPS 即可整体移除）。\r\n\r\n## 发版流程（对使用者透明）\r\n- 桌面整包 / APK / 增量补丁全部先传 SSIO 再组装清单，`latest.json` 同步进 KV，`about.txt` 一并同步。\r\n\r\n## 升级路径\r\n- v1.2.14 桌面用户：应用内更新直接升到本版（走 SSIO 整包或增量补丁）。\r\n- v1.2.12 APK 用户：应用内更新到 versionCode 10。",
+  "url": "ssio:release:0f3fd3f5-4780-4150-ab22-20a0b9b7612f",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12",
-  "sha256": "0b459e429b42032be802742076ac720608a5bf7aa0a6bedc07da5493fb6ec04a",
-  "size": 97527200,
-  "fileName": "TaskManager-Setup-1.2.14.exe",
+  "sha256": "8460a81880d9a4fa489b46c8a71d878125e01a6630cf236ed161d86980971dd4",
+  "size": 97517199,
+  "fileName": "TaskManager-Setup-1.2.15.exe",
   "releasedAt": "2026-10-02T15:10:00.000Z",
-  "releaseDate": "2026-10-03T03:26:36.373Z",
-  "asarSha256": "f4a9abba360d8b08ab29398b26d1dfbda248cb3c4443a871113a2bfd0ebef174",
-  "asarSize": 76185454,
+  "releaseDate": "2026-10-06T11:55:13.005Z",
+  "asarSha256": "aa671f2cdfc144ff215c4c079c68789dcc7ada76e701e3cdc017b26b679a7e23",
+  "asarSize": 76136872,
   "patches": [
     {
-      "fromVersion": "1.2.13",
-      "url": "https://github.com/NightRainStarGame/USTBTaskManager/releases/download/v1.2.14/TaskManager-Patch-1.2.13-to-1.2.14.zip",
-      "urlMirrors": [
-        "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/patches/TaskManager-Patch-1.2.13-to-1.2.14.zip",
-        "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/patches/TaskManager-Patch-1.2.13-to-1.2.14.zip"
-      ],
-      "sha256": "645a363e2dd85f24cb5556846e90e22fa22ae9589d4d1b6e81f12735bb73d242",
-      "size": 23390315,
-      "baseAsarSha256": "1dd5de30271031a94bb22668af4fad591945efbbc43a4879ff2e8581357fe385",
-      "baseAsarSize": 76183940,
-      "appAsarSha256": "f4a9abba360d8b08ab29398b26d1dfbda248cb3c4443a871113a2bfd0ebef174",
-      "appAsarSize": 76185454,
-      "createdAt": "2026-10-03T03:26:34.613Z"
+      "fromVersion": "1.2.14",
+      "url": "ssio:file:da8eca98-64ba-4bb2-8448-f57a0469eeb7",
+      "urlMirrors": [],
+      "sha256": "887c32b19a4062cf3bde8a0197194832a8702c447dfda81c156328e2cd481842",
+      "size": 23375774,
+      "baseAsarSha256": "f4a9abba360d8b08ab29398b26d1dfbda248cb3c4443a871113a2bfd0ebef174",
+      "baseAsarSize": 76185454,
+      "appAsarSha256": "aa671f2cdfc144ff215c4c079c68789dcc7ada76e701e3cdc017b26b679a7e23",
+      "appAsarSize": 76136872,
+      "createdAt": "2026-10-06T11:54:43.981Z"
     }
   ],
   "android": {
@@ -39,8 +36,6 @@
     "fileName": "TaskManager-1.2.12.apk",
     "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12"
   },
-  "urlMirrors": [
-    "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-Setup-1.2.14.exe",
-    "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-Setup-1.2.14.exe"
-  ]
+  "urlMirrors": [],
+  "releaseId": "0f3fd3f5-4780-4150-ab22-20a0b9b7612f"
 }
