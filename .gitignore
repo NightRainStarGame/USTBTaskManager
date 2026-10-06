@@ -128,3 +128,10 @@ rel-check.json
 .ssio-last-release.json
 .ssio-last-storage.json
 .ssio-last-release-android.json
+
+# v1.2.15：GitHub 只存源码 —— 二进制产物只发 SSIO，leastversion 仅作本地基线滚动用
+leastversion/*.exe
+leastversion/*.apk
+leastversion/patches/*.zip
+oldversion/*.exe
+oldversion/*.apk

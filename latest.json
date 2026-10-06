@@ -25,16 +25,14 @@
     }
   ],
   "android": {
-    "version": "1.2.12",
-    "versionCode": 9,
-    "url": "https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/leastversion/TaskManager-1.2.12.apk",
-    "mirrors": [
-      "https://cdn.jsdelivr.net/gh/NightRainStarGame/USTBTaskManager@main/leastversion/TaskManager-1.2.12.apk"
-    ],
-    "sha256": "50f1751a018c79c080edc953f9534554deee7da0be5747388850c5c0dc5e7a38",
-    "size": 4721714,
-    "fileName": "TaskManager-1.2.12.apk",
-    "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12"
+    "version": "1.2.15",
+    "versionCode": 10,
+    "url": "ssio:release:9d9c436b-8ff6-4c2f-abdf-ee29dbc59637",
+    "mirrors": [],
+    "sha256": "faf2b851dbc6326e8fb47002af928b7d943da5b4de0519fec3abdd61fa4cfabc",
+    "size": 4711410,
+    "fileName": "TaskManager-1.2.15.apk",
+    "page": null
   },
   "urlMirrors": [],
   "releaseId": "0f3fd3f5-4780-4150-ab22-20a0b9b7612f"
