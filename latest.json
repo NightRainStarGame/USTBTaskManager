@@ -1,27 +1,27 @@
 {
-  "version": "1.2.15",
-  "notes": "# v1.2.15 · 云端链路全 SSIO 化\r\n\r\n## 最重要的变化\r\n- **GitHub 与北科云盘通道全部下线**：更新、班级、作业、关于页都只走自建 SSIO 云。GitHub 仓库此后只保留源码（不再发 Release 附件），仓库不再有二进制冗余。\r\n- **下载地址全部改为现签引用**：清单里记 `ssio:release:<id>` / `ssio:file:<id>`，应用在真正下载前一刻才向 SSIO 换签名地址（签名 URL 5 分钟过期，写死必失效）。以前「早上弹更新、晚上点安装就 404」的问题根治。\r\n\r\n## 修复\r\n- **更新源堆积**：历史上同一 SSIO 源因类型/前缀演进被反复追加（设置页显示一堆重复源），现在按后端地址归一去重，并自动清退指向 GitHub raw / jsDelivr / 云盘的存量死源。\r\n- **输入框偶尔打不进字**：底层根因是 IME 组合态悬挂（compositionend 丢失后受控输入永久哑火，重启才能恢复）。现在失灵检出时自动 blur→focus 重建输入管道，自愈后落盘诊断快照；焦点切换时也会清理悬挂组合态。\r\n- **作业同步 `resolveToken` 无限递归**：自己调自己，走到就爆栈 —— 已修。\r\n\r\n## 新增\r\n- **关闭按钮可选**：点窗口 ✕ 不再直接藏到托盘，弹窗让选「最小化到托盘 / 完全退出 / 取消」，可勾选记住；设置 → 软件更新 → 关闭按钮行为 可改默认（每次询问 / 最小化 / 退出）。\r\n- **冷启动提速**：splash 强制最短展示 1500ms → 700ms；启动首位的补丁哈希检查（同步 IO）移到 splash 出现之后异步执行。多开防护（单实例锁）此前已有，保持不变。\r\n- **移动端**：更新检查只剩 SSIO 源；Android 为 SSIO 下载通道开放了仅限该 IP 的明文白名单（备案后切 HTTPS 即可整体移除）。\r\n\r\n## 发版流程（对使用者透明）\r\n- 桌面整包 / APK / 增量补丁全部先传 SSIO 再组装清单，`latest.json` 同步进 KV，`about.txt` 一并同步。\r\n\r\n## 升级路径\r\n- v1.2.14 桌面用户：应用内更新直接升到本版（走 SSIO 整包或增量补丁）。\r\n- v1.2.12 APK 用户：应用内更新到 versionCode 10。",
-  "url": "ssio:release:0f3fd3f5-4780-4150-ab22-20a0b9b7612f",
+  "version": "1.2.16",
+  "notes": "# v1.2.16 · 修复 1.2.15 更新下载失败（热修复）\r\n\r\n## 修复内容（必须升）\r\n\r\n- **v1.2.15 的应用内下载会失败**：整包下载时客户端调用了 SSIO 上并不存在的 `/v1/releases/:id/download` 端点（404）。本版改为调用服务端真正支持的现签入口，并校验返回版本与清单一致（防回滚错包）。\r\n- **受影响范围**：从 v1.2.14 升级到 v1.2.15 的用户，点「立即安装」会下载失败（重试无效）。v1.2.14 及更早版本不受影响（它们的下载走旧链路）。\r\n- **处理方式**：v1.2.14 用户会直接收到 v1.2.16（跳过坏版本）；**已经装上 1.2.15 的设备**请在「设置 → 软件更新」里点「打开发布页」手动下载 1.2.16 安装包覆盖安装，或从 nrsc.games 站点下载。\r\n\r\n## 其余同 1.2.15\r\n- 云端链路全 SSIO 化（GitHub 只存源码）、下载引用现签、关闭按钮可选、冷启动提速、输入失灵自愈、移动端 SSIO 更新 + 明文白名单。",
+  "url": "ssio:release:8dd569bd-5a43-4659-83c4-a1a017ec70c0",
   "page": "https://github.com/NightRainStarGame/USTBTaskManager/releases/tag/v1.2.12",
-  "sha256": "8460a81880d9a4fa489b46c8a71d878125e01a6630cf236ed161d86980971dd4",
-  "size": 97517199,
-  "fileName": "TaskManager-Setup-1.2.15.exe",
+  "sha256": "9ff9782db14641ea3a7c03d3b901a6f15c4894175882838a3aa7edd0afa5ff5f",
+  "size": 97517850,
+  "fileName": "TaskManager-Setup-1.2.16.exe",
   "releasedAt": "2026-10-02T15:10:00.000Z",
-  "releaseDate": "2026-10-06T11:55:13.005Z",
-  "asarSha256": "aa671f2cdfc144ff215c4c079c68789dcc7ada76e701e3cdc017b26b679a7e23",
-  "asarSize": 76136872,
+  "releaseDate": "2026-10-06T12:37:39.795Z",
+  "asarSha256": "b6b8057bcbe31d4719241b1e1b328c3f1023e934ad96556487791b7b4e26c923",
+  "asarSize": 76138312,
   "patches": [
     {
-      "fromVersion": "1.2.14",
-      "url": "ssio:file:da8eca98-64ba-4bb2-8448-f57a0469eeb7",
+      "fromVersion": "1.2.15",
+      "url": "ssio:file:a41d54b9-28a3-42cc-84c4-bf3fab130dab",
       "urlMirrors": [],
-      "sha256": "887c32b19a4062cf3bde8a0197194832a8702c447dfda81c156328e2cd481842",
-      "size": 23375774,
-      "baseAsarSha256": "f4a9abba360d8b08ab29398b26d1dfbda248cb3c4443a871113a2bfd0ebef174",
-      "baseAsarSize": 76185454,
-      "appAsarSha256": "aa671f2cdfc144ff215c4c079c68789dcc7ada76e701e3cdc017b26b679a7e23",
-      "appAsarSize": 76136872,
-      "createdAt": "2026-10-06T11:54:43.981Z"
+      "sha256": "bb072a87e7dd4db552fb1a13439cfe9e32339922225f1580648f61ca1a7557c8",
+      "size": 23376327,
+      "baseAsarSha256": "aa671f2cdfc144ff215c4c079c68789dcc7ada76e701e3cdc017b26b679a7e23",
+      "baseAsarSize": 76136872,
+      "appAsarSha256": "b6b8057bcbe31d4719241b1e1b328c3f1023e934ad96556487791b7b4e26c923",
+      "appAsarSize": 76138312,
+      "createdAt": "2026-10-06T12:37:11.381Z"
     }
   ],
   "android": {
@@ -35,5 +35,5 @@
     "page": null
   },
   "urlMirrors": [],
-  "releaseId": "0f3fd3f5-4780-4150-ab22-20a0b9b7612f"
+  "releaseId": "8dd569bd-5a43-4659-83c4-a1a017ec70c0"
 }
