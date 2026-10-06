@@ -4,20 +4,20 @@
 
 ## 下载安装
 
-**当前最新版：v1.2.15**
+**当前最新版：v1.2.16**
 
-下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=win&version=1.2.15`（备案完成前可临时用 `http://120.53.9.81:8100` 的应用内更新链路）。
+下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=win&version=1.2.16`（备案完成前可临时用 `http://120.53.9.81:8100` 的应用内更新链路）。
 
-> v1.2.15 起安装包**只发布在自建 SSIO 服务器**上：GitHub 仓库只保留源码（不发 Release 附件），
+> v1.2.16 起安装包**只发布在自建 SSIO 服务器**上：GitHub 仓库只保留源码（不发 Release 附件），
 > 北科云盘 / jsDelivr / GitHub raw 等旧下载通道已全部下线。
 
 安装向导支持**自定义安装目录**，无需管理员权限（按当前用户安装）。
 
 ### Android 版（APK）
 
-同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.15**（versionCode 10）。
+同一个代码库的移动端壳（Capacitor 8），**当前最新版 v1.2.16**（versionCode 11）。
 
-下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=android&version=1.2.15`。
+下载入口：`https://nrsc.games/api/public/taskmanager/dl?platform=android&version=1.2.16`。
 
 - 手机装好后**无需再手动下载**：**设置 → 软件更新** 里会直接显示新版本并支持「下载并安装」（原生下载 + SHA-256 校验 + 拉起系统安装器）
 - 首次安装需授权「允许安装未知应用」，App 会引导跳转到对应开关页
@@ -28,7 +28,7 @@
 
 应用内置更新模块，启动后（或手动点「检查更新」）检查更新源，发现新版本在右下角弹窗告知。
 
-**v1.2.15 起更新源只有 SSIO 一个**（自建服务器，国内外都能连）：
+**v1.2.16 起更新源只有 SSIO 一个**（自建服务器，国内外都能连）：
 
 | 源 | 说明 |
 |---|---|
@@ -145,7 +145,7 @@
 
 ### 4. 班级作业发布 / 同步
 
-课程页**右下角**有一组「班级作业」按钮，作业包存在 **SSIO 云服务器的 `homework/` 命名空间**里（v1.2.15 前是 GitHub 仓库 + 北科云盘双源，已全部迁移并下线）：
+课程页**右下角**有一组「班级作业」按钮，作业包存在 **SSIO 云服务器的 `homework/` 命名空间**里（v1.2.16 前是 GitHub 仓库 + 北科云盘双源，已全部迁移并下线）：
 
 **发布作业**（课代表 / 知道密码的人用）：
 

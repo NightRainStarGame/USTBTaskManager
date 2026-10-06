@@ -118,19 +118,27 @@ async function fetchJson(url: string, headers?: Record<string, string>): Promise
  *
  * SSIO 的下载链接是 5 分钟过期的签名 URL —— 清单是拉取时缓存的，用户点「安装」
  * 可能晚了好几分钟，直接用清单里的旧地址必 404。所以这一步必须在下载前一刻做。
- * 与桌面端 electron/updater/ssio.ts 的 fetchSsioDownloadUrl 是同一套协议。
+ *
+ * 服务端能拿到签名地址的入口只有两个：
+ *   · release → `GET /v1/releases/latest`（每次请求重新签名；**没有**
+ *     /v1/releases/:id/download 端点，v1.2.15 曾接错导致下载 404，v1.2.16 修复）
+ *   · file    → `GET /v1/storage/files/:id/download`
  */
-async function resolveSsioRef(ref: string): Promise<string> {
+async function resolveSsioRef(ref: string, expectVersion?: string): Promise<string> {
   const m = ref.match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
   if (!m) throw new Error(`SSIO 引用格式无效：${ref}`);
+  const kind = m[1].toLowerCase();
   const apiPath =
-    m[1].toLowerCase() === 'release'
-      ? `/v1/releases/${m[2]}/download`
+    kind === 'release'
+      ? '/v1/releases/latest?platform=android&arch=arm64&channel=stable&current=0.0.1&clientId=taskmgr-apk-dl'
       : `/v1/storage/files/${m[2]}/download`;
   const j = await fetchJson(`${SSIO_DEFAULT_BASE}${apiPath}`, {
     accept: 'application/json',
     'X-API-Key': SSIO_BUILTIN_KEY,
   });
+  if (kind === 'release' && expectVersion && String(j.version || '') !== String(expectVersion)) {
+    throw new Error(`SSIO 最新发行是 ${j.version || '?'}，与清单 ${expectVersion} 不一致（可能被回滚）`);
+  }
   if (!j?.url) throw new Error('SSIO 没返回下载地址');
   return String(j.url);
 }
@@ -225,7 +233,7 @@ export async function installAndroidApk(info: AndroidUpdateInfo): Promise<Instal
 
   for (const raw of candidates) {
     try {
-      const url = /^ssio:/i.test(raw) ? await resolveSsioRef(raw) : raw;
+      const url = /^ssio:/i.test(raw) ? await resolveSsioRef(raw, info.version) : raw;
       const r = await plugin.installApk({ url, sha256: info.sha256 || '' });
       if (r && r.ok === true) return { ok: true };
       lastReason = String(r?.reason || 'UNKNOWN');

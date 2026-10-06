@@ -433,6 +433,7 @@ async function fetchManifestText(src: UpdateSource): Promise<string> {
     url: string,
     sources: UpdateSource[],
     preferredIndex: number,
+    expectVersion?: string,
   ): Promise<string> {
     const raw = String(url || '').trim();
     if (/^https?:\/\//i.test(raw)) return raw;
@@ -441,7 +442,12 @@ async function fetchManifestText(src: UpdateSource): Promise<string> {
     if (ref) {
       const picked = pickSsioSource(sources, preferredIndex);
       if (!picked) throw new Error('清单引用了 SSIO 资源，但当前没有可用的 SSIO 更新源');
-      return fetchSsioDownloadUrl(picked, ref[1].toLowerCase() === 'release' ? 'release' : 'file', ref[2]);
+      return fetchSsioDownloadUrl(
+        picked,
+        ref[1].toLowerCase() === 'release' ? 'release' : 'file',
+        ref[2],
+        expectVersion,
+      );
     }
 
     const sourceSummary = sources
@@ -646,7 +652,8 @@ async function downloadUpdate(
   for (const candidateUrl of candidates) {
     let realUrl: string;
     try {
-      realUrl = await resolveDownloadUrl(candidateUrl, allSources, preferredIndex ?? 0);
+      // expectVersion 传给 SSIO 现签逻辑：latest 返回的版本必须与清单一致，防回滚错包
+      realUrl = await resolveDownloadUrl(candidateUrl, allSources, preferredIndex ?? 0, version);
     } catch (e: any) {
       tried.push(candidateUrl);
       lastErr = e?.message || String(e);

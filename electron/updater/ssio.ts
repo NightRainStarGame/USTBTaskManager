@@ -38,24 +38,35 @@ export function ssioBaseUrl(src: SsioSourceLike): string {
 /**
  * 用 SSIO 资源引用换一条**新鲜**下载地址。
  *
- * 服务端两个 download 端点返回的是有时效的签名 URL（5 分钟），所以只能现取现用：
- * 清单里存的是引用（`ssio:release:<id>` / `ssio:file:<id>`），真正下载的前一刻才来换。
+ * 服务端只有两个能拿到「带时效签名 URL」的入口（签名 5 分钟过期，只能现取现用）：
+ *   · 整包（release）：`GET /v1/releases/latest` —— 它**每次请求都对文件重新签名**。
+ *     注意服务端**没有** `/v1/releases/:id/download` 端点（v1.2.15 曾因此接错，
+ *     下载必 404，v1.2.16 修复）。所以 release 引用走 latest，并校验返回的
+ *     version 与清单一致，防止渠道被回滚时下错包。
+ *   · 补丁（file）：`GET /v1/storage/files/:id/download`。
  * 需要的 scope（release:read / storage:read）内置 Key 都具备。
  */
 export async function fetchSsioDownloadUrl(
   src: SsioSourceLike,
   kind: 'release' | 'file',
   id: string,
+  expectVersion?: string,
 ): Promise<string> {
   const base = ssioBaseUrl(src);
   const headers: Record<string, string> = {
     accept: 'application/json',
     ...(src.password ? { 'X-API-Key': src.password } : {}),
   };
-  const apiPath =
-    kind === 'release'
-      ? `/v1/releases/${encodeURIComponent(id)}/download`
-      : `/v1/storage/files/${encodeURIComponent(id)}/download`;
+
+  let apiPath: string;
+  if (kind === 'release') {
+    const platform = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'macos' : 'linux';
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    // current 传一个必然落后的版本，确保拿到本渠道当前已发布的最新记录
+    apiPath = `/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=0.0.1&clientId=taskmgr-dl`;
+  } else {
+    apiPath = `/v1/storage/files/${encodeURIComponent(id)}/download`;
+  }
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -67,8 +78,11 @@ export async function fetchSsioDownloadUrl(
     } as RequestInit);
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
     const text = await res.text();
-    const j = JSON.parse(text) as { url?: string };
-    if (!j?.url) throw new Error('SSIO 没返回下载地址');
+    const j = JSON.parse(text) as { url?: string; version?: string };
+    if (kind === 'release' && expectVersion && String(j.version || '') !== String(expectVersion)) {
+      throw new Error(`SSIO 最新发行是 ${j.version || '?'}，与清单 ${expectVersion} 不一致（可能被回滚），拒绝下载`);
+    }
+    if (!j?.url) throw new Error('SSIO 没返回下载地址（该版本可能没有挂文件）');
     return j.url;
   } finally {
     clearTimeout(timer);
