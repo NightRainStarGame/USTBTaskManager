@@ -195,58 +195,11 @@ function registerCategories(db: DB) {
 }
 
 // ====== ICS 导出 ======
+// v1.2.17：日历文件的组装搬到 electron/core/ics.ts —— 那边不 import electron，
+// 所以能被 scripts/test-core.js 直接验证（见该文件的注释）。这里只剩「弹窗选路径 + 落盘」。
 import * as fs from 'node:fs';
 import { dialog, BrowserWindow } from 'electron';
-
-function pad(n: number) { return n.toString().padStart(2, '0'); }
-
-function toIcsDate(ts: number, allDay: boolean): string {
-  const d = new Date(ts);
-  if (allDay) {
-    return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
-  }
-  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
-}
-
-function escapeIcs(s: string): string {
-  return s.replace(/[\\;,]/g, (m) => '\\' + m).replace(/\n/g, '\\n');
-}
-
-function buildIcs(events: any[]): string {
-  const now = toIcsDate(Date.now(), false);
-  const lines: string[] = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//TaskManager//CN//',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    'X-WR-CALNAME:TaskManager 日历',
-  ];
-  for (const e of events) {
-    const allDay = !!e.all_day;
-    lines.push('BEGIN:VEVENT');
-    lines.push(`UID:${e.id}@taskmanager`);
-    lines.push(`DTSTAMP:${now}`);
-    lines.push(`DTSTART:${toIcsDate(e.start_at, allDay)}`);
-    if (e.end_at) lines.push(`DTEND:${toIcsDate(e.end_at, allDay)}`);
-    lines.push(`SUMMARY:${escapeIcs(e.title || '')}`);
-    if (e.location) lines.push(`LOCATION:${escapeIcs(e.location)}`);
-    if (e.notes) lines.push(`DESCRIPTION:${escapeIcs(e.notes)}`);
-    if (e.recurrence) {
-      const r = e.recurrence;
-      if (r === 'WEEKLY') lines.push('RRULE:FREQ=WEEKLY');
-      else if (r === 'DAILY') lines.push('RRULE:FREQ=DAILY');
-      else if (r === 'MONTHLY') lines.push('RRULE:FREQ=MONTHLY');
-      else if (r === 'YEARLY') lines.push('RRULE:FREQ=YEARLY');
-    }
-    if (e.recurrence_end) {
-      lines.push(`UNTIL=${toIcsDate(e.recurrence_end, false)}`);
-    }
-    lines.push('END:VEVENT');
-  }
-  lines.push('END:VCALENDAR');
-  return lines.join('\r\n');
-}
+import { buildIcs } from '../core/ics';
 
 function registerIcsExport() {
   ipcMain.handle('ics:export', async (_e, events) => {

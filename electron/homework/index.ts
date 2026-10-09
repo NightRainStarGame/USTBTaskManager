@@ -19,6 +19,20 @@ import { kvGetJson, kvPut } from '../cloud/ssioClient';
 
 export const HOMEWORK_DIR = 'homework';
 
+/**
+ * course_requirements.source 里代表「这条作业是从同步码接收来的」的值。
+ *
+ * **字面值是 'github'，但语义已经不是 GitHub 了。** 这个字段诞生时作业包确实托管在
+ * GitHub 仓库里；v1.2.15 起作业包只存在 SSIO 上，而值一直没改 —— 因为它是**持久化
+ * 数据**：用户库里成千上万行老数据都写着 'github'，改它需要一次带 UPDATE 的迁移，
+ * 而它现实中的作用只有一个：区分「本地手建(source='local')」与「同步来的」。
+ *
+ * 于是这里的处理方式是「**保留数据、纠正说法**」：
+ *   · 写库继续用这个常量（一行地方），将来若要重命名，改这一处 + 一条迁移即可；
+ *   · UI 与 notes 文案不再出现 GitHub 字样 —— 那才是会误导用户的部分。
+ */
+export const SYNCED_SOURCE_TAG = 'github';
+
 /** 码对派生密钥（网站端生成码时必须使用同一字符串，改动会使已分发的发布码失效） */
 export const CODE_SECRET = 'StarOS-Homework-Code-v1';
 
@@ -32,7 +46,6 @@ const PUBLISH_CODE_LEN = 12;
 const SETTING_PUBLISHER = 'homework_publisher';
 const SETTING_LAST_SYNC = 'homework_last_sync';
 const SETTING_COURSE_SYNC_PREFIX = 'homework_sync_';
-const SETTING_CLOUD = 'homework_anyshare';
 /** v1.2.2：手动生成过的码对历史（JSON 数组，仅记 syncCode + 时间，publishCode 可 HMAC 派生） */
 const SETTING_MY_CODES = 'homework_my_codes';
 
@@ -131,9 +144,6 @@ export interface PublishEntry {
 export interface PublishPayload {
   syncCode?: string;
   publishCode?: string;
-  targets?: ('github' | 'cloud')[];
-  /** @deprecated v1.1.6 起改用 targets */
-  target?: 'github' | 'cloud';
   courseId?: number;
   courseName: string;
   /** 默认上课日期；entries 里没指定 sessionDate 的条目用这个 */
@@ -195,55 +205,53 @@ function describeError(e: any): string {
 }
 
 
-export interface HomeworkSource {
-  name: string;
-  fetchBundle(syncCode: string): Promise<{ file: HomeworkFile } | null>;
+/**
+ * 拉一个码包回来。
+ *
+ * v1.2.17：以前走 `HomeworkSource[]` 多源数组 + `hits.length > 1` 的合并分支，
+ * 但 sources 自 GitHub 通道下线后恒为单元素 `[ssioSource]` —— 那个合并分支不可达。
+ * 删掉数组/接口，这里就是一条 kvGet：不存在即 null，网络错误带原因上抛。
+ */
+async function fetchSsioBundle(syncCode: string): Promise<HomeworkFile | null> {
+  try {
+    const sf = await kvGetJson<HomeworkFile>(`${HOMEWORK_DIR}/${syncCode}.json`);
+    if (sf && Array.isArray(sf.entries) && sf.syncCode === syncCode) return sf;
+  } catch (e: any) {
+    throw new Error(`读取 SSIO 作业包失败：${e?.message || e}`);
+  }
+  return null;
 }
 
-// v1.2.16：随 GitHub 通道下线更名 —— 它现在就是（唯一的）SSIO 源
-const ssioSource: HomeworkSource = {
-  name: 'ssio',
-  async fetchBundle(syncCode) {
-    // 作业包就在 SSIO KV 里。相比旧的 GitHub raw + Contents API 双读：
-    //  · 强一致，没有 raw CDN 5 分钟缓存（v1.1.8 的旧根因）；
-    //  · 免令牌，不需要用户开 PAT；国内外都可达。
-    try {
-      const sf = await kvGetJson<HomeworkFile>(`${HOMEWORK_DIR}/${syncCode}.json`);
-      if (sf && Array.isArray(sf.entries) && sf.syncCode === syncCode) return { file: sf };
-    } catch (e: any) {
-      throw new Error(`读取 SSIO 作业包失败：${e?.message || e}`);
-    }
-    return null;
-  },
-};
 
 
-
-/** 多份历史快照合并成一份（条目级去重：id 命中或 课程名+日期+标题 命中 → 后写的覆盖） */
-export function mergeBundleFiles(bundles: HomeworkFile[], syncCode: string, preferFileMetaOfLast = true): HomeworkFile {
+/**
+ * 包内自愈：条目级去重，id 命中或「课程名+日期+标题」命中 → 后写的覆盖。
+ *
+ * v1.2.17：以前叫 mergeBundleFiles(files[], …)，是给「多源各拉一份再合并」用的。
+ * 多源早就没有了，三个调用方全部传单元素数组 —— 数组入参和 preferFileMetaOfLast
+ * 都成了没人用的接口宽度。这里改成收一份快照，函数名反映它现在真正的职责：
+ * 消掉历史遗留的同键重复条目（同课程+同日期+同标题但 id 不同）。
+ */
+export function dedupeBundle(file: HomeworkFile, syncCode: string): HomeworkFile {
   const byId = new Map<string, HomeworkEntry>();
   const idOfKey = new Map<string, string>();
-  for (const f of bundles) {
-    for (const e of f.entries || []) {
-      if (!e || !e.title) continue;
-      const courseName = e.courseName || f.courseName || '';
-      const key = `${courseName}|${e.sessionDate || ''}|${e.title}`;
-      const id = e.id || key;
-      // v1.2.0：同键不同 id（两份快照各生成过一条，如单侧发布失败后重发）
-      // → 旧的让位、只留最新一份，否则接收端会出现两条重复
-      const priorId = idOfKey.get(key);
-      if (priorId && priorId !== id) byId.delete(priorId);
-      byId.set(id, { ...e, id, courseName });
-      idOfKey.set(key, id);
-    }
+  for (const e of file.entries || []) {
+    if (!e || !e.title) continue;
+    const courseName = e.courseName || file.courseName || '';
+    const key = `${courseName}|${e.sessionDate || ''}|${e.title}`;
+    const id = e.id || key;
+    // 同键不同 id（历史包里同一次发布留下了两条）→ 旧的让位、只留最新一份，
+    // 否则接收端会出现两条重复作业
+    const priorId = idOfKey.get(key);
+    if (priorId && priorId !== id) byId.delete(priorId);
+    byId.set(id, { ...e, id, courseName });
+    idOfKey.set(key, id);
   }
-  const meta = preferFileMetaOfLast ? bundles[bundles.length - 1] : bundles[0];
-  const merged: HomeworkFile = {
-    ...(meta || { entries: [] }),
+  return {
+    ...file,
     syncCode,
     entries: Array.from(byId.values()).sort((a, b) => (a.sessionDate < b.sessionDate ? -1 : a.sessionDate > b.sessionDate ? 1 : 0)),
   };
-  return merged;
 }
 
 let _db: DB | null = null;
@@ -267,33 +275,15 @@ function applyHomeworkTtl(hit: { source: string; file: HomeworkFile }): { source
   return { source: hit.source, file: { ...hit.file, entries } };
 }
 
-/** 拉取码包（v1.2.15 起只有 SSIO 一个源，保留多源框架以便日后扩展镜像）。
- *  「码不存在」返回 null；网络错误不被遮蔽，会带来源与原因上抛。 */
+/** 拉取码包。「码不存在」返回 null；网络错误不被遮蔽，会带原因上抛。 */
 async function fetchBundleFromAnySource(syncCode: string): Promise<{ source: string; file: HomeworkFile } | null> {
-  const errors: string[] = [];
-  let confirmedMissing = false;
-  const hits: Array<{ source: string; file: HomeworkFile }> = [];
-  const sources: HomeworkSource[] = [ssioSource];
-  for (const src of sources) {
-    try {
-      const hit = await src.fetchBundle(syncCode);
-      if (hit) hits.push({ source: src.name, file: hit.file });
-      else confirmedMissing = true;
-    } catch (e: any) {
-      errors.push(`${src.name}: ${e?.message || e}`);
-    }
+  try {
+    const file = await fetchSsioBundle(syncCode);
+    if (!file) return null; // 「码不存在」：SSIO 上没这个 key
+    return applyHomeworkTtl({ source: 'ssio', file });
+  } catch (e: any) {
+    throw new Error(`ssio: ${e?.message || e}`);
   }
-  if (hits.length === 1) return applyHomeworkTtl(hits[0]);
-  if (hits.length > 1) {
-    // 多源合并：条目级去重（id / 课程名+日期+标题），任一侧多出的条目都保留
-    return applyHomeworkTtl({
-      source: hits.map((h) => h.source).join('+'),
-      file: mergeBundleFiles(hits.map((h) => h.file), syncCode),
-    });
-  }
-  if (confirmedMissing) return null;
-  if (errors.length) throw new Error(errors.join('；'));
-  return null;
 }
 
 /** 取/生成某课程同步作业码（按 courseKey 共享：同名同老师 = 同一份作业包） */
@@ -340,55 +330,11 @@ function getOrCreateCourseGuid(db: DB, courseId: number | null | undefined): str
   return fresh;
 }
 
-/** 双源发布 wrapper：解析 payload.targets / settings 持久化默认，对每个目标分别调底层 publishHomework */
-export async function publishHomeworkMulti(db: DB, payload: PublishPayload): Promise<{
-  ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string;
-  targets?: ('github' | 'cloud')[];
-  entriesCount?: number;
-  perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }>;
-}> {
-  const def = (getSetting(db, 'homework_default_targets') || '').trim();
-  let targets: ('github' | 'cloud')[] = [];
-  if (Array.isArray(payload.targets) && payload.targets.length) {
-    targets = payload.targets.filter((t) => t === 'github' || t === 'cloud');
-  } else if (payload.target === 'cloud' || payload.target === 'github') {
-    targets = [payload.target];
-  } else if (def === 'github' || def === 'cloud') {
-    targets = [def];
-  } else if (def && /^\[[^\]]+\]$/.test(def)) {
-    try {
-      const arr = JSON.parse(def);
-      if (Array.isArray(arr) && arr.length) targets = arr.filter((t: any) => t === 'github' || t === 'cloud');
-    } catch {}
-  }
-  if (!targets.length) targets = ['github'];
-
-  const perTarget: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }> = [];
-  let lastOk: any = null;
-  let firstErr: string | undefined;
-  let firstAny: string | undefined;
-  for (const t of targets) {
-    const r: any = await publishHomework(db, { ...payload, target: t, targets: undefined });
-    perTarget.push({ target: t, ok: !!r.ok, error: r.error, fileUrl: r.fileUrl, anyshareRaw: r.anyshareRaw, entriesCount: r.entriesCount });
-    if (r.ok) lastOk = r;
-    else { if (!firstErr) firstErr = r.error; if (!firstAny && r.anyshareRaw) firstAny = r.anyshareRaw; }
-  }
-  const ok = perTarget.some((p) => p.ok);
-  return {
-    ok,
-    error: firstErr,
-    entry: lastOk?.entry,
-    fileUrl: lastOk?.fileUrl,
-    syncCode: lastOk?.syncCode,
-    bundleCreated: lastOk?.bundleCreated,
-    entriesCount: lastOk?.entriesCount,
-    anyshareRaw: firstAny,
-    targets,
-    perTarget,
-  };
-}
-
-export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; anyshareRaw?: string; entriesCount?: number; entriesPublished?: number }> {
+/** v1.2.17：双源发布 wrapper（publishHomeworkMulti）已删。
+ *  v1.2.15 删掉了底层读 payload.target 的那行之后，它只剩一个作用：决定「循环几次」——
+ *  勾选两个目标 = 同一份作业包往同一个 SSIO key 连写两遍。
+ *  IPC 现在直调 publishHomework，发布目标这个概念不存在了。 */
+export async function publishHomework(db: DB, payload: PublishPayload): Promise<{ ok: boolean; error?: string; entry?: HomeworkEntry; fileUrl?: string; syncCode?: string; bundleCreated?: boolean; entriesCount?: number; entriesPublished?: number }> {
   let syncCode: string | undefined;
   if (payload.publishCode && payload.publishCode.trim()) {
     const decoded = parsePublishCode(payload.publishCode);
@@ -471,7 +417,7 @@ export async function publishHomework(db: DB, payload: PublishPayload): Promise<
     const remote = await kvGetJson<HomeworkFile>(ssioKey);
     if (remote && Array.isArray(remote.entries)) {
       // v1.2.0：包内自愈——历史重复条目（同课程+同日期+同标题但 id 不同）收敛为一条
-      file = mergeBundleFiles([remote], syncCode);
+      file = dedupeBundle(remote, syncCode);
     } else {
       file = { syncCode, courseName, createdAt: Date.now(), updatedAt: 0, entries: [] };
     }
@@ -599,7 +545,7 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
 
   const { source, file: rawFile } = hit;
   // v1.2.0：包内自愈——单侧快照里历史遗留的「同课程+同日期+同标题但 id 不同」重复条目收敛为一条
-  const file = mergeBundleFiles([rawFile], syncCode);
+  const file = dedupeBundle(rawFile, syncCode);
   result.source = source;
   result.courseName = file.courseName;
 
@@ -743,11 +689,13 @@ export async function receiveHomework(db: DB, rawSyncCode: string, chooseCourseI
       db.prepare(
         `INSERT INTO course_requirements (course_id, title, type, description, due_date, priority, status,
            estimated_hours, actual_hours, notes, created_at, source, remote_id, session_date, publisher)
-         VALUES (?, ?, ?, ?, ?, 2, 'pending', NULL, NULL, ?, ?, 'github', ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, 2, 'pending', NULL, NULL, ?, ?, ?, ?, ?, ?)`
       ).run(
         courseId, e.title, (e.type || 'homework'), e.content || '', due,
-        `来源：${source === 'ustb-cloud' ? '北科云盘' : 'GitHub'} 接收 · 码 ${syncCode} · 发布人 ${e.publisher || '佚名'} · ${e.sessionDate || ''}${e.sessionTime ? ' ' + e.sessionTime : ''}`,
-        Date.now(), rid, e.sessionDate || null, e.publisher || null
+        // v1.2.17：以前写的是「来源：GitHub 接收」——作业其实早已只同步给 SSIO，
+        // 而这段文案会落到用户作业条目里，等于给每个接收方留了一句假话。
+        `来源：SSIO 云接收 · 码 ${syncCode} · 发布人 ${e.publisher || '佚名'} · ${e.sessionDate || ''}${e.sessionTime ? ' ' + e.sessionTime : ''}`,
+        Date.now(), SYNCED_SOURCE_TAG, rid, e.sessionDate || null, e.publisher || null
       );
       stat.created++;
       result.created++;
@@ -846,7 +794,7 @@ export function registerHomework(db: DB) {
 
   ipcMain.handle('homework:publish', async (_e, payload: PublishPayload) => {
     try {
-      return await publishHomeworkMulti(db, payload);
+      return await publishHomework(db, payload);
     } catch (e: any) {
       return { ok: false, error: describeError(e) };
     }

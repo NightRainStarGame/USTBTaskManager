@@ -296,7 +296,7 @@ const stalePatches = prevPatches.filter(
 // ── v1.2.15：产物先上 SSIO，再组装清单 ──────────────────────────────
 // 清单里的下载地址全部改为「引用」（ssio:release:<id> / ssio:file:<id>）：
 // SSIO 的真实下载链接是 5 分钟过期的签名 URL，写进 latest.json 用户隔天点更新必 404。
-// 客户端在真正下载那一刻才用引用换新地址（electron/updater/ssio.ts fetchSsioDownloadUrl）。
+// 客户端在真正下载那一刻才用引用换新地址（cloud/ssioClient 的 resolveDownloadRef）。
 step('发布安装包到 SSIO（桌面端更新主源）');
 let ssioReleaseId = '';
 try {

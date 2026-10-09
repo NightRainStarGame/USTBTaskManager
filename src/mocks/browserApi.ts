@@ -23,10 +23,15 @@ import { createClassMockApi } from './classMock';
 
 // 浏览器模式常量（v1.2.8 块 L：迁移到独立模块，但保留默认源/默认版本号以兼容 UI）
 export const MOCK_APP_VERSION = '0.2.5';
-export const MOCK_DEFAULT_SOURCE = 'https://github.com/lc-sys/TaskManager/releases';
+// v1.2.17：以前这里是 https://github.com/lc-sys/TaskManager/releases —— GitHub 时代的
+// 默认源，通道下线后它成了一条既不解析也不更新的死链，预览 UI 上还写着「GitHub Releases」。
+// 现在与桌面端一致：默认源就是 SSIO（写法参考 electron/updater 的 DEFAULT_UPDATE_SOURCE）。
+export const MOCK_DEFAULT_SOURCE = 'ssio+http://120.53.9.81:8100';
 export const MOCK_DEFAULT_SOURCES = [
-  { name: 'GitHub Releases', url: MOCK_DEFAULT_SOURCE, enabled: true, primary: true },
+  { name: 'SSIO 官方源', url: MOCK_DEFAULT_SOURCE, enabled: true, primary: true, type: 'ssio' as const },
 ];
+/** 预览模式不提供真实下载（download 会明确拒绝），所以给一个引用即可 —— 别对着 '.' 做 URL 拼接 */
+const MOCK_DOWNLOAD_URL = 'ssio:release:mock';
 
 // 贝壳课表演示数据（v1.2.8 块 L：保留在此，因为只用一次）
 const USTB_DEMO_ITEMS: Array<{
@@ -372,7 +377,7 @@ export function createBrowserApi() {
           latestVersion: '0.3.1',
           hasUpdate: true,
           notes: '· 新增课表日历视图\n· 修复课程无法添加作业\n· 优化编辑框输入体验',
-          downloadUrl: `${source.replace(/\/[^/]*$/, '')}/TaskManager Setup 0.3.1.exe`,
+          downloadUrl: MOCK_DOWNLOAD_URL,
           pageUrl: source,
           sha256: null,
           source,
@@ -395,7 +400,7 @@ export function createBrowserApi() {
             latestVersion: '0.3.1',
             hasUpdate: true,
             notes: '· 新增课表日历视图',
-            downloadUrl: `${(s.url || '').replace(/\/[^/]*$/, '')}/TaskManager Setup 0.3.1.exe`,
+            downloadUrl: MOCK_DOWNLOAD_URL,
             pageUrl: s.url,
             sourceIndex: i,
             sourceName: s.name,
@@ -445,7 +450,9 @@ export function createBrowserApi() {
       setRules: async (patch: any) => ({ enabled: true, reqDays: 1, taskDays: 1, eventDays: 7, projectDays: 7, homeworkDays: 7, binDays: 30, ...patch }),
       run: async () => ({
         local: { ranAt: Date.now(), enabled: true, binned: { requirements: 0, tasks: 0, events: 0, projects: 0 }, purgedBin: 0 },
-        cloud: { ranAt: Date.now(), codes: [], github: { checked: 0, rewritten: 0, deleted: 0, removedEntries: 0, errors: [] }, cloud: { checked: 0, rewritten: 0, removedEntries: 0, errors: [] } },
+        // v1.2.17：对齐 electron/cleanup.ts 的 CloudCleanupReport —— 只有 ssio 一份，
+        // 没有 github / cloud 两个子对象（那是双源时代的形状，UI 早就不按它显示了）。
+        cloud: { ranAt: Date.now(), codes: [], ssio: { checked: 0, rewritten: 0, deleted: 0, removedEntries: 0, errors: [] } },
       }),
       bin: async () => [] as any[],
       restore: async () => ({ ok: false, error: '(浏览器预览模式不支持恢复，请在桌面应用中使用)' }),
@@ -524,6 +531,24 @@ export function createBrowserApi() {
 
     // v1.2.7：P2P 班级 mock（浏览器预览用）已拆到 mocks/classMock.ts
     class: createClassMockApi(),
+
+    /**
+     * v1.2.17：课表 Excel 导入（浏览器预览）。
+     * 浏览器里拿不到真实文件（xls:pickFile 走的是 Electron 的 dialog），所以这里
+     * 直接告诉用户「预览模式不支持」—— 以前根本没有这个命名空间，课程页那个
+     * 「XLS 导入」按钮一点就报 undefined，是白给。
+     */
+    xls: {
+      pickFile: async () => null,
+      listProfiles: async () => [
+        { id: 'qilu', name: '齐鲁理工大学', layout: 'grid' as const, note: '浏览器预览不解析真实文件' },
+        { id: 'generic', name: '通用（一行一节课）', layout: 'records' as const },
+      ],
+      parseFile: async () => { throw new Error('浏览器预览模式不支持导入课表，请在桌面应用里操作'); },
+      reparse: async () => { throw new Error('浏览器预览模式不支持导入课表'); },
+      importItems: async () => { throw new Error('浏览器预览模式不支持导入课表'); },
+      lastImport: async () => ({ lastSync: 0, courseCount: 0 }),
+    },
 
     // v1.2.3：主进程事件（浏览器无）
     system: {

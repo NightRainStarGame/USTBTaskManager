@@ -8,6 +8,7 @@ import { autoCheckUpdate } from './updater/index';
 import { refreshAbout } from './about/index';
 import { scheduleAutoCleanup } from './cleanup';
 import { initTray, destroyTray } from './tray';
+import { isQuitting, markQuitting } from './quitState';
 import { startNotificationScheduler } from './notify';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -54,8 +55,11 @@ let mainWindow: BrowserWindow | null = null;
 
 // ── v1.2.15 关闭行为：点 X 时问用户（最小化到托盘 / 完全退出），可记住 ──
 // 之前是「托盘活着就一律藏到托盘」，用户以为退干净了，结果进程还挂着。
-let isQuitting = false;
-app.on('before-quit', () => { isQuitting = true; });
+//
+// v1.2.17：标志搬进 quitState 模块了 —— 因为 `app.exit(0)`（补丁更新的退出路径）
+// 不触发 before-quit，只在这里置位的话，补丁重启时关窗拦截器会把退出拦下来，
+// 表现为「增量更新退出后没反应」。详见 quitState.ts 的注释。
+app.on('before-quit', () => { markQuitting(); });
 
 const CLOSE_BEHAVIOR_KEY = 'close_behavior';
 function getCloseBehavior(): 'ask' | 'minimize' | 'quit' {
@@ -210,7 +214,7 @@ function createWindow() {
   // v1.2.15：点 X 的行为。默认每次问（最小化 / 退出 / 取消），勾选「记住我的选择」
   // 后按记忆走；设置页可改回「每次询问」。托盘不可用时最小化选项自动退化为退出。
   mainWindow.on('close', (e) => {
-    if (isQuitting) return;
+    if (isQuitting()) return;
     const behavior = getCloseBehavior();
     if (behavior === 'quit') return;
     if (behavior === 'minimize' && trayActive) {
@@ -240,7 +244,7 @@ function createWindow() {
         if (chosen === 'minimize' && trayActive) {
           win.hide();
         } else {
-          isQuitting = true;
+          markQuitting();
           app.quit(); // 走 will-quit 统一清托盘 / 注销快捷键
         }
       })
@@ -408,6 +412,17 @@ app.whenReady().then(() => {
       else if (state.failed) {
         const b = state.baseline || { expected: '?', actual: '?' };
         bootLog(`patch state: FAILED expected=${b.expected} actual=${b.actual}`);
+        // v1.2.17：以前失败只写 boot.log，用户永远看不到 —— 于是「补丁没装上」这件事
+        // 在用户那里就表现为「点了更新、退出、什么都没变」，完全无从排查。
+        // 现在把原因推到渲染层，由 UpdateNotification/PatchPanel 显示（重启后仍可见）。
+        const reasonText = state.error || `补丁未生效（${state.reason || '未知原因'}）`;
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('update:patch:bootState', { failed: true, reason: state.reason, error: reasonText });
+        }
+        const justFailed = state.failedAt && Date.now() - state.failedAt < 10 * 60 * 1000;
+        if (justFailed) {
+          dialog.showErrorBox('上次更新没有生效', `${reasonText}\n\n可以到「设置 → 软件更新」里改用整包更新，或重新下载补丁。`);
+        }
       }
     } catch (e: any) {
       bootLog('patch state check failed: ' + (e?.message || e));

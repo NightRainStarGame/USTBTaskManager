@@ -5,12 +5,13 @@
  *  - 各 tab 渲染通过 CourseDrawer 的 children prop 传入
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, BookOpen, RefreshCw, KeyRound, CloudUpload, CloudDownload, Shell } from 'lucide-react';
+import { Plus, BookOpen, RefreshCw, KeyRound, CloudUpload, CloudDownload, Shell, FileSpreadsheet } from 'lucide-react';
 import { useStore } from '@/store';
 import type { Course } from '@/types';
 import { toast } from '@/utils/toast';
 import Modal from '@/components/Modal';
 import BeikeTimetable from '@/components/BeikeTimetable';
+import XlsImportWizard from '@/components/XlsImportWizard';
 import { GenerateCodesModal, PublishHomeworkModal, ReceiveHomeworkModal } from '../HomeworkModals';
 import { TimetableView } from './TimetableView';
 import { CourseDrawer } from './CourseDrawer';
@@ -23,7 +24,7 @@ import type { DrawerTab } from './constants';
 
 /**
  * v1.2.10 修正：APK 的主进程逻辑跑在同一个 webview 里（src/mobile/bootstrap.ts 会
- * registerAllIpc），homework:* handler 全部就位，且 GitHub API 支持 CORS ——
+ * registerAllIpc），homework:* handler 全部就位，且 SSIO 接口支持 CORS ——
  * 作业同步在手机上本来就能用，之前隐藏它是误判（当时以为 APK 走的是浏览器 Mock）。
  * 贝壳课表（USTB 教务）不发 CORS 头，要等原生 HTTP 通道就绪才放开。
  */
@@ -41,6 +42,8 @@ export function CoursesPage() {
   const [genCodesOpen, setGenCodesOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // 课表 Excel 导入（向导本体在 components/XlsImportWizard，设置页共用同一个）
+  const [xlsOpen, setXlsOpen] = useState(false);
   // 贝壳课表：USTB 教务同步（v1.2.3 从小程序中心迁入）— 同上恢复
   const [beikeOpen, setBeikeOpen] = useState(false);
 
@@ -103,6 +106,15 @@ export function CoursesPage() {
           <span className="font-mono text-[10px] text-text-dim">{courses.length} 门课程</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {!IS_MOBILE && (
+            <button
+              onClick={() => setXlsOpen(true)}
+              className="btn-ghost"
+              title="从教务系统导出的 Excel 导入课表（先选你的学校）"
+            >
+              <FileSpreadsheet size={14} /> XLS 导入
+            </button>
+          )}
           {SHOW_HOMEWORK && (
             <div className="relative">
               <button
@@ -172,6 +184,9 @@ export function CoursesPage() {
           <BeikeTimetable />
         </Modal>
       )}
+
+      {/* v1.2.17：课表 Excel 导入向导（与设置页共用同一个组件） */}
+      <XlsImportWizard open={xlsOpen} onClose={() => setXlsOpen(false)} onImported={() => void refreshAll()} />
 
       {/* 作业同步入口在顶部（v1.2.5 起，避免与右下 Pomodoro 重叠） */}
       {genCodesOpen && (

@@ -93,7 +93,7 @@ function main() {
   // v1.2.11：APK 也要进清单，否则移动端「永远是最新版」= 永远装不上新 APK。
   // v1.2.15：下载地址改为 SSIO 引用（ssio:release:<id>）——GitHub raw 在国内被
   // DNS 投毒、jsDelivr 镜像不再更新，都靠不住了。移动端在安装前用引用现签
-  // 签名 URL（src/mobile/apkUpdater.ts resolveSsioRef）。
+  // 签名 URL（两处客户端共用同一个实现：cloud/ssioClient 的 resolveDownloadRef）。
   // 找不到 APK 不阻塞桌面发布（可能本次只为桌面 hotfix）。
   const apk = resolveApk();
   if (apk) {
@@ -271,25 +271,30 @@ function selfVerify(manifest, ver) {
 }
 
 /**
- * 把更新源写入 electron/updater/index.ts 的 DEFAULT_UPDATE_SOURCES ——
- * 只替换数组里**第一个** url（即主源），备用的 GitHub 镜像源保持不动。
+ * 把当前的 SSIO 主源地址写进 electron/updater/index.ts 的 DEFAULT_UPDATE_SOURCE。
+ *
+ * v1.2.17：以前用正则去改 DEFAULT_UPDATE_SOURCES 数组里的第一项 url（还要特意避开
+ * 「备用的 GitHub 镜像源」）。现在默认源就是一个对象常量，直接改它的 url 字段；
+ * 定位也放宽到「SSIO_DEFAULT_BASE 也算」，因为默认地地域前缀本来就是从
+ * cloud/ssioClient 的常量拼出来的。
  */
 function applyDefaultSource(url) {
   const file = path.join(ROOT, 'electron', 'updater', 'index.ts');
   if (!fs.existsSync(file)) { console.error('! 找不到 electron/updater/index.ts，跳过 --apply-default'); return; }
   const src = fs.readFileSync(file, 'utf8');
 
-  const arrRe = /(export const DEFAULT_UPDATE_SOURCES: UpdateSource\[\] = \[)([\s\S]*?)(\];)/;
-  if (!arrRe.test(src)) {
-    console.error('! 未找到 DEFAULT_UPDATE_SOURCES 数组，请手动把主源改成：' + url);
+  const objRe = /(export const DEFAULT_UPDATE_SOURCE: UpdateSource = \{)([\s\S]*?)(\n\};)/;
+  const m = src.match(objRe);
+  if (!m) {
+    console.error('! 未找到 DEFAULT_UPDATE_SOURCE 定义，请手动把主源改成：' + url);
     return;
   }
-  if (!/url:\s*'[^']*'/.test(src.match(arrRe)[2])) {
-    console.error('! DEFAULT_UPDATE_SOURCES 数组里没有可替换的 url 字段，请手动改：' + url);
+  if (!/url:\s*`[^`]*`|url:\s*'[^']*'/.test(m[2])) {
+    console.error('! DEFAULT_UPDATE_SOURCE 里没有可替换的 url 字段，请手动改：' + url);
     return;
   }
-  const next = src.replace(arrRe, (_all, head, body, tail) =>
-    head + body.replace(/url:\s*'[^']*'/, `url: '${url}'`) + tail
+  const next = src.replace(objRe, (_all, head, body, tail) =>
+    head + body.replace(/url:\s*`[^`]*`|url:\s*'[^']*'/, `url: '${url}'`) + tail
   );
   fs.writeFileSync(file, next);
   console.log(`✓ 已把主源写入 electron/updater/index.ts → ${url}`);

@@ -53,7 +53,7 @@ export default function ClassListPage() {
             班级
           </h1>
           <p className="text-text-dim font-mono text-xs mt-1">
-            班级数据实时同步到 SSIO 云服务器（GitHub 仓库作为备源）
+            班级数据实时同步到 SSIO 云服务器
           </p>
         </div>
         <div className="flex gap-2">

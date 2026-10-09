@@ -193,16 +193,12 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
   // 可选 secret edit
   const [secretMode, setSecretMode] = useState(false);
   const [publishCode, setPublishCode] = useState('');
-  // 发布目标列表（默认两个都勾）
-  const [targets, setTargets] = useState<{ github: boolean; cloud: boolean }>({ github: true, cloud: true });
-
   const [error, setError] = useState('');
   const [published, setPublished] = useState<{
     entriesPublished: number;
     sessionDate: string;
     syncCode?: string; bundleCreated?: boolean; fileUrl?: string;
     entriesCount?: number;
-    perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; entriesCount?: number; error?: string }>;
   } | null>(null);
   const [copied, setCopied] = useState<'sync' | null>(null);
 
@@ -251,7 +247,6 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
     try {
       const r = await window.taskAPI.homework.publish({
         publishCode: secretMode && publishCode ? publishCode : undefined,
-        targets: (Object.entries(targets).filter(([, on]) => on).map(([k]) => k) as ('github' | 'cloud')[]),
         courseId: course.id,
         courseName: course.name,
         sessionDate,
@@ -264,7 +259,7 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
           dueDate: it.dueDate ? new Date(it.dueDate).getTime() : null,
         })),
       });
-      if (!r.ok) { setError(r.error || '发布失败'); if ((r as any).anyshareRaw) setError(prev => prev + `\n[debug] ${(r as any).anyshareRaw}`); return; }
+      if (!r.ok) { setError(r.error || '发布失败'); return; }
       setPublished({
         entriesPublished: r.entriesPublished ?? validItems.length,
         sessionDate,
@@ -272,7 +267,6 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
         bundleCreated: r.bundleCreated,
         fileUrl: r.fileUrl,
         entriesCount: r.entriesCount,
-        perTarget: r.perTarget,
       });
       // 自动把刚发布的作业落到本地课程（与远端 ID 对齐）
       if (r.syncCode) await window.taskAPI.homework.receive(r.syncCode);
@@ -300,13 +294,7 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
         <button onClick={onClose} className="btn-neon">完成</button>
       </>;
     }
-    // v1.2.13：targets.github 这个分支内部是「SSIO 主源 + GitHub 镜像」，
-    // 对外要说 SSIO，否则用户以为还在依赖 GitHub。
-    const btnLabel = busy ? '上传中…' : (
-      targets.cloud && targets.github ? `上传 ${validItems.length || ''} 条到 SSIO 云 + 北科云盘`
-      : targets.cloud ? `上传 ${validItems.length || ''} 条到北科云盘`
-      : `上传 ${validItems.length || ''} 条到 SSIO 云`
-    );
+    const btnLabel = busy ? '上传中…' : `上传 ${validItems.length || ''} 条到 SSIO 云`;
     return <>
       <button onClick={onClose} className="btn-ghost">取消</button>
       <button onClick={submit} disabled={!canSubmit} className="btn-neon btn-neon-yellow">
@@ -338,15 +326,6 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
                   {copied === 'sync' ? <CheckCircle2 size={13} className="text-neon-green" /> : '复制'}
                 </button>
               </div>
-              {published.perTarget && published.perTarget.length > 1 && (
-                <div className="font-mono text-[10px] text-text-dim border-t border-neon-green/15 pt-1">
-                  {published.perTarget.map((t) => (
-                    <span key={t.target} className={`mr-2 ${t.ok ? 'text-neon-green' : 'text-neon-danger'}`}>
-                      {t.target === 'github' ? 'SSIO 云' : '北科云盘'}{t.ok ? ` ✓ ${t.entriesCount ?? 0} 条` : ` ✗ ${t.error || '失败'}`}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
             {published.fileUrl && (
               <button onClick={() => window.taskAPI.updater.openExternal(published.fileUrl!)} className="btn-ghost text-xs">
@@ -359,25 +338,6 @@ export function PublishHomeworkModal({ onClose, onChanged }: { onClose: () => vo
             {/* 说明 */}
             <div className="p-2.5 rounded-md bg-ink-base/40 border border-neon-green/10 text-[11px] font-mono text-text-dim leading-relaxed">
               同节课可一次性发布多条作业（每条独立标题/截止），共享同一个同步作业码。接收方输入这个码能一次拿到全部条目。
-            </div>
-
-            {/* 发布目标 */}
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-text-dim shrink-0">发布到</span>
-              {([['github', 'SSIO 云（主源）'], ['cloud', '北科云盘（需校园网）']] as const).map(([v, label]) => (
-                <label
-                  key={v}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono border cursor-pointer transition-colors ${targets[v] ? 'border-neon-green bg-neon-green/15 text-neon-green' : 'border-neon-green/20 text-text-secondary hover:border-neon-green/50'}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={targets[v]}
-                    onChange={(e) => setTargets({ ...targets, [v]: e.target.checked })}
-                    className="w-3 h-3 accent-neon-green"
-                  />
-                  {label}
-                </label>
-              ))}
             </div>
 
             {/* 课程 + 上课日期（共享给所有条目） */}
@@ -535,7 +495,7 @@ function EntryEditor({
   );
 }
 
-/** 接收作业弹窗：输入同步作业码 → 从 GitHub 拉取这个包 → 匹配本地课程 → 自动挂载。
+/** 接收作业弹窗：输入同步作业码 → 从 SSIO 云拉取这个包 → 匹配本地课程 → 自动挂载。
  *  v1.1.3：远端 bundle 引用的本地课程缺失时不再自动建课，而是弹窗告知让用户主动同步课程。
  */
 export function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => void; onSynced: () => Promise<void> }) {
@@ -701,7 +661,9 @@ export function ReceiveHomeworkModal({ onClose, onSynced }: { onClose: () => voi
             <div className="p-3 rounded-md border border-neon-green/40 bg-neon-green/5">
               <div className="flex items-center gap-2 text-neon-green font-bold text-sm"><CheckCircle2 size={16} /> 接收成功</div>
               <div className="font-mono text-xs text-text-secondary mt-2">
-                课程「{result.courseName}」· 来源 {result.source === 'cloud' ? '云盘' : 'GitHub'} ·
+                {/* v1.2.17：以前按 source 二选一显示「云盘 / GitHub」，而作业包现在只有 SSIO 一个来源
+                    —— 'cloud' 分支永远走不到，'GitHub' 则一定是句假话。直接写真实来源。 */}
+                课程「{result.courseName}」· 来源 SSIO 云 ·
                 远端共 <span className="text-text-secondary font-bold">{result.entries}</span> 条作业
                 {result.coursesTouched > 1 && <> · 命中 <span className="text-neon-green font-bold">{result.coursesTouched}</span> 门课程</>}
               </div>

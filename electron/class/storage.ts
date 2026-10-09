@@ -203,7 +203,6 @@ export async function fetchPoll(inviteCode: string, pollId: number): Promise<Pol
  *  按索引逐条拉本机没有的（取代旧的「时间戳逐毫秒倒数扫描」——那只能覆盖最新 100ms 窗口，
  *  第二条公告永远同步不到）。旧 manifest 无索引 → fallback 老扫描逻辑（兼容 v1.2.7/8 数据）。 */
 export interface ClassSnapshot {
-  source: 'ssio';
   manifest: ClassManifest;
   announcements: AnnouncementEntry[];
   tasks: ClassTaskEntry[];
@@ -291,7 +290,6 @@ export async function fetchClassSnapshot(
   }
 
   return {
-    source: 'ssio',
     manifest,
     announcements: anns,
     tasks: tasks,
@@ -302,7 +300,7 @@ export async function fetchClassSnapshot(
 }
 
 // ============================================================
-// 写：发布（GitHub + AnyShare 双写）
+// 写：发布（SSIO KV；v1.2.15 前这里是 GitHub + AnyShare 双写）
 // ============================================================
 
 /**

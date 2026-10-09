@@ -273,8 +273,9 @@ function runMigrations(db: Database.Database) {
   addColumnIfMissing(db, 'course_requirements', 'estimated_hours', 'REAL');
   addColumnIfMissing(db, 'course_requirements', 'actual_hours', 'REAL');
 
-  // 作业同步（GitHub 发布 / 同步）：来源标记 + 远端条目 ID + 上课日期 + 发布人
-  // source: 'local' 本地手建 | 'github' 从 GitHub 同步下来
+  // 作业同步（含入境接收）：来源标记 + 远端条目 ID + 上课日期 + 发布人
+  // source: 'local' 本地手建 | 'github' **作业同步接收来的条目**（字面值是历史遗留，
+  //   语义读作「非本地」即可，重命名需要一次数据迁移；详见 homework/index 的 SYNCED_SOURCE_TAG）
   addColumnIfMissing(db, 'course_requirements', 'source', "TEXT DEFAULT 'local'");
   addColumnIfMissing(db, 'course_requirements', 'remote_id', 'TEXT');
   // session_date: 该作业对应的上课日期 'YYYY-MM-DD'（每节课作业可能不同）

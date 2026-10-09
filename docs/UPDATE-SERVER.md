@@ -2,15 +2,18 @@
 
 App 启动后（或点「检查更新」）会从所有启用的源并行查版本，取**最高版本**升级，单个源失败不影响其他源。
 
-App 内置默认两个公开源：
+App 内置默认源只有一个（**v1.2.15 起**）：
 
-| 源 | 清单地址 | 备注 |
+| 源 | 清单来源 | 备注 |
 |---|---|---|
-| **GitHub / leastversion**（主源） | `https://raw.githubusercontent.com/NightRainStarGame/USTBTaskManager/main/latest.json` | raw.githubusercontent.com 国内偶尔慢 |
-| **北科云盘**（AnyShare，需校园网） | `https://yunpan.ustb.edu.cn/link/AADAAEA94FBE6B4435B8D14A236FAC6469` + 提取码 `kc26` | 校园网内速度最快 |
+| **SSIO**（主源） | `cloud/ssioClient` 的 SSIO_DEFAULT_BASE + `ssio+` 前缀 | 国内外可达，桌面包与 APK 同一接口 |
 
-> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可增删源、切换主源。
-> 默认源地址写在 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCES`，新装用户首次启动自动并入。
+> ⚠️ 以前还内置了 GitHub raw 与北科云盘（AnyShare）两个默认源，现已删除：它们托管的是仓库里的静态
+> `latest.json`，而最新数据只写到 SSIO，留着只会让「检查更新」干等它们超时。本文后续章节里提到
+> 这两个源的地方，请当作**历史背景**阅读。
+
+> 想换源 / 加源：**设置 → 软件更新 → 更新源**，可增删源、切换主源（用户自建的 http 直链镜像仍然支持）。
+> 默认源定义在 `electron/updater/index.ts` 的 `DEFAULT_UPDATE_SOURCE`，新装用户首次启动自动并入。
 
 ---
 

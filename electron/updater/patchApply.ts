@@ -19,7 +19,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 
 /** 补丁就绪后写一份持久化状态，主进程下次启动 / app.isReady 时自检：是否被补丁应用成功 */
 const STATE_FILE = () => path.join(app.getPath('userData'), 'patch-state.json');
@@ -239,6 +239,11 @@ export function spawnPatchHelper(zipPath: string, manifest: PatchEntry, opts?: {
       // v1.2.7：helper 进程需要 cwd = app 所在目录，否则 relaunch 时 spawn 找不到资源路径
       cwd: app.isPackaged ? path.dirname(process.execPath) : undefined,
     });
+    child.on('error', (e: any) => {
+      // spawn 本身失败（权限 / 文件被占用 / 路径不对）——以前完全没有监听，
+      // 结果是「helper 根本没起来」也被当成 ok:true，用户点了没反应也不知道原因。
+      console.error('[patchApply] helper spawn error:', e?.message || e);
+    });
     child.unref();
     // 落状态文件：让下次启动自检（v1.2.7 加 phase 字段：pending → applied/failed）
     try {
@@ -251,9 +256,37 @@ export function spawnPatchHelper(zipPath: string, manifest: PatchEntry, opts?: {
         expectedToSha: manifest.appAsarSha256,
       }, null, 2));
     } catch { /* ignore */ }
+    // v1.2.17：确认 helper 真的活着再让主进程退出。
+    // 以前只看「脚本文件存在」就返回 ok，helper 秒退（缺依赖/被杀/路径错）时
+    // 主进程照样退出 → 用户看到「退出了但版本没变」，全程无提示。
+    const alive = child.pid ? isProcessAlive(child.pid) : false;
+    if (!alive) {
+      try { fs.unlinkSync(STATE_FILE()); } catch { /* ignore */ }
+      return { ok: false, error: '补丁助手进程（patch-helper）未能启动，更新未执行。可尝试重新下载补丁，或改用整包更新。' };
+    }
     return { ok: true, pid: child.pid };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/** 进程是否还活着（Windows 用 tasklist，避免引入额外依赖） */
+function isProcessAlive(pid: number): boolean {
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+      // 注意：tasklist 失败（命令不存在等）时**不能**当成「已退出」——
+      // 那是把「查不到」误判成「死了」，会让所有补丁都变成「helper 没启动」。
+      return /\d{2,}/.test(out);
+    }
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e: any) {
+      return e?.code === 'EPERM';
+    }
+  } catch {
+    return true; // 查不到就保守认为活着：宁可多等 600ms，也不能把更新判死
   }
 }
 
@@ -272,6 +305,8 @@ export function checkPatchStateOnBoot(): {
   reason?: string;
   /** v1.2.10：helper 回写的失败详情，直接显示给用户（以前只有 tmp 日志里有） */
   error?: string;
+  /** 失败发生的时间戳 —— 供 UI 判断「是不是刚失败的那一次」（避免每次启动都弹同样的框） */
+  failedAt?: number;
 } {
   const f = STATE_FILE();
   if (!fs.existsSync(f)) return {};
@@ -310,15 +345,44 @@ export function checkPatchStateOnBoot(): {
       try { fs.unlinkSync(f); } catch {}
       return {};
     }
-    return { failed: true, reason: state.reason, error: state.error, baseline: base, sidecarSha };
+    return { failed: true, reason: state.reason, error: state.error, baseline: base, sidecarSha, failedAt: Number(state.failedAt || 0) || undefined };
   }
 
-  if (phase === 'sidecar' || phase === 'pending' || (sidecarSha && !phase)) {
+  if (phase === 'sidecar' || (sidecarSha && !phase)) {
     // .new 残留：helper 启动后会自动接管，UI 给用户一个「立即重试」入口
     return { failed: false, pendingSidecar: true, reason: state.reason, error: state.error, baseline: base, sidecarSha };
   }
 
+  // v1.2.17：pending / running 是「helper 正在干」的中间态。以前它们被当成
+  // 「有 .new 旁路残留」上报，UI 于是显示「有残留待接管」，而 takeoverSidecarPatch
+  // 又因为找不到 .new 直接失败、状态文件永不删除 —— 用户点一次卡一次，永远出不来。
+  // 现在按「已开始多久」区分：还在合理窗口内就报「进行中」，超时就当成失败并清理。
+  if (phase === 'pending' || phase === 'running') {
+    const startedAt = Number(state.startedAt || 0);
+    const age = startedAt ? Date.now() - startedAt : 0;
+    const STALE_MS = 10 * 60 * 1000; // helper 全流程最长 30s + 下载/解压余量，10 分钟足够宽松
+    if (age < STALE_MS) {
+      return { failed: false, pendingSidecar: false, reason: 'in-progress', baseline: base, sidecarSha };
+    }
+    try { fs.unlinkSync(f); } catch {}
+    return {
+      failed: true,
+      reason: 'timeout',
+      error: `补丁助手超过 ${Math.round(STALE_MS / 60000)} 分钟没有完成（多半是被系统杀掉或权限不足），已清理，请改用整包更新或在 设置 → 软件更新 里重试`,
+      baseline: base,
+    };
+  }
+
   if (phase === 'applied') {
+    // v1.2.17：`applied` 却没有 expectedToSha 的情况，来自 helper 与新实例的竞态 ——
+    // 新实例先跑自检把状态文件删了，helper 随后又写回一份空的（见 patch-helper.cjs 的
+    // writePatchState：读不到旧值就写 {}）。这种情况**不是** hash 不匹配，而是「成功了但
+    // 记录丢了」——继续报失败会让用户每次启动都看到「✗ 上次补丁应用失败」，
+    // 而实际上新版已经在用（cur 就是新版的哈希，只是我们没记录预期值可比）。
+    if (!expected) {
+      try { fs.unlinkSync(f); } catch {}
+      return { applied: true };
+    }
     return {
       failed: true,
       reason: 'hash-mismatch',
@@ -333,11 +397,22 @@ export function checkPatchStateOnBoot(): {
   };
 }
 
+/** 清掉状态文件（仅在确认「已经没有可接管的残留」时用，避免 UI 卡在假状态里出不来） */
+function clearStalePatchState(): void {
+  try { fs.unlinkSync(STATE_FILE()); } catch { /* ignore */ }
+}
+
 /** v1.2.7：仅接管 .new 旁路（用于用户在 Settings → PatchStateCard 里看到 pendingSidecar 时点重试）
  *  不依赖 patch-info.json，直接 spawn helper with mode='takeover-sidecar' payload */
 export function takeoverSidecarPatch(): { ok: boolean; error?: string; helperPid?: number } {
   const sidecar = currentAsarPath() + '.new';
-  if (!fs.existsSync(sidecar)) return { ok: false, error: '没有 .new 旁路残留' };
+  if (!fs.existsSync(sidecar)) {
+    // v1.2.17：以前这里直接返回失败，而状态文件还留着 → UI 下次启动仍报「有残留待接管」
+    // → 用户再点一次还是失败 → 永远出不来（死循环）。没有 .new 就说明已经没得接管了，
+    // 把状态清掉，让 UI 回到干净状态。
+    clearStalePatchState();
+    return { ok: false, error: '没有 .new 旁路残留（可能已被 helper 处理完），已重置补丁状态' };
+  }
   const helper = helperScriptPath();
   if (!fs.existsSync(helper.path)) {
     return { ok: false, error: `helper 脚本不存在：${helper.path}` };

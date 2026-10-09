@@ -1,6 +1,7 @@
 import { app, net } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SSIO_KEYS } from '../cloud/ssioClient';
 
 /**
  * SSIO 更新源适配层（P9）。
@@ -36,70 +37,18 @@ export function ssioBaseUrl(src: SsioSourceLike): string {
 }
 
 /**
- * 用 SSIO 资源引用换一条**新鲜**下载地址。
- *
- * 服务端只有两个能拿到「带时效签名 URL」的入口（签名 5 分钟过期，只能现取现用）：
- *   · 整包（release）：`GET /v1/releases/latest` —— 它**每次请求都对文件重新签名**。
- *     注意服务端**没有** `/v1/releases/:id/download` 端点（v1.2.15 曾因此接错，
- *     下载必 404，v1.2.16 修复）。所以 release 引用走 latest，并校验返回的
- *     version 与清单一致，防止渠道被回滚时下错包。
- *   · 补丁（file）：`GET /v1/storage/files/:id/download`。
- * 需要的 scope（release:read / storage:read）内置 Key 都具备。
+ * v1.2.17：「引用 → 签名 URL」的现签协议已上移到 cloud/ssioClient 的
+ * `resolveDownloadRef`，桌面与移动端共用一份 —— 包括 platform 映射（以前本文件里
+ * 63 行给 darwin→macos、下面的枚举给 darwin→any，两个答案互相矛盾）。
  */
-export async function fetchSsioDownloadUrl(
-  src: SsioSourceLike,
-  kind: 'release' | 'file',
-  id: string,
-  expectVersion?: string,
-): Promise<string> {
-  const base = ssioBaseUrl(src);
-  const headers: Record<string, string> = {
-    accept: 'application/json',
-    ...(src.password ? { 'X-API-Key': src.password } : {}),
-  };
-
-  let apiPath: string;
-  if (kind === 'release') {
-    const platform = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'macos' : 'linux';
-    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-    // current 传一个必然落后的版本，确保拿到本渠道当前已发布的最新记录
-    apiPath = `/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=0.0.1&clientId=taskmgr-dl`;
-  } else {
-    apiPath = `/v1/storage/files/${encodeURIComponent(id)}/download`;
-  }
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    const res = await net.fetch(`${base}${apiPath}`, {
-      method: 'GET',
-      headers,
-      signal: ctrl.signal,
-    } as RequestInit);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
-    const text = await res.text();
-    const j = JSON.parse(text) as { url?: string; version?: string };
-    if (kind === 'release' && expectVersion && String(j.version || '') !== String(expectVersion)) {
-      throw new Error(`SSIO 最新发行是 ${j.version || '?'}，与清单 ${expectVersion} 不一致（可能被回滚），拒绝下载`);
-    }
-    if (!j?.url) throw new Error('SSIO 没返回下载地址（该版本可能没有挂文件）');
-    return j.url;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** SSIO 的 platform 枚举是 win|linux|android|any，不是 Electron 的 win32/darwin。 */
 function ssioPlatform(): string {
+  // SSIO 的 platform 枚举是 win|linux|android|any，不是 Electron 的 win32/darwin。
+  // darwin 没有对应枚举 → any，让服务端只匹配 arch=any 的发行记录。
   switch (process.platform) {
     case 'win32':
       return 'win';
     case 'linux':
       return 'linux';
-    case 'darwin':
-      // SSIO 目前没有 macos 枚举；用 any 让服务端只匹配 arch=any 的版本，
-      // 拿不到也不影响其它源 —— 这个源失败会被更新系统的多源回退兜住
-      return 'any';
     default:
       return 'any';
   }
@@ -132,8 +81,9 @@ function clientId(): string {
  *
  * 解法：发版时把 latest.json 原文同步进 KV，客户端在这里取回 patches / 镜像链 /
  * asar 基线哈希；整包下载地址仍然用 SSIO 的（国内快），补丁 zip 走镜像链。
+ *
+ * 键名来自 SSIO_KEYS.manifest —— 桌面、移动端、发版脚本共用同一份常量。
  */
-const MANIFEST_KV_KEY = 'taskmgr/latest.json';
 
 interface SsioLatestResponse {
   hasUpdate?: boolean;
@@ -155,8 +105,9 @@ interface SsioLatestResponse {
  * 中间可能隔几小时 —— 直接拿 `releases/latest` 返回的 url 去下载，
  * 到点时必然 404/401，表现为「更新到一半失败，重试也一样」。
  *
- * 所以清单里只记 releaseId，真正下载前再调一次 `/v1/releases/:id/download`
- * 换一张新鲜签名。这一条同时也是 SSIO 官方文档里反复强调的红线。
+ * 所以清单里只记引用，真正下载前再调 `resolveDownloadRef` 换一张新鲜签名
+ * （release 引用查 /v1/releases/latest —— 服务端没有 :id/download 端点，
+ * 详见 ssioClient 里的注释）。
  */
 
 /** 拉 SSIO KV 里的权威清单；拿不到（未同步 / 无权限 / 超时）返回 null，由调用方退化。 */
@@ -169,8 +120,8 @@ async function fetchKvManifest(
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     let text: string;
     try {
-      const res = await net.fetch(
-        `${base}/v1/kv?key=${encodeURIComponent(MANIFEST_KV_KEY)}`,
+      const res = await       net.fetch(
+        `${base}/v1/kv?key=${encodeURIComponent(SSIO_KEYS.manifest)}`,
         { method: 'GET', headers, signal: ctrl.signal } as RequestInit,
       );
       if (!res.ok) return null;

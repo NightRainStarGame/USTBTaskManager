@@ -30,9 +30,11 @@ electron/            主进程（tsc -p tsconfig.node.json → dist-electron/）
   splash-preload.ts  splash 专用 preload（splash:progress IPC）
   preload.ts / api-factory.ts   渲染层桥（所有 IPC 通道定义在 api-factory）
   db/index.ts        SQLite 初始化 + 增量迁移（addColumnIfMissing 范式）+ courseKey 计算
-  homework/          作业同步（发布/接收/双源拉取，docs/HOMEWORK-CODES.md）
-  updater/           自动更新（多源 + 增量补丁，docs/UPDATE-SERVER.md）
-  anyshare.ts        北科云盘（爱数 AnyShare）匿名外链客户端：asFetch/auth/dirList/uploadBundle
+  homework/          作业同步（发布/接收，docs/HOMEWORK-CODES.md）—— v1.2.15 起单一来源：SSIO
+  updater/           自动更新（增量补丁，docs/UPDATE-SERVER.md）
+  cloud/ssioClient.ts  SSIO 统一客户端（KV / 存储 / 发行引用现签）。所有云能力都走它
+  ~~anyshare.ts~~     v1.2.15 已删（北科云盘 AnyShare 客户端），连带 node:http(s) 移动端
+                     shim 也删了；历史原因见 §7 的 302 那条
   ustb/              校园网相关（登录等）
   ipc/               requirements 等常规 IPC
   backup/ timetable-xls/   DB 备份 / 课表 Excel 导入
@@ -72,7 +74,7 @@ node scripts/e2e-*.js    # 各 E2E（CDP + 真实事件 + 真实 SQLite 断言�
 
 - **courses.course_key**（v1.1.7 起）：`CK-` + SHA256(`name|teacher`) 映射到 32 字符字母表取 10 位（`db/index.ts computeCourseKey`）。同名同教师课程跨设备一致，是作业同步的课程匹配锚点；所有建课路径都要兜底刷新
 - **courses.guid**（v1.1.6 起）：本机课程唯一 ID（`C-` + 8 位，字符表 `23456789ABCDEFGHJKMNPQRSTUVWXYZ`），发布包携带，接收端优先 guid 精确挂载
-- 作业同步存储：**数据仓 `USTBTaskManager-Class`**（v1.2.10 起，与班级共用同一 fine-grained PAT）`homework/<syncCode>.json`（git 提交）+ 云盘 `homework/<发布码>/<courseKey>-<ts>.json`（旧扁平路径回退兼容）。主仓库的同路径历史包会被读取兜底，不要再往主仓库写作业数据
+- 作业同步存储：**SSIO KV** `homework/<syncCode>.json`（`cloud/ssioClient.ts` 的 kvGetJson/kvPut）。v1.2.15 起这是唯一后端 —— 以前的 GitHub 数据仓 / 北科云盘两条写入路径都已下线，代码里不再有任何第二源
 - 主题切换：`document.documentElement.dataset.theme`，白名单在 `useApplyTheme.ts`；新增主题 = index.css 加变量组 + 白名单 + Settings 下拉，三个文件
 
 ## 4. ⭐ 发版工作流（最重要的一条）
@@ -83,33 +85,34 @@ node scripts/e2e-*.js    # 各 E2E（CDP + 真实事件 + 真实 SQLite 断言�
 npm run release:one -- 1.2.1 --notes-file release-notes-1.2.1.md --execute
 ```
 
-脚本（`scripts/release-one-click.js`）自动完成：bump 版本 → build → 产物校验（sha256）→ leastversion/oldversion 滚动（**只保留最新两版**）→ 生成 latest.json（含 patches 增量清单）→ git commit + push → GitHub Release（附件自动上传去重）→ 北科云盘同步上传。
+脚本（`scripts/release-one-click.js`）自动完成：bump 版本 → build → 产物校验（sha256）→ leastversion/oldversion 滚动（**只保留最新两版**）→ 生成 latest.json（含 patches 增量清单）→ 发布安装包到 SSIO → git commit + push。（v1.2.15 删掉了「GitHub Release 附件上传」与「北科云盘同步上传」两步）
 
 要点：
 - 用户口令「**X.X.X / 完事 / 发了**」= 触发发版
 - 中断续跑：`--resume`（跳过 build；注意 package.json 的版本号要先单独 commit，否则被 git-clean 检查拦住）
 - build 输出每次写到新目录 `release-v<版本>/`（directories.output 是 `release-v${version}` token，**不要 hardcode**）
-- 补丁命名：`TaskManager-Patch-<from>-to-<to>.zip`；云盘文件一律 `<固定名>-<时间戳>.<ext>`
+- 补丁命名：`TaskManager-Patch-<from>-to-<to>.zip`；云盘文件命名规则（`<固定名>-<时间戳>.<ext>`）随北科云盘通道一并作废
 - **latest.json 是唯一指路清单**，协议细节见 `docs/UPDATE-SERVER.md` §9
 - 构建收尾若报 `.nsis.7z` safe-delete 错误 = **非致命**（exe 已就位），校验后 `--resume` 续跑
 
-## 5. 更新系统（多源 + 增量补丁）
+## 5. 更新系统（单一 SSIO 源 + 用户可加镜像 + 增量补丁）
 
-- `DEFAULT_UPDATE_SOURCES`：① GitHub raw（`raw.githubusercontent.com`，CDN 无限速）② 北科云盘（`yunpan.ustb.edu.cn`，link `AADAAEA94FBE6B4435B8D14A236FAC6469`，提取码 `kc26`，**仅校园网可达**）。用户可手动加任意自建源
-- 源合并：sourceKey = `type|url|password` 三元组，DEFAULT 与用户源自动合并；启动时对多源**测速选最快**
+- 内置默认源**只有一个**：`DEFAULT_UPDATE_SOURCE`（SSIO，`cloud/ssioClient` 的 SSIO_DEFAULT_BASE + 前缀 `ssio+`）。以前还有 GitHub raw / 北科云盘两个默认源，v1.2.15 已删 —— 它们托管的是静态 latest.json，最新数据只在 SSIO 上，留着只会让检查更新干等超时
+- 用户仍可在设置里加自己的 http 直链镜像（这条能力保留了，所以 UpdateSource 依旧是数组形态）
+- 源合并：sourceKey = `type|url|password` 三元组，默认源会被自动补进用户源列表；启动时对多个源**测速选最快**
 - 增量补丁协议：`latest.json.patches[]`（`fromVersion`/`url`/`sha256`/`baseAsarSha256`）。补丁 = 压缩后的新 asar，客户端校验旧 asar 基线 hash 后由 helper 进程在退出时替换，避免整包 90MB 重装
 
 ## 6. 作业同步码制
 
-- **syncCode**（8 位）= 接收码；**publishCode**（12 位，HMAC，SECRET=`StarOS-Homework-Code-v1`）= 云盘发布目录名
+- **syncCode**（8 位）= 接收码；**publishCode**（12 位，HMAC，SECRET=`StarOS-Homework-Code-v1`）= 发布方鉴权（防止拿到同步码就能替别人写作业）
 - 接收匹配链：手选（同名多候选弹窗）> courseKey > guid > 同名；同步码按 courseKey 在同课程设备间共享
-- GitHub 读路径走 raw CDN（绕开 Contents API 60次/h 限速），写路径才用 Contents API
+- 读写都走 SSIO KV。**注意 `SSIO_KEYS.manifest` 必须是 `taskmgr/latest.json`** —— 桌面、移动端、发版脚本三方共用同一份常量（`scripts/lib/ssioHttp.js`），曾经因为移动端写错成 `latest.json` 导致 APK 更新通道静默断线
 
 ## 7. ⭐ 环境红线与坑（Windows 沙箱，条条实战踩过）
 
 **Electron 33（Windows）：**
 - splash **禁 `alwaysOnTop` + `frame:false` 组合**（GPU 挂/静默 exit）；正确姿势 = `paintWhenInitiallyHidden: true` + `skipTaskbar: true` + 先挂 `ready-to-show` 再 `loadFile`。另外 `ready-to-show` 在部分环境不触发，main.ts 里有 300ms 保险丝强制 show，**别删**
-- `net.fetch`/`net.request` 遇 302 必抛 `Redirect was cancelled` → 一律用 Node 原生 `https.request`（见 anyshare.ts `asFetch`）
+- `net.fetch`/`net.request` 遇 302 会抛 `Redirect was cancelled`。历史上为此把 HTTP 请求改用 Node 原生 `https.request`（当年的实现在 `anyshare.ts`），但那个通道已删：现在云请求一律走 SSIO 的 fetch 通道（`cloud/ssioClient.pickFetch`：主进程优先 `net.fetch`，因为它才尊重系统代理）；若哪天又要 promise 式 HTTP，记得 302 要自己跟
 - spawn 打包 exe 前**必须 delete `ELECTRON_RUN_AS_NODE` / `NODE_OPTIONS`** 环境变量
 
 **沙箱/文件系统：**

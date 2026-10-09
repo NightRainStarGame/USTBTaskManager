@@ -17,10 +17,60 @@ export type UpdateSourceDTO = {
   password?: string;
 };
 
+// ===== 课表导入（v1.2.17：按「学校档案」解析）=====
+
+/** 一份课表解析档案。不同学校的教务导出格式完全不同，所以让用户在向导里选自己学校 */
+export type XlsProfileDTO = {
+  id: string;
+  name: string;
+  /** 'grid' = 格子表（行=节次、列=星期）；'records' = 一行一节课 */
+  layout: 'grid' | 'records';
+  note?: string;
+};
+
+export type XlsFieldMappingDTO = {
+  className: number;
+  teacher: number;
+  weeks: number;
+  day: number;
+  period: number;
+  location: number;
+};
+
+export type XlsItemDTO = {
+  day: number;
+  period: number;
+  className: string;
+  teacher: string;
+  weeksText: string;
+  weeks: number[];
+  location: string;
+  periodName: string;
+};
+
+export type XlsParseResultDTO = {
+  sheetName: string;
+  /** 实际使用的档案 */
+  profile: XlsProfileDTO;
+  /** 自动猜测的结果（>=85 才自动选中，否则让用户手选） */
+  detected: { id: string; confidence: number };
+  /** 格子表档案不需要「列映射」这一步 */
+  needMapping: boolean;
+  headers: string[];
+  rows: Record<string, string>[];
+  totalRows: number;
+  mapping: XlsFieldMappingDTO;
+  preview: XlsItemDTO[];
+  items: XlsItemDTO[];
+  warnings: string[];
+  badRows: { row: number; reason: string }[];
+  /** 从文件里读出的学期信息（向导据此预填，用户仍可改） */
+  term?: { xn: string; xq: '1' | '2'; semesterStart?: number; totalWeeks?: number };
+};
+
 /** v1.3.0：补丁持久缓存状态（zip + patch-info.json） */
 export type PatchCacheStateDTO = {
-  exists: boolean;
-  info?: {
+  exists: boolean;  info?: {
     fromVersion: string;
     toVersion: string;
     sha256: string;
@@ -236,7 +286,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
           hasUpdate: boolean;
           notes?: string | null;
           downloadUrl?: string | null;
-                /** v1.2.7：备援下载链接（GitHub Releases 主源挂了 → 试 raw → 试 jsdelivr） */
+                /** v1.2.7：备援下载直链（清单里的备选 URL，主源取不到时按顺序试） */
                 downloadUrlMirrors?: string[] | null;
                 pageUrl?: string | null;
                 sha256?: string | null;
@@ -380,12 +430,10 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       /** v1.1.3：取某课程对应的同步作业码（首次自动生成）。用作发布时定位远端 bundle */
       courseSyncCode: (courseId: number | null | undefined) => invoke('homework:courseSyncCode', courseId) as Promise<{ ok: boolean; syncCode: string; error?: string }>,
       /** 发布一条作业。publishCode 可选；如未填 syncCode 但传了 courseId，会用该课程持久化的 syncCode（首次自动生成）。
-       *  v1.1.6：targets 可同时推 GitHub + 北科云盘；target 字段保留兼容老调用方 */
+       *  v1.2.17：发布目标（targets / target / perTarget）随 GitHub 与北科云盘通道下线一并移除，
+       *  作业只有一个去处：SSIO 云。 */
       publish: (payload: {
         publishCode?: string; syncCode?: string; courseId?: number | null;
-        targets?: ('github' | 'cloud')[];
-        /** @deprecated v1.1.6 起改用 targets */
-        target?: 'github' | 'cloud';
         courseName: string; sessionDate: string;
         sessionTime?: string | null;
         /** 单条发布时必填；批量（v1.1.8+）可省，由 entries 提供 */
@@ -401,8 +449,6 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         entriesCount?: number;
         /** v1.1.8+：本次实际发布的条目数（批量场景下 >1） */
         entriesPublished?: number;
-        targets?: ('github' | 'cloud')[];
-        perTarget?: Array<{ target: 'github' | 'cloud'; ok: boolean; error?: string; fileUrl?: string; anyshareRaw?: string; entriesCount?: number }>;
       }>,
       /** 某个码包在远端已发布的作业 */
       remoteEntries: (syncCode: string) => invoke('homework:remoteEntries', syncCode) as Promise<{
@@ -465,19 +511,13 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
     // 课表 Excel 导入
     xls: {
       pickFile: () => invoke('xls:pickFile') as Promise<string | null>,
-      parseFile: (filePath: string) => invoke('xls:parseFile', filePath) as Promise<{
-        sheetName: string;
-        headers: string[];
-        rows: Record<string, string>[];
-        totalRows: number;
-        mapping: { className: number; teacher: number; weeks: number; day: number; period: number; location: number };
-        preview: Array<{ day: number; period: number; className: string; teacher: string; weeksText: string; weeks: number[]; location: string; periodName: string }>;
-        items: Array<{ day: number; period: number; className: string; teacher: string; weeksText: string; weeks: number[]; location: string; periodName: string }>;
-        warnings: string[];
-        badRows: { row: number; reason: string }[];
-      }>,
-      reparse: (parsed: any, mapping: { className: number; teacher: number; weeks: number; day: number; period: number; location: number }) =>
-        invoke('xls:reparse', parsed, mapping),
+      /** 学校档案列表（渲染层渲染下拉框）；用户选定后把 id 传给 parseFile */
+      listProfiles: () => invoke('xls:listProfiles') as Promise<XlsProfileDTO[]>,
+      /** profileId 不传 = 后端自动猜（置信度 >=85 才自动选，否则落到通用档案） */
+      parseFile: (filePath: string, profileId?: string) =>
+        invoke('xls:parseFile', filePath, profileId) as Promise<XlsParseResultDTO>,
+      reparse: (parsed: XlsParseResultDTO, mapping: XlsFieldMappingDTO) =>
+        invoke('xls:reparse', parsed, mapping) as Promise<XlsParseResultDTO>,
       importItems: (items: any[], opts: { xn: string; xq: '1' | '2'; semesterStart: number; replaceExisting: boolean }) =>
         invoke('xls:importItems', items, opts) as Promise<{
           courses: number; events: number; items: number; courseIds: number[]; warnings: string[];
@@ -634,7 +674,7 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
         id?: number; classCode?: string; inviteCode?: string; ownerToken?: string;
       }>,
       join: (payload: { inviteCode: string; alias?: string }) => invoke('class:join', payload) as Promise<{
-        ok: boolean; source?: 'github' | 'anyshare'; error?: string; errorCode?: string;
+        ok: boolean; error?: string; errorCode?: string;
         classId?: number; className?: string; role?: string; memberCount?: number; warnings?: string[];
       }>,
       leave: (classId: number) => invoke('class:leave', classId) as Promise<{ ok: boolean; error?: string }>,
@@ -674,7 +714,9 @@ export function buildAPI(invoke: Invoke, send: Send, subscribe?: Subscribe) {
       completeTask: (classId: number, taskId: number, status: 'open' | 'done' | 'cancelled') =>
         invoke('class:completeTask', classId, taskId, status) as Promise<{ ok: boolean }>,
       sync: (classId: number) => invoke('class:sync', classId) as Promise<{
-        ok: boolean; source?: 'github' | 'anyshare';
+        // v1.2.17：class 的结果不再带 source —— 后端只有一个去处（SSIO），
+        // 也没有任何调用方读它（ClassDetail 早就在 UI 上写死了「SSIO 云」）。
+        ok: boolean;
         newAnnouncements?: number; newTasks?: number;
         newChains?: number; newPolls?: number;
         kicked?: boolean; errorCode?: string;

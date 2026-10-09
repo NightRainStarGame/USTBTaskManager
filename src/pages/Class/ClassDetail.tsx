@@ -2,7 +2,7 @@
  * 班级详情页（v1.2.9 R6 重构）
  * - tab：总览（含统计，不单独开页）/ 公告（owner+admin 可删除）/ 接龙 / 投票 / 成员（可管理）
  * - v1.2.9 移除「作业」tab：主应用已有作业同步（分享码双源），班级作业功能冗余
- * - 接龙 / 投票：所有成员都可发起与参与（写云端需 GitHub 令牌）
+ * - 接龙 / 投票：所有成员都可发起与参与（SSIO 内置凭据，开箱即写云端）
  */
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -58,8 +58,7 @@ export default function ClassDetailPage() {
         return;
       }
       if (r.ok) {
-        // v1.2.13：后端 source 字段仍是历史值 'github'（那个「github 源」内部其实是
-        // SSIO 优先、GitHub 兜底），直接显示会误导。这里按真实主源展示。
+        // v1.2.17：后端不再返回 source（曾经它的值是历史遗留的 'github'，显示出来就是句假话）。
         setMsg(`✅ 同步完成 · SSIO 云 · 新增 ${r.newAnnouncements || 0} 公告 / ${r.newChains || 0} 接龙 / ${r.newPolls || 0} 投票`);
         await refresh();
       } else {

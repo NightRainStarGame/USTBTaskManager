@@ -4,7 +4,11 @@
  * 班级 P2P mock：浏览器预览用 in-memory 状态（mockClasses + mockAnnouncements + mockClassTasks + mockLocalAlias）
  *
  * 浏览器预览的班级页面只接受 DEMO 前缀的邀请码 / DEMO 前缀的假班级码，
- * 不与 GitHub PAT 实际交互。所有数据存内存，刷新即丢。
+ * 不与真实云端交互。所有数据存内存，刷新即丢。
+ *
+ * v1.2.17：以前 mock 的 join / sync 会回一个 source: 'github' —— 那是 GitHub 时代的
+ * 遗留值，桌面端那个字段已经删了（见 electron/class 的 SyncResult），这里跟着删；
+ * 保留它只会让「预览看起来依赖某个源」这种错觉继续往下传。
  *
  * v1.2.9 R8：补齐 deleteAnnouncement / promoteMember / removeMember / 接龙 / 投票 mock
  *
@@ -104,7 +108,7 @@ export function createClassMockApi() {
         multi: false, closed: false, deadlineAt: null,
         createdAt: Date.now() - 1800_000, updatedAt: Date.now() - 1500_000,
       }];
-      return { ok: true, source: 'github', classId: id, className: cls.name, role: 'member', memberCount: 3 };
+      return { ok: true, classId: id, className: cls.name, role: 'member', memberCount: 3 };
     },
     leave: async (id: number) => {
       const i = mockClasses.findIndex(x => x.id === id);
@@ -257,7 +261,7 @@ export function createClassMockApi() {
       await delay();
       const cls = findClass(id);
       if (cls) cls.lastSyncedAt = Date.now();
-      return { ok: true, source: 'github', newAnnouncements: 0, newTasks: 0, newChains: 0, newPolls: 0 };
+      return { ok: true, newAnnouncements: 0, newTasks: 0, newChains: 0, newPolls: 0 };
     },
   };
 }

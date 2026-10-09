@@ -20,113 +20,26 @@
  * 发版脚本（release-one-click.js）会在写盘 latest.json 之后自动调用本脚本。
  */
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
 const path = require('path');
+// v1.2.17：HTTP 原语、凭据加载、默认地址、KV 键名都从 shared 出来，本文件只剩同步流程
+const { createSsioClient, SSIO_KEYS, ROOT } = require('./lib/ssioHttp');
 
-const ROOT = path.resolve(__dirname, '..');
-const KV_KEY = 'taskmgr/latest.json';
-
-/** 从仓库根 .env.local / .env 补齐缺失的环境变量（两者都已 gitignore）。 */
-function loadEnvLocal() {
-  for (const name of ['.env.local', '.env']) {
-    const p = path.join(ROOT, name);
-    if (!fs.existsSync(p)) continue;
-    for (const rawLine of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eq = line.indexOf('=');
-      if (eq < 0) continue;
-      const k = line.slice(0, eq).trim();
-      let v = line.slice(eq + 1).trim();
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-      if (k && process.env[k] === undefined) process.env[k] = v;
-    }
-  }
-}
-loadEnvLocal();
-
-const BASE = process.env.SSIO_BASE || 'http://120.53.9.81:8100';
-const KEY = process.env.SSIO_KEY || process.env.SSIO_PUBLISH_KEY || 'ssio_live_OiTftLzMkgh21475jUXmWP';
-
-function put(urlStr, bodyObj) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
-    const mod = u.protocol === 'https:' ? https : http;
-    const payload = Buffer.from(JSON.stringify(bodyObj), 'utf8');
-    const req = mod.request(
-      {
-        protocol: u.protocol,
-        hostname: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? 443 : 80),
-        path: u.pathname + u.search,
-        method: 'PUT',
-        headers: {
-          'content-type': 'application/json',
-          'content-length': payload.length,
-          'X-API-Key': KEY,
-        },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve({ status: res.statusCode, body: data });
-          } else {
-            reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 300)}`));
-          }
-        });
-      },
-    );
-    req.on('error', reject);
-    req.setTimeout(20000, () => req.destroy(new Error('请求超时')));
-    req.write(payload);
-    req.end();
-  });
-}
-
-function get(urlStr) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
-    const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request(
-      {
-        protocol: u.protocol,
-        hostname: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? 443 : 80),
-        path: u.pathname + u.search,
-        method: 'GET',
-        headers: { accept: 'application/json', 'X-API-Key': KEY },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(data);
-          else reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 300)}`));
-        });
-      },
-    );
-    req.on('error', reject);
-    req.setTimeout(20000, () => req.destroy(new Error('请求超时')));
-    req.end();
-  });
-}
+const ssio = createSsioClient({ allowBuiltinKey: true });
+const BASE = ssio.base;
 
 async function main() {
   const latestPath = path.join(ROOT, 'latest.json');
   const value = fs.readFileSync(latestPath, 'utf8');
   const manifest = JSON.parse(value);
 
-  console.log(`同步清单到 SSIO KV：${BASE}  key=${KV_KEY}`);
+  console.log(`同步清单到 SSIO KV：${BASE}  key=${SSIO_KEYS.manifest}`);
   console.log(`  本地 latest.json：v${manifest.version}  patches=${(manifest.patches || []).length} 条`);
 
-  const res = await put(`${BASE}/v1/kv?key=${encodeURIComponent(KV_KEY)}`, { value });
-  console.log(`  写入：HTTP ${res.status} ${res.body.slice(0, 120)}`);
+  const res = await ssio.putKv(SSIO_KEYS.manifest, value);
+  console.log(`  写入：HTTP ${res.status} ${res.text.slice(0, 120)}`);
 
   // 回读校验：确认服务端存的就是这份（版本 + 补丁条数必须对得上）
-  const back = JSON.parse(await get(`${BASE}/v1/kv?key=${encodeURIComponent(KV_KEY)}`));
+  const back = (await ssio.getKv(SSIO_KEYS.manifest)).json;
   const remote = JSON.parse(back.value);
   const okVersion = String(remote.version) === String(manifest.version);
   const okPatches = (remote.patches || []).length === (manifest.patches || []).length;
@@ -138,13 +51,13 @@ async function main() {
   console.log('  ✓ KV 清单已同步');
 
   // v1.2.15：顺带同步 about.txt。客户端 electron/about/index.ts 已改从 KV 取
-  // （`taskmgr/about.txt`），不再依赖 GitHub raw / 云盘 —— 不同步这里，关于页就
+  // （SSIO_KEYS.about），不再依赖 GitHub raw / 云盘 —— 不同步这里，关于页就
   // 只能显示本地内置版。失败只警告，不阻断发版。
   const aboutPath = path.join(ROOT, 'about.txt');
   if (fs.existsSync(aboutPath)) {
     try {
       const about = fs.readFileSync(aboutPath, 'utf8');
-      await put(`${BASE}/v1/kv?key=${encodeURIComponent('taskmgr/about.txt')}`, { value: about });
+      await ssio.putKv(SSIO_KEYS.about, about);
       console.log(`  ✓ about.txt 已同步（${about.length} 字符）`);
     } catch (e) {
       console.log(`  [!] about.txt 同步失败：${e && e.message ? e.message : e}`);

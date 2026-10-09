@@ -36,7 +36,7 @@ import {
   putClassFile, deleteClassFile, fetchManifest,
   fetchClassSnapshot, fetchChain, fetchPoll,
   signManifest,
-  type ClassManifest, type MemberEntry, type AnnouncementEntry, type ClassTaskEntry,
+  type ClassManifest, type ClassSnapshot, type MemberEntry, type AnnouncementEntry, type ClassTaskEntry,
   type ChainEntry, type ChainItem, type PollEntry, type PollVote,
 } from './storage';
 
@@ -199,18 +199,6 @@ export function registerClass(db: DB) {
   (db as any).__classUpsertAnnouncement = upsertAnnouncement;
   (db as any).__classUpsertTask = upsertTask;
 
-  /**
-   * v1.2.15：SSIO 不需要任何令牌，云端写通道永远可用。
-   *
-   * 历史上这里返回的是「用户配没配 GitHub PAT」，没配就跳过云端、只写本机。
-   * 现在保留这个判断的形状（返回非空即视为可用），让十几处 `if (ghToken)` 分支
-   * 照旧走通过路径 —— 与其为了改名把整文件的写逻辑翻一遍（容易漏），不如让语义
-   * 先到位。用户侧的表现是：班级功能开箱即用，不再需要手动填令牌。
-   */
-  function cloudCredential(_db: DB): string {
-    return 'ssio';
-  }
-
   /** 云端操作失败 → 带上错误原文，让用户看到具体原因而不是一句「失败」。 */
   function friendlyCloudErr(prefix: string, e: any): string {
     return `${prefix}：${e?.message || e}`;
@@ -263,7 +251,7 @@ export function registerClass(db: DB) {
     const localTaskIds = (db.prepare('SELECT id FROM class_tasks WHERE class_id = ?').all(classId) as Array<{ id: number }>).map(r => r.id);
 
     type SyncResult = { ok: boolean; error?: string; errorCode?: string; source?: string; newAnnouncements?: number; updatedAnnouncements?: number; newTasks?: number; updatedTasks?: number; newChains?: number; newPolls?: number; kicked?: boolean; manifest?: any };
-    const applySnapshot = (snap: { source: string; manifest: ClassManifest; announcements: AnnouncementEntry[]; tasks: ClassTaskEntry[]; chains: ChainEntry[]; polls: PollEntry[] }): SyncResult => {
+    const applySnapshot = (snap: ClassSnapshot): SyncResult => {
       const m = snap.manifest;
       // R3：被移除检测——本机昵称不在云端成员列表（且本机确认曾写入过云端）→ 本地下线
       const myAlias = row.alias || getLocalAlias(db);
@@ -306,8 +294,10 @@ export function registerClass(db: DB) {
       updateMembersCache(classId, m.members);
       updateLastIds(classId, m.lastAnnouncementId, m.lastTaskId);
       setSetting(db, SETTING_LAST_SYNC_PREFIX + classId, String(Date.now()));
+      // v1.2.17：source 字段随「多后端」一起下线 —— 结果里不再带"这次是从哪个 cloud 来的"，
+      // 因为只有一个去处，且没有调用方消费它。
       return {
-        ok: true, source: snap.source as any,
+        ok: true,
         newAnnouncements: newAnn, updatedAnnouncements: updatedAnn,
         newTasks: newTask, updatedTasks: updatedTask,
         newChains: newChain, newPolls: newPoll,
@@ -405,7 +395,7 @@ export function registerClass(db: DB) {
     );
     const classId = Number(info.lastInsertRowid);
 
-    // 写远端 manifest（GitHub 优先，AnyShare 失败不致命）
+    // 写远端 manifest（唯一目标就是 SSIO KV）
     const manifest: ClassManifest = {
       classCode, inviteCode,
       name, description: String(payload?.description || '').slice(0, 500),
@@ -543,26 +533,21 @@ export function registerClass(db: DB) {
     if (m.role === 'owner') return { ok: false, error: '不能调整 owner 本人' };
     if (m.role === target) return { ok: true, role: target, warnings: [] };
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        // 云端原子更新：改角色 + 重算该成员 sig + manifest 重签
-        const updated = await mutateManifestRemote(row.invite_code, `${alias} ${target === 'admin' ? '设为管理员' : '撤销管理员'}`, (mm) => {
-          const t = mm.members.find((x) => x.alias === alias);
-          if (t) {
-            t.role = target;
-            t.sig = signMember(alias, mm.classCode, target);
-          }
-        });
-        if (updated) {
-          db.prepare('UPDATE classes SET members_json = ? WHERE id = ?').run(JSON.stringify(updated.members), classId);
+    try {
+      // 云端原子更新：改角色 + 重算该成员 sig + manifest 重签
+      const updated = await mutateManifestRemote(row.invite_code, `${alias} ${target === 'admin' ? '设为管理员' : '撤销管理员'}`, (mm) => {
+        const t = mm.members.find((x) => x.alias === alias);
+        if (t) {
+          t.role = target;
+          t.sig = signMember(alias, mm.classCode, target);
         }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端更新失败', e));
+      });
+      if (updated) {
+        db.prepare('UPDATE classes SET members_json = ? WHERE id = ?').run(JSON.stringify(updated.members), classId);
       }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端更新失败', e));
     }
     // 本机镜像也更新（即使云端失败，本地 UI 一致）
     m.role = target;
@@ -590,23 +575,18 @@ export function registerClass(db: DB) {
     if (!m) return { ok: false, error: `成员 ${alias} 不在成员列表`, errorCode: 'NOT_FOUND' };
     if (row.role === 'admin' && m.role !== 'member') return { ok: false, error: 'admin 只能移除普通成员', errorCode: 'NOT_ALLOWED' };
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        const updated = await mutateManifestRemote(row.invite_code, `移除成员 ${alias}`, (mm) => {
-          mm.members = mm.members.filter((x) => x.alias !== alias);
-        });
-        if (updated) {
-          db.prepare('UPDATE classes SET members_json = ?, member_count = ? WHERE id = ?')
-            .run(JSON.stringify(updated.members), updated.members.length, classId);
-          return { ok: errors.length === 0, warnings: errors };
-        }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端更新失败', e));
+    try {
+      const updated = await mutateManifestRemote(row.invite_code, `移除成员 ${alias}`, (mm) => {
+        mm.members = mm.members.filter((x) => x.alias !== alias);
+      });
+      if (updated) {
+        db.prepare('UPDATE classes SET members_json = ?, member_count = ? WHERE id = ?')
+          .run(JSON.stringify(updated.members), updated.members.length, classId);
+        return { ok: errors.length === 0, warnings: errors };
       }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端更新失败', e));
     }
     // 本地镜像兜底
     const rest = members.filter((x) => x.alias !== alias);
@@ -626,23 +606,18 @@ export function registerClass(db: DB) {
     const r = db.prepare('DELETE FROM class_announcements WHERE class_id = ? AND id = ?').run(classId, annIdNum);
     if ((r.changes || 0) === 0) return { ok: false, error: '公告不存在（可能已删除）' };
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        // 云端条目文件删除（KV 删除幂等，key 不存在也不报错）
-        await deleteClassFile(row.invite_code, ['announcements', annIdNum + '.json']);
-        // manifest：索引移除 + tombstone 记录
-        await mutateManifestRemote(row.invite_code, `删除公告 #${annIdNum}`, (m) => {
-          if (Array.isArray(m.announcementIds)) m.announcementIds = m.announcementIds.filter((x) => x !== annIdNum);
-          if (!Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = [];
-          if (!m.deletedAnnouncementIds.includes(annIdNum)) m.deletedAnnouncementIds.push(annIdNum);
-        });
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端删除失败', e) + '（本地已删除，其他成员同步后仍会看到）');
-      }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    try {
+      // 云端条目文件删除（KV 删除幂等，key 不存在也不报错）
+      await deleteClassFile(row.invite_code, ['announcements', annIdNum + '.json']);
+      // manifest：索引移除 + tombstone 记录
+      await mutateManifestRemote(row.invite_code, `删除公告 #${annIdNum}`, (m) => {
+        if (Array.isArray(m.announcementIds)) m.announcementIds = m.announcementIds.filter((x) => x !== annIdNum);
+        if (!Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = [];
+        if (!m.deletedAnnouncementIds.includes(annIdNum)) m.deletedAnnouncementIds.push(annIdNum);
+      });
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端删除失败', e) + '（本地已删除，其他成员同步后仍会看到）');
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -710,24 +685,18 @@ export function registerClass(db: DB) {
     upsertAnnouncement(classId, entry);
 
     // 写远端：先 put announcement，再 update manifest（索引 + lastAnnouncementId）
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        await putClassFile(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2));
-        await mutateManifestRemote(row.invite_code, `发布公告 ${title}`, (m) => {
-          m.lastAnnouncementId = Math.max(m.lastAnnouncementId || 0, annId);
-          if (!Array.isArray(m.announcementIds)) m.announcementIds = [];
-          if (!m.announcementIds.includes(annId)) m.announcementIds.push(annId);
-          if (Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = m.deletedAnnouncementIds.filter((x) => x !== annId);
-        });
-        db.prepare('UPDATE classes SET last_announcement_id = ? WHERE id = ?').run(annId, classId);
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端发布失败', e));
-      }
-    } else {
-      // v1.2.9 R1：之前没 PAT 时静默「成功」，用户以为发了但云端什么都没有
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    try {
+      await putClassFile(row.invite_code, ['announcements', annId + '.json'], JSON.stringify(entry, null, 2));
+      await mutateManifestRemote(row.invite_code, `发布公告 ${title}`, (m) => {
+        m.lastAnnouncementId = Math.max(m.lastAnnouncementId || 0, annId);
+        if (!Array.isArray(m.announcementIds)) m.announcementIds = [];
+        if (!m.announcementIds.includes(annId)) m.announcementIds.push(annId);
+        if (Array.isArray(m.deletedAnnouncementIds)) m.deletedAnnouncementIds = m.deletedAnnouncementIds.filter((x) => x !== annId);
+      });
+      db.prepare('UPDATE classes SET last_announcement_id = ? WHERE id = ?').run(annId, classId);
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端发布失败', e));
     }
 
     return { ok: errors.length === 0, warnings: errors, annId };
@@ -757,22 +726,17 @@ export function registerClass(db: DB) {
     // v1.2.9 R1：显式 id + author_alias（v1.2.9 起 UI 移除作业 tab，此 IPC 保留 API 兼容）
     upsertTask(classId, entry);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        await putClassFile(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2));
-        await mutateManifestRemote(row.invite_code, `发布作业 ${title}`, (m) => {
-          m.lastTaskId = Math.max(m.lastTaskId || 0, taskId);
-          if (!Array.isArray(m.taskIds)) m.taskIds = [];
-          if (!m.taskIds.includes(taskId)) m.taskIds.push(taskId);
-        });
-        db.prepare('UPDATE classes SET last_task_id = ? WHERE id = ?').run(taskId, classId);
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端发布失败', e));
-      }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    try {
+      await putClassFile(row.invite_code, ['tasks', taskId + '.json'], JSON.stringify(entry, null, 2));
+      await mutateManifestRemote(row.invite_code, `发布作业 ${title}`, (m) => {
+        m.lastTaskId = Math.max(m.lastTaskId || 0, taskId);
+        if (!Array.isArray(m.taskIds)) m.taskIds = [];
+        if (!m.taskIds.includes(taskId)) m.taskIds.push(taskId);
+      });
+      db.prepare('UPDATE classes SET last_task_id = ? WHERE id = ?').run(taskId, classId);
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端发布失败', e));
     }
 
     return { ok: errors.length === 0, warnings: errors, taskId };
@@ -824,20 +788,15 @@ export function registerClass(db: DB) {
     };
     upsertChain(classId, entry);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(entry, null, 2));
-        await mutateManifestRemote(row.invite_code, `发起接龙 ${title}`, (m) => {
-          if (!Array.isArray(m.chainIds)) m.chainIds = [];
-          if (!m.chainIds.includes(chainId)) m.chainIds.push(chainId);
-        });
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端发布失败', e));
-      }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    try {
+      await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(entry, null, 2));
+      await mutateManifestRemote(row.invite_code, `发起接龙 ${title}`, (m) => {
+        if (!Array.isArray(m.chainIds)) m.chainIds = [];
+        if (!m.chainIds.includes(chainId)) m.chainIds.push(chainId);
+      });
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端发布失败', e));
     }
     return { ok: errors.length === 0, warnings: errors, chainId };
   });
@@ -859,29 +818,24 @@ export function registerClass(db: DB) {
     db.prepare('UPDATE class_chains SET items_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
       .run(JSON.stringify(items), item.ts, classId, chainId);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const remote = await fetchChain(row.invite_code, chainId);
-          if (!remote) throw new Error('云端接龙条目不存在');
-          if (remote.closed) return { ok: false, error: '接龙已被发起人结束' };
-          remote.items = mergeChainItems(remote.items || [], [item]);
-          remote.updatedAt = Date.now();
-          try {
-            await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
-            break;
-          } catch (e: any) {
-            if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时接龙 → 重拉合并重试
-            throw e;
-          }
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remote = await fetchChain(row.invite_code, chainId);
+        if (!remote) throw new Error('云端接龙条目不存在');
+        if (remote.closed) return { ok: false, error: '接龙已被发起人结束' };
+        remote.items = mergeChainItems(remote.items || [], [item]);
+        remote.updatedAt = Date.now();
+        try {
+          await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
+          break;
+        } catch (e: any) {
+          if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时接龙 → 重拉合并重试
+          throw e;
         }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端参与失败', e));
       }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端参与失败', e));
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -898,19 +852,16 @@ export function registerClass(db: DB) {
     }
     db.prepare('UPDATE class_chains SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, chainId);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        const remote = await fetchChain(row.invite_code, chainId);
-        if (remote) {
-          remote.closed = true;
-          remote.updatedAt = Date.now();
-          await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
-        }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端结束失败', e));
+    try {
+      const remote = await fetchChain(row.invite_code, chainId);
+      if (remote) {
+        remote.closed = true;
+        remote.updatedAt = Date.now();
+        await putClassFile(row.invite_code, ['chains', chainId + '.json'], JSON.stringify(remote, null, 2));
       }
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端结束失败', e));
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -959,20 +910,15 @@ export function registerClass(db: DB) {
     };
     upsertPoll(classId, entry);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(entry, null, 2));
-        await mutateManifestRemote(row.invite_code, `发起投票 ${question}`, (m) => {
-          if (!Array.isArray(m.pollIds)) m.pollIds = [];
-          if (!m.pollIds.includes(pollId)) m.pollIds.push(pollId);
-        });
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端发布失败', e));
-      }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    try {
+      await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(entry, null, 2));
+      await mutateManifestRemote(row.invite_code, `发起投票 ${question}`, (m) => {
+        if (!Array.isArray(m.pollIds)) m.pollIds = [];
+        if (!m.pollIds.includes(pollId)) m.pollIds.push(pollId);
+      });
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端发布失败', e));
     }
     return { ok: errors.length === 0, warnings: errors, pollId };
   });
@@ -997,29 +943,24 @@ export function registerClass(db: DB) {
     db.prepare('UPDATE class_polls SET votes_json = ?, updated_at = ? WHERE class_id = ? AND id = ?')
       .run(JSON.stringify(votes), vote.ts, classId, pollId);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const remote = await fetchPoll(row.invite_code, pollId);
-          if (!remote) throw new Error('云端投票条目不存在');
-          if (remote.closed) return { ok: false, error: '投票已被结束' };
-          remote.votes = { ...(remote.votes || {}), [alias]: vote };
-          remote.updatedAt = Date.now();
-          try {
-            await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
-            break;
-          } catch (e: any) {
-            if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时投票 → 重拉覆盖重试（同 alias 幂等）
-            throw e;
-          }
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remote = await fetchPoll(row.invite_code, pollId);
+        if (!remote) throw new Error('云端投票条目不存在');
+        if (remote.closed) return { ok: false, error: '投票已被结束' };
+        remote.votes = { ...(remote.votes || {}), [alias]: vote };
+        remote.updatedAt = Date.now();
+        try {
+          await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
+          break;
+        } catch (e: any) {
+          if (attempt < 2 && /409/i.test(String(e?.message || e))) continue;  // 他人同时投票 → 重拉覆盖重试（同 alias 幂等）
+          throw e;
         }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端投票失败', e));
       }
-    } else {
-      errors.push('云端暂时不可写：本次改动仅本机生效');
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端投票失败', e));
     }
     return { ok: errors.length === 0, warnings: errors };
   });
@@ -1036,19 +977,16 @@ export function registerClass(db: DB) {
     }
     db.prepare('UPDATE class_polls SET closed = 1, updated_at = ? WHERE class_id = ? AND id = ?').run(Date.now(), classId, pollId);
 
-    const cloudWritable = cloudCredential(db);
     const errors: string[] = [];
-    if (cloudWritable) {
-      try {
-        const remote = await fetchPoll(row.invite_code, pollId);
-        if (remote) {
-          remote.closed = true;
-          remote.updatedAt = Date.now();
-          await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
-        }
-      } catch (e: any) {
-        errors.push(friendlyCloudErr('云端结束失败', e));
+    try {
+      const remote = await fetchPoll(row.invite_code, pollId);
+      if (remote) {
+        remote.closed = true;
+        remote.updatedAt = Date.now();
+        await putClassFile(row.invite_code, ['polls', pollId + '.json'], JSON.stringify(remote, null, 2));
       }
+    } catch (e: any) {
+      errors.push(friendlyCloudErr('云端结束失败', e));
     }
     return { ok: errors.length === 0, warnings: errors };
   });

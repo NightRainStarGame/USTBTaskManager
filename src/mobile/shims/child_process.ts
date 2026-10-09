@@ -17,6 +17,10 @@ export const spawnSync = (..._args: any[]): any => unsupported('spawnSync');
 export const exec = (..._args: any[]): any => unsupported('exec');
 export const execFile = (..._args: any[]): any => unsupported('execFile');
 export const execSync = (..._args: any[]): any => unsupported('execSync');
+// v1.2.17：patchApply 用 execFileSync 探测 helper 进程是否存活（tasklist）。
+// 这个模块会被静态打进 mobile bundle，少一个导出 Rollup 就直接构建失败 ——
+// 补上与 spawn 同款的抛错占位即可（移动端本来也走不到补丁流程）。
+export const execFileSync = (..._args: any[]): any => unsupported('execFileSync');
 export const fork = (..._args: any[]): any => unsupported('fork');
 
-export default { spawn, spawnSync, exec, execFile, execSync, fork };
+export default { spawn, spawnSync, exec, execFile, execSync, execFileSync, fork };

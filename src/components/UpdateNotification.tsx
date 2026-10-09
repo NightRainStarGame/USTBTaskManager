@@ -10,7 +10,7 @@ interface UpdatePayload {
   hasUpdate?: boolean;
   notes?: string | null;
   downloadUrl?: string | null;
-  /** v1.2.7：备援下载链接（GitHub Releases → GitHub raw → jsdelivr） */
+  /** v1.2.17：备选下载直链（清单里的 urlMirrors，主链接取不到时按顺序试） */
   downloadUrlMirrors?: string[] | null;
   pageUrl?: string | null;
   sha256?: string | null;

@@ -23,8 +23,12 @@
 const { execFileSync } = require('node:child_process');
 const dns = require('node:dns').promises;
 
-const SSIO_BASE = process.env.SSIO_BASE || 'http://120.53.9.81:8100';
-const SSIO_KEY = process.env.SSIO_PUBLISH_KEY || 'ssio_live_lT2mMap99TOmHetdrnAfqe';
+// v1.2.17：改用发版脚本共用的 SSIO 客户端（scripts/lib/ssioHttp）。
+// 以前这里硬编码了**第三张** Key（`ssio_live_lT2m…`）并自己实现了一遍 HTTP；
+// 本仓库公开，多写一张就多一处泄露面。现在 Key 必须来自环境变量 / .env.local。
+const { createSsioClient } = require('./lib/ssioHttp');
+const ssio = createSsioClient({ requireKey: true });
+const SSIO_BASE = ssio.base;
 const OWNER = 'NightRainStarGame';
 
 /** 要搬的仓库与根前缀。 */
@@ -101,23 +105,20 @@ async function fetchText(token, apiIp, repo, path) {
 }
 
 async function kvPut(key, value) {
-  const res = await fetch(`${SSIO_BASE}/v1/kv?key=${encodeURIComponent(key)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': SSIO_KEY },
-    body: JSON.stringify({ value }),
-  });
-  if (!res.ok) throw new Error(`写入 ${key} 失败 HTTP ${res.status}：${(await res.text()).slice(0, 160)}`);
-  return res.json().catch(() => null);
+  try {
+    return await ssio.putKv(key, value);
+  } catch (e) {
+    throw new Error(`写入 ${key} 失败：${e.message}`);
+  }
 }
 
 async function kvGetRaw(key) {
-  const res = await fetch(`${SSIO_BASE}/v1/kv?key=${encodeURIComponent(key)}`, {
-    headers: { 'X-API-Key': SSIO_KEY },
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) return null;
-  const j = await res.json().catch(() => null);
-  return j?.value ?? null;
+  try {
+    return (await ssio.getKv(key)).json?.value ?? null;
+  } catch {
+    // 迁移是幂等的：读不到（不存在 / 无权限）按「还没写」处理
+    return null;
+  }
 }
 
 (async () => {

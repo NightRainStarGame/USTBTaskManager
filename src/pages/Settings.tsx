@@ -10,8 +10,9 @@ import AboutPanel from '@/components/AboutPanel';
 import DiagPanel from '@/components/DiagPanel';
 import { PatchUpdateButton, PatchCacheCard, PatchStateCard } from '@/components/PatchPanel';
 import MobileUpdatePanel from '@/components/MobileUpdatePanel';
+import XlsImportWizard from '@/components/XlsImportWizard';
 import dayjs from 'dayjs';
-import type { UserProfile, XlsParseResult, XlsFieldMapping, XlsImportSummary } from '@/types';
+import type { UserProfile } from '@/types';
 
 /** 移动端（Android 壳）：更新走 APK 自更新链路（见 MobileUpdatePanel），
  *  桌面那套 child_process / 补丁只为安装包设计，在 APK 里不可用 → 一律隐藏。
@@ -226,31 +227,15 @@ export default function SettingsPage() {
     await refreshBin();
   };
 
-  // ===== 课表 Excel 导入 =====
+  // v1.2.17：向导本体搬到 components/XlsImportWizard，这里只留开关与上次导入信息。
   const [xlsOpen, setXlsOpen] = useState(false);
-  const [xlsStep, setXlsStep] = useState<'file' | 'mapping' | 'options' | 'preview' | 'done'>('file');
-  const [xlsBusy, setXlsBusy] = useState(false);
-  const [xlsFile, setXlsFile] = useState<string | null>(null);
-  const [xlsParsed, setXlsParsed] = useState<XlsParseResult | null>(null);
-  const [xlsMapping, setXlsMapping] = useState<XlsFieldMapping>({ className: -1, teacher: -1, weeks: -1, day: -1, period: -1, location: -1 });
-  const [xlsXn, setXlsXn] = useState(`${new Date().getFullYear()}-${new Date().getFullYear() + 1}`);
-  const [xlsXq, setXlsXq] = useState<'1' | '2'>(((new Date().getMonth() + 1) >= 8 || (new Date().getMonth() + 1) <= 1) ? '1' : '2');
-  const [xlsStart, setXlsStart] = useState(dayjs().startOf('week').add(1, 'day').format('YYYY-MM-DD')); // 本周一
-  const [xlsReplace, setXlsReplace] = useState(true);
-  const [xlsSummary, setXlsSummary] = useState<XlsImportSummary | null>(null);
-  const [xlsMsg, setXlsMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [xlsLastSync, setXlsLastSync] = useState<{ lastSync: number; courseCount: number } | null>(null);
 
-  const resetXlsWizard = async () => {
-    setXlsStep('file'); setXlsBusy(false); setXlsFile(null); setXlsParsed(null);
-    setXlsMapping({ className: -1, teacher: -1, weeks: -1, day: -1, period: -1, location: -1 });
-    setXlsSummary(null); setXlsMsg(null);
-    try { setXlsLastSync(await window.taskAPI.xls.lastImport()); } catch { /* ignore */ }
-  };
-
   useEffect(() => {
-    if (xlsOpen) void resetXlsWizard();
+    if (!xlsOpen) return;
+    window.taskAPI.xls.lastImport().then(setXlsLastSync).catch(() => { /* ignore */ });
   }, [xlsOpen]);
+
 
   useEffect(() => {
     (async () => {
@@ -1544,213 +1529,9 @@ export default function SettingsPage() {
         </Modal>
       )}
 
-      {/* 课表 Excel 导入向导 */}
-      {xlsOpen && (
-        <Modal
-          title={`从 Excel 导入课表${xlsParsed ? ` · ${xlsParsed.sheetName}` : ''}`}
-          onClose={() => setXlsOpen(false)}
-          width="max-w-3xl"
-          footer={
-            xlsStep === 'done' ? (
-              <button onClick={() => setXlsOpen(false)} className="btn-neon">完成</button>
-            ) : (
-              <>
-                <button onClick={() => setXlsOpen(false)} className="btn-ghost mr-auto">取消</button>
-                {xlsStep === 'file' && <button onClick={async () => {
-                  setXlsBusy(true); setXlsMsg(null);
-                  try {
-                    const fp = await window.taskAPI.xls.pickFile();
-                    if (!fp) { setXlsBusy(false); return; }
-                    const parsed = await window.taskAPI.xls.parseFile(fp);
-                    setXlsFile(fp); setXlsParsed(parsed); setXlsMapping(parsed.mapping);
-                    setXlsStep('mapping');
-                  } catch (e: any) { setXlsMsg({ ok: false, text: e?.message || '解析失败' }); }
-                  finally { setXlsBusy(false); }
-                }} disabled={xlsBusy} className="btn-neon"><FileSpreadsheet size={14} /> {xlsBusy ? '解析中…' : '选择文件并解析'}</button>}
-                {xlsStep === 'mapping' && <>
-                  <button onClick={() => { setXlsParsed(null); setXlsFile(null); setXlsStep('file'); }} className="btn-ghost">重选文件</button>
-                  <button onClick={async () => {
-                    if (!xlsParsed) return;
-                    setXlsBusy(true); setXlsMsg(null);
-                    try {
-                      const rep = await window.taskAPI.xls.reparse(xlsParsed, xlsMapping);
-                      setXlsParsed(rep);
-                      if (rep.mapping.className < 0 || rep.mapping.weeks < 0 || rep.mapping.day < 0 || rep.mapping.period < 0) {
-                        setXlsMsg({ ok: false, text: '必填字段（课程名/周次/星期/节次）必须全部指定列' });
-                        return;
-                      }
-                      setXlsStep('options');
-                    } catch (e: any) { setXlsMsg({ ok: false, text: e?.message || '解析失败' }); }
-                    finally { setXlsBusy(false); }
-                  }} disabled={xlsBusy} className="btn-neon">下一步</button>
-                </>}
-                {xlsStep === 'options' && <button onClick={() => setXlsStep('preview')} className="btn-neon">下一步：预览</button>}
-                {xlsStep === 'preview' && <button onClick={async () => {
-                  if (!xlsParsed) return;
-                  setXlsBusy(true); setXlsMsg(null);
-                  try {
-                    const startTs = dayjs(xlsStart).startOf('day').valueOf();
-                    const summary = await window.taskAPI.xls.importItems(xlsParsed.items, {
-                      xn: xlsXn, xq: xlsXq, semesterStart: startTs, replaceExisting: xlsReplace,
-                    });
-                    setXlsSummary(summary); setXlsStep('done');
-                    setXlsLastSync(await window.taskAPI.xls.lastImport());
-                  } catch (e: any) { setXlsMsg({ ok: false, text: e?.message || '导入失败' }); }
-                  finally { setXlsBusy(false); }
-                }} disabled={xlsBusy || !xlsParsed} className="btn-neon btn-neon-yellow"><Calendar size={14} /> {xlsBusy ? '导入中…' : '确认导入'}</button>}
-              </>
-            )
-          }
-        >
-          <div className="space-y-3">
-            {xlsStep === 'file' && (
-              <div className="text-sm text-text-secondary space-y-3">
-                <p>选择你的课表 Excel 文件，向导会自动识别表头与课程行。常见来源：</p>
-                <ul className="list-disc list-inside text-text-dim font-mono text-xs space-y-1">
-                  <li>教务系统导出（教学管理系统 → 我的课表 → 导出 Excel）</li>
-                  <li>超级课程表 App 导出</li>
-                  <li>其他任何「每行一节课」的表格</li>
-                </ul>
-                <p className="text-text-dim text-xs">需要的列：<strong className="text-neon-green">课程名称、教师、周次、星期、节次</strong>（可选：教室/地点）。识别错的列可以在下一步手动指定。</p>
-              </div>
-            )}
+      {/* v1.2.17：向导本体搬到 components/XlsImportWizard —— 课程页顶部也用它 */}
+      <XlsImportWizard open={xlsOpen} onClose={() => setXlsOpen(false)} />
 
-            {xlsStep === 'mapping' && xlsParsed && (
-              <div className="space-y-3">
-                <div className="text-xs text-text-dim font-mono">
-                  已读取 <strong className="text-neon-green">{xlsParsed.totalRows}</strong> 行 · 表头 <strong>{xlsParsed.headers.length}</strong> 列 · 解析出 <strong className="text-neon-green">{xlsParsed.preview.length}</strong> 条（前 12 条预览） · 跳过 {xlsParsed.badRows.length} 条
-                </div>
-                {(['className','teacher','weeks','day','period','location'] as const).map(key => (
-                  <Field key={key} label={
-                    key === 'className' ? '课程名称 *' :
-                    key === 'teacher' ? '教师' :
-                    key === 'weeks' ? '周次 *' :
-                    key === 'day' ? '星期 *' :
-                    key === 'period' ? '节次/时间 *' :
-                    '教室/地点'
-                  }>
-                    <select
-                      className="input-neon"
-                      value={xlsMapping[key]}
-                      onChange={async (e) => {
-                        const v = parseInt(e.target.value, 10);
-                        const newMap = { ...xlsMapping, [key]: v };
-                        setXlsMapping(newMap);
-                        if (xlsParsed) {
-                          try { setXlsParsed(await window.taskAPI.xls.reparse(xlsParsed, newMap)); } catch { /* ignore */ }
-                        }
-                      }}
-                    >
-                      <option value={-1}>— 不映射 —</option>
-                      {xlsParsed.headers.map((h, i) => (
-                        <option key={i} value={i}>{i + 1}. {h || `列${i + 1}`}</option>
-                      ))}
-                    </select>
-                  </Field>
-                ))}
-                {xlsParsed.warnings.length > 0 && (
-                  <div className="p-2 rounded bg-neon-yellow/10 border border-neon-yellow/30 text-xs text-neon-yellow space-y-1">
-                    {xlsParsed.warnings.map((w, i) => <div key={i}>· {w}</div>)}
-                  </div>
-                )}
-                {xlsParsed.badRows.length > 0 && (
-                  <details className="text-xs text-text-dim font-mono">
-                    <summary className="cursor-pointer">跳过的行（{xlsParsed.badRows.length}）</summary>
-                    <div className="mt-1 max-h-32 overflow-y-auto p-2 rounded bg-ink-base/40 border border-neon-green/10">
-                      {xlsParsed.badRows.slice(0, 30).map((b, i) => <div key={i}>第 {b.row} 行：{b.reason}</div>)}
-                    </div>
-                  </details>
-                )}
-              </div>
-            )}
-
-            {xlsStep === 'options' && xlsParsed && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="学年">
-                    <input
-                      value={xlsXn}
-                      onChange={(e) => setXlsXn(e.target.value)}
-                      className="input-neon"
-                      placeholder="2025-2026"
-                    />
-                  </Field>
-                  <Field label="学期">
-                    <select className="input-neon" value={xlsXq} onChange={(e) => setXlsXq(e.target.value as '1' | '2')}>
-                      <option value="1">秋季学期（1）</option>
-                      <option value="2">春季学期（2）</option>
-                    </select>
-                  </Field>
-                </div>
-                <Field label="开学日（第 1 周周一）">
-                  <input type="date" value={xlsStart} onChange={(e) => setXlsStart(e.target.value)} className="input-neon" />
-                </Field>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={xlsReplace} onChange={(e) => setXlsReplace(e.target.checked)} className="accent-neon-green" />
-                  <span>替换之前的课表导入（教务 / Excel）</span>
-                </label>
-                <div className="text-[10px] text-text-dim font-mono p-2 rounded bg-ink-base/40 border border-neon-green/10">
-                  取消勾选则与已有导入并存（不推荐：会重复显示同一门课）。手动添加的课程/作业完全不受影响。
-                </div>
-              </div>
-            )}
-
-            {xlsStep === 'preview' && xlsParsed && (
-              <div className="space-y-2">
-                <div className="text-xs text-text-dim font-mono">
-                  解析 <strong className="text-neon-green">{xlsParsed.preview.length}</strong> 条 · 跳过 {xlsParsed.badRows.length} 条 · 共 {xlsParsed.totalRows} 行
-                </div>
-                <div className="max-h-72 overflow-y-auto rounded border border-neon-green/15">
-                  <table className="w-full text-xs font-mono">
-                    <thead className="bg-neon-green/10 text-neon-green">
-                      <tr><th className="p-1.5 text-left">星期</th><th className="p-1.5 text-left">节次</th><th className="p-1.5 text-left">课程</th><th className="p-1.5 text-left">教师</th><th className="p-1.5 text-left">周次</th><th className="p-1.5 text-left">教室</th></tr>
-                    </thead>
-                    <tbody>
-                      {xlsParsed.preview.map((it, i) => (
-                        <tr key={i} className="border-t border-neon-green/10">
-                          <td className="p-1.5">周{['日','一','二','三','四','五','六'][it.day]}</td>
-                          <td className="p-1.5">第{it.periodName}</td>
-                          <td className="p-1.5 text-neon-green">{it.className}</td>
-                          <td className="p-1.5">{it.teacher || '—'}</td>
-                          <td className="p-1.5">{it.weeksText}</td>
-                          <td className="p-1.5">{it.location || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {xlsStep === 'done' && xlsSummary && (
-              <div className="space-y-3">
-                <div className="p-4 rounded-md bg-neon-green/5 border border-neon-green/30 text-sm space-y-1">
-                  <div className="font-bold text-neon-green text-base">✓ 导入成功</div>
-                  <div className="font-mono text-xs space-y-0.5">
-                    <div>课程：<strong className="text-neon-green">{xlsSummary.courses}</strong> 门</div>
-                    <div>课表事件：<strong className="text-neon-green">{xlsSummary.events}</strong> 条（按周展开后）</div>
-                    <div>原始记录：{xlsSummary.items} 条</div>
-                  </div>
-                </div>
-                {xlsSummary.warnings.length > 0 && (
-                  <div className="p-2 rounded bg-neon-yellow/10 border border-neon-yellow/30 text-xs text-neon-yellow space-y-1">
-                    {xlsSummary.warnings.map((w, i) => <div key={i}>· {w}</div>)}
-                  </div>
-                )}
-                <div className="text-xs text-text-dim font-mono">
-                  提示：到「课程 → 课表日历」或「课程 → 课程卡片」即可看到导入的课程。点课程卡片可以添加每节课的作业。
-                </div>
-              </div>
-            )}
-
-            {xlsMsg && (
-              <div className={`p-2 rounded text-xs font-mono whitespace-pre-wrap break-all ${xlsMsg.ok ? 'bg-neon-green/10 border border-neon-green/30 text-neon-green' : 'bg-neon-danger/10 border border-neon-danger/30 text-neon-danger'}`}>
-                {xlsMsg.ok ? '✓ ' : '✗ '}{xlsMsg.text}
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }

@@ -18,11 +18,15 @@ import type { DB } from '../db/index';
 // 直接抛 `ReferenceError: require is not defined`，阻断移动端启动。
 // patchApply 不反向依赖本模块，无循环依赖；其顶层只有定义无副作用，静态引入安全。
 import * as patchApply from './patchApply';
-import { fetchSsioManifestText, fetchSsioDownloadUrl, isSsioSource, SSIO_PREFIX } from './ssio';
-import { SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
+import { fetchSsioManifestText, isSsioSource, ssioBaseUrl, SSIO_PREFIX } from './ssio';
+import { resolveDownloadRef, SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
+import type { UpdateSourceDTO } from '../api-factory';
+// v1.2.17：退出前必须显式标记「正在退出」—— app.exit(0) 不触发 before-quit，
+// 关窗拦截器（最小化到托盘 / 弹框询问）会拦住补丁重启，表现为「退出后没反应」。
+import { markApplyingUpdate } from '../quitState';
 
 /**
- * 内置更新源。
+ * 内置更新源 —— **只有一个**，写成一个对象而不是一堆多选分支。
  *
  * v1.2.15：只剩 SSIO 一个源。
  * 以前挂着 GitHub raw / jsDelivr / 北科云盘做备源，实际收益是负的：
@@ -30,20 +34,21 @@ import { SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../cloud/ssioClient';
  *     备源即使连上也只会报一个过期的版本号（甚至反过来把用户锁旧版本）；
  *   · 每次检查都要原地等它们超时，表现就是「点检查更新转半天」。
  * 自建 SSIO 国内外都通、还能同一个接口覆盖桌面包与 APK，没必要再留多重镜像。
+ *
+ * 注意：这是**内置默认**，不等于「只有一个人能用」—— 用户仍可在设置里添加自己的
+ * 自建镜像页（http 型），所以 UpdateSource 的数组形态保留了。真正被删掉的只是默认集。
  */
-export const DEFAULT_UPDATE_SOURCES: UpdateSource[] = [
-  {
-    // SSIO 主源。`ssio+` 前缀由 updater/ssio.ts 识别，
-    // password 位置放 APIKey（只有 release:read，没有写权限，泄露也发不了恶意包）。
-    name: 'SSIO 官方源',
-    url: `${SSIO_PREFIX}${SSIO_DEFAULT_BASE}`,
-    password: SSIO_BUILTIN_KEY,
-    type: 'ssio',
-    enabled: true,
-    primary: true,
-  },
-];
-export const DEFAULT_UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]?.url || '';
+export const DEFAULT_UPDATE_SOURCE: UpdateSource = {
+  // SSIO 主源。`ssio+` 前缀由 updater/ssio.ts 识别，
+  // password 位置放 APIKey（只有 release:read，没有写权限，泄露也发不了恶意包）。
+  name: 'SSIO 官方源',
+  url: `${SSIO_PREFIX}${SSIO_DEFAULT_BASE}`,
+  password: SSIO_BUILTIN_KEY,
+  type: 'ssio',
+  enabled: true,
+  primary: true,
+};
+
 
 const FETCH_TIMEOUT_MS = 15000;
 const MAX_MANIFEST_BYTES = 1024 * 512;
@@ -54,19 +59,14 @@ const SETTING_AUTO = 'update_auto_check';
 const SETTING_SKIPPED = 'update_skipped_version';
 const SETTING_LAST_CHECK = 'update_last_check';
 
-export interface UpdateSource {
-  name: string;
-  url: string;
-  enabled: boolean;
-  primary: boolean;
-  /**
-   * 'ssio'   = 自建 SSIO 发行源（url 带 `ssio+` 前缀）
-   * 'http'   = 直链 GET 一份 latest.json（自建镜像/内网用）
-   * v1.2.15：去掉 'anyshare'（北科云盘）—— 只有校园网可达，且它托管的清单早已过时。
-   */
-  type?: 'http' | 'ssio';
-  password?: string;
-}
+/**
+ * v1.2.17：这个类型以前在本文件、api-factory.ts（UpdateSourceDTO）、Settings.tsx 各有一份，
+ * 字段级逐字重复 —— 加一个字段要去三处同步，而它们互相之间没有任何引用关系，
+ * 编译期也不会报错（犯错的代价是运行时静默丢字段）。
+ * 现在以 api-factory 的 UpdateSourceDTO 为唯一出处：它在文件头自称「preload 与移动端 shim 共用」，
+ * 本来就是两头的交汇点。这里是 type-only 引用，不会把 api-factory 拉进主进程运行时。
+ */
+export type UpdateSource = UpdateSourceDTO;
 
 export interface UpdateManifest {
   version: string;
@@ -102,7 +102,7 @@ export interface UpdateCheckResult {
   hasUpdate?: boolean;
   notes?: string | null;
   downloadUrl?: string | null;
-  /** v1.2.7：备援下载链接（按顺序：GitHub Releases → GitHub raw → jsdelivr） */
+  /** v1.2.17：备选下载直链（清单里的 urlMirrors，按顺序尝试；已不是 GitHub 那几个镜像） */
   downloadUrlMirrors?: string[] | null;
   pageUrl?: string | null;
   sha256?: string | null;
@@ -306,9 +306,9 @@ export function getSources(db: DB | null): UpdateSource[] {
         }
       }
     }
-    // 3) 默认源补充（真正的新后端才会加进来）
-    const toAdd = DEFAULT_UPDATE_SOURCES.filter((s) => !deduped.some((x) => sourceKey(x) === sourceKey(s)));
-    const merged = [...deduped, ...toAdd.map((s) => ({ ...s, primary: false }))];
+    // 3) 默认源补充（用户没配过 SSIO 时才补）
+    const hasDefault = deduped.some((x) => sourceKey(x) === sourceKey(DEFAULT_UPDATE_SOURCE));
+    const merged = hasDefault ? deduped : [...deduped, { ...DEFAULT_UPDATE_SOURCE, primary: false }];
     // SSIO 接管 primary（有 SSIO 源就让它当主源）
     const ssioIdx = merged.findIndex((s) => isSsioSource(s));
     if (ssioIdx >= 0) {
@@ -323,7 +323,7 @@ export function getSources(db: DB | null): UpdateSource[] {
     return merged;
   }
 
-  return DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s }));
+  return [{ ...DEFAULT_UPDATE_SOURCE }];
 }
 
 export function setSources(db: DB | null, sources: UpdateSource[]): UpdateSource[] {
@@ -333,7 +333,7 @@ export function setSources(db: DB | null, sources: UpdateSource[]): UpdateSource
   const filled = cleaned.filter((s) => s.url);
   const drafts = cleaned.filter((s) => !s.url);
   const ordered = [...filled, ...drafts];
-  const final = ordered.length ? ordered : [DEFAULT_UPDATE_SOURCES[0]];
+  const final = ordered.length ? ordered : [DEFAULT_UPDATE_SOURCE];
   const hasPrimary = final.some((s) => s.primary);
   if (!hasPrimary) final[0].primary = true;
   if (db) setSetting(db, SETTING_SOURCES, JSON.stringify(final));
@@ -359,7 +359,7 @@ export function setActiveSourceIndex(db: DB | null, index: number): number {
 
 export function getEffectiveSource(db: DB | null): string {
   const idx = getActiveSourceIndex(db);
-  return getSources(db)[idx]?.url || DEFAULT_UPDATE_SOURCES[0]?.url || '';
+  return getSources(db)[idx]?.url || DEFAULT_UPDATE_SOURCE.url;
 }
 
 function userAgent(): string {
@@ -422,12 +422,14 @@ async function fetchManifestText(src: UpdateSource): Promise<string> {
    * 解析下载地址。
    *
    * v1.2.15：清单里不再直接塞长效 URL，而是记 SSIO 的 id 引用 —— SSIO 的下载链接是
-   * **5 分钟过期的签名 URL**（见 updater/ssio.ts），而「早上弹更新、晚上才点安装」
-   * 是常态，那时候 URL 早就失效了，表现为「下载失败，重试还是失败」。
+   * **5 分钟过期的签名 URL**，而「早上弹更新、晚上才点安装」是常态，那时候 URL
+   * 早就失效了，表现为「下载失败，重试还是失败」。
    * 所以真正下载前才把引用换成新鲜地址：
    *   https?://…          直链，原样返回（自建 http 镜像仍可用）
-   *   ssio:release:<id>  → GET /v1/releases/:id/download（整包）
+   *   ssio:release:<id>  → GET /v1/releases/latest（整包，按渠道取当前最新）
    *   ssio:file:<id>     → GET /v1/storage/files/:id/download（增量补丁 zip）
+   * 这两种引用的现签协议由 cloud/ssioClient 的 resolveDownloadRef 独一份实现，
+   * 移动端 APK 更新用的是同一个函数。
    */
   async function resolveDownloadUrl(
     url: string,
@@ -438,16 +440,15 @@ async function fetchManifestText(src: UpdateSource): Promise<string> {
     const raw = String(url || '').trim();
     if (/^https?:\/\//i.test(raw)) return raw;
 
-    const ref = raw.match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
-    if (ref) {
+    if (/^ssio:(release|file):/i.test(raw)) {
       const picked = pickSsioSource(sources, preferredIndex);
       if (!picked) throw new Error('清单引用了 SSIO 资源，但当前没有可用的 SSIO 更新源');
-      return fetchSsioDownloadUrl(
-        picked,
-        ref[1].toLowerCase() === 'release' ? 'release' : 'file',
-        ref[2],
+      return resolveDownloadRef(raw, {
+        target: 'desktop',
         expectVersion,
-      );
+        // 用户可能在设置里配了自建 SSIO：那个源的地址与 Key 优先于内置默认值
+        server: { baseUrl: ssioBaseUrl(picked), apiKey: picked.password },
+      });
     }
 
     const sourceSummary = sources
@@ -776,11 +777,11 @@ export function registerUpdater(db: DB | null) {
     const sources = getSources(db);
     const activeIndex = getActiveSourceIndex(db);
     return {
-      defaultSources: DEFAULT_UPDATE_SOURCES.map((s) => ({ ...s })),
+      defaultSources: [{ ...DEFAULT_UPDATE_SOURCE }],
       sources,
       activeIndex,
       source: sources[activeIndex]?.url || '',
-      defaultSource: DEFAULT_UPDATE_SOURCES[0]?.url || '',
+      defaultSource: DEFAULT_UPDATE_SOURCE.url,
       autoCheck: getSetting(db, SETTING_AUTO) !== '0',
       skippedVersion: getSetting(db, SETTING_SKIPPED) || null,
       lastCheckAt: Number(getSetting(db, SETTING_LAST_CHECK)) || 0,
@@ -823,7 +824,7 @@ export function registerUpdater(db: DB | null) {
     // NSIS 完成后由 installer.nsh 的 .onInstSuccess 自动拉起新版本 TaskManager.exe
     // 这里把主进程退掉，把 $INSTDIR 留给 NSIS 写新文件
     setTimeout(() => {
-      try { app.exit(0); } catch {}
+      try { markApplyingUpdate(); app.exit(0); } catch {}
     }, 300);
     return { ok: true, silent: true };
   });
@@ -947,7 +948,7 @@ export function registerUpdater(db: DB | null) {
       if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'done', fileName: `${entry.fromVersion}-patch.zip`, percent: 100, note: '补丁已落盘，主进程即将退出' });
     }
     setTimeout(() => {
-      try { app.exit(0); } catch {}
+      try { markApplyingUpdate(); app.exit(0); } catch {}
     }, 600);
     return { ok: true, helperPid: spawned.pid };
   });
@@ -999,7 +1000,7 @@ export function registerUpdater(db: DB | null) {
       if (!w.isDestroyed()) w.webContents.send('update:progress', { phase: 'done', fileName: 'patch-cache', percent: 100, note: '补丁已就绪，应用并重启…' });
     }
     setTimeout(() => {
-      try { app.exit(0); } catch {}
+      try { markApplyingUpdate(); app.exit(0); } catch {}
     }, 600);
     return { ok: true, helperPid: r.helperPid };
   });
@@ -1013,7 +1014,7 @@ export function registerUpdater(db: DB | null) {
     if (!r.ok) return r;
     // 600ms 后主进程退出，让 helper 完成接管
     setTimeout(() => {
-      try { app.exit(0); } catch {}
+      try { markApplyingUpdate(); app.exit(0); } catch {}
     }, 600);
     return { ok: true, helperPid: r.helperPid };
   });

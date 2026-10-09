@@ -60,9 +60,16 @@ export interface Requirement {
   created_at: number;
   course_name?: string;
   course_color?: string;
-  /** 'local' 本地手建 | 'github' 从 GitHub 同步 */
+  /**
+   * 'local' 本地手建 | 'github' **作业同步接收来的条目**。
+   *
+   * 注意字面值是历史遗留：作业以前确实托管在 GitHub 仓库里，v1.2.15 起只存在 SSIO，
+   * 但用户库里已有的行都写着这个值，重命名等于一次数据迁移。
+   * 所以语义请读作「非本地」，不要拿它判断 GitHub —— 真正的常量见
+   * electron/homework 的 SYNCED_SOURCE_TAG。UI 文案一律说「作业同步」。
+   */
   source?: 'local' | 'github' | null;
-  /** GitHub 同步条目的稳定 ID（去重键） */
+  /** 同步条目的稳定 ID（去重键） */
   remote_id?: string | null;
   /** 对应的上课日期 YYYY-MM-DD（每节课作业可能不同） */
   session_date?: string | null;
@@ -184,38 +191,18 @@ export interface UpdateProgress {
   sha256?: string;
 }
 
+// v1.2.17：课表导入的类型统一到 api-factory（preload / 移动端 shim / 渲染层三方的交汇点），
+// 与 UpdateSourceDTO 同一个道理 —— 以前这里是逐字重复的一份，加字段必漏。
+import type { XlsFieldMappingDTO, XlsItemDTO, XlsParseResultDTO, XlsProfileDTO } from '../../electron/api-factory';
+
 // ===== 课表 XLS 导入 =====
-export interface XlsFieldMapping {
-  className: number;
-  teacher: number;
-  weeks: number;
-  day: number;
-  period: number;
-  location: number;
-}
-
-export interface XlsPreviewItem {
-  day: number;
-  period: number;
-  className: string;
-  teacher: string;
-  weeksText: string;
-  weeks: number[];
-  location: string;
-  periodName: string;
-}
-
-export interface XlsParseResult {
-  sheetName: string;
-  headers: string[];
-  rows: Record<string, string>[];
-  totalRows: number;
-  mapping: XlsFieldMapping;
-  preview: XlsPreviewItem[];
-  items: XlsPreviewItem[];
-  warnings: string[];
-  badRows: { row: number; reason: string }[];
-}
+// v1.2.17：这几个类型以前在 src/types 与 electron/api-factory 各写一份（逐字重复）。
+// 现在统一以 api-factory 的 DTO 为准 —— 它是 preload / 移动端 shim / 渲染层三方的交汇点，
+// 与 UpdateSourceDTO 同一个道理。改字段不会再漏掉某一方。
+export type XlsFieldMapping = XlsFieldMappingDTO;
+export type XlsPreviewItem = XlsItemDTO;
+export type XlsParseResult = XlsParseResultDTO;
+export type XlsProfile = XlsProfileDTO;
 
 export interface XlsImportSummary {
   courses: number;

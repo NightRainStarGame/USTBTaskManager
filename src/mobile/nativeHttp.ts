@@ -2,7 +2,7 @@
  * Android 原生 HTTP 通道（v1.2.10 块 6）。
  *
  * 为什么需要：APK 的主进程逻辑跑在同一个 webview 里，fetch 受同源策略约束。
- *   · GitHub API / raw CDN 发 CORS 头 → 作业同步直接可用
+ *   · SSIO 接口发 CORS 头 → 作业同步直接可用
  *   · USTB 教务（贝壳课表）不发 → 请求被浏览器拦掉，功能等于废的
  * 原生层没有 CORS 概念，@capacitor-community/http 的 CapacitorHttp 走 OkHttp 可绕过。
  *

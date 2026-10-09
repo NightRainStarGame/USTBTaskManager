@@ -16,7 +16,7 @@
  * 因此不会出现「下载进 IndexedDB、安装时抛 spawn 未定义」的经典翻车。
  */
 
-import { kvGetJson, SSIO_DEFAULT_BASE, SSIO_BUILTIN_KEY } from '../../electron/cloud/ssioClient';
+import { kvGetJson, SSIO_KEYS, isSsioRef, resolveDownloadRef } from '../../electron/cloud/ssioClient';
 
 export interface AndroidUpdateInfo {
   version: string;
@@ -41,14 +41,14 @@ export interface ApkUpdateCheck {
   error?: string;
 }
 
-/** v1.2.12：SSIO 主源。服务端 KV 里镜像了一份 latest.json（发版时同步上去），
- *  国内外都能取到，且不受 GitHub raw 缓存影响。 */
-const SSIO_LATEST_KEY = 'latest.json';
-
-// v1.2.15：删掉 GitHub raw / jsDelivr 备源 —— 前者在国内被 DNS 投毒（实测解析成
-// 0.0.0.0），后者镜像的仓库 latest.json 已不再更新，拉到只会是一个更旧的
-// versionCode。备源非但帮不上忙，还可能把用户锁在旧版本上。
-const FETCH_TIMEOUT_MS = 12000;
+/** v1.2.17：键名不再本地硬编码 —— 与桌面、发版脚本共用 SSIO_KEYS。
+ *  以前这里写的是裸键 'latest.json'，而发版脚本只往 'taskmgr/latest.json' 写，
+ *  即移动端读的是一个无人写入的键，APK 更新从 v1.2.12 起实际一直是断的。
+ *  本地这份 FETCH_TIMEOUT_MS / fetchJson / resolveSsioRef 也一并删了 ——
+ *  「引用→签名 URL」的现签协议现在只有 ssioClient 一个实现。 */
+function isUsableUrl(u: unknown): u is string {
+  return typeof u === 'string' && (/^https?:\/\//i.test(u) || isSsioRef(u));
+}
 
 function pick(name: string): any {
   const g = globalThis as any;
@@ -101,56 +101,6 @@ export async function getCurrentVersion(): Promise<{ versionCode: number; versio
   return { versionCode: 0, versionName: fallbackName };
 }
 
-async function fetchJson(url: string, headers?: Record<string, string>): Promise<any> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store', headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * 把 ssio:release:<id> / ssio:file:<id> 引用换成**新鲜**下载地址。
- *
- * SSIO 的下载链接是 5 分钟过期的签名 URL —— 清单是拉取时缓存的，用户点「安装」
- * 可能晚了好几分钟，直接用清单里的旧地址必 404。所以这一步必须在下载前一刻做。
- *
- * 服务端能拿到签名地址的入口只有两个：
- *   · release → `GET /v1/releases/latest`（每次请求重新签名；**没有**
- *     /v1/releases/:id/download 端点，v1.2.15 曾接错导致下载 404，v1.2.16 修复）
- *   · file    → `GET /v1/storage/files/:id/download`
- */
-async function resolveSsioRef(ref: string, expectVersion?: string): Promise<string> {
-  const m = ref.match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
-  if (!m) throw new Error(`SSIO 引用格式无效：${ref}`);
-  const kind = m[1].toLowerCase();
-  const apiPath =
-    kind === 'release'
-      ? '/v1/releases/latest?platform=android&arch=arm64&channel=stable&current=0.0.1&clientId=taskmgr-apk-dl'
-      : `/v1/storage/files/${m[2]}/download`;
-  const j = await fetchJson(`${SSIO_DEFAULT_BASE}${apiPath}`, {
-    accept: 'application/json',
-    'X-API-Key': SSIO_BUILTIN_KEY,
-  });
-  if (kind === 'release' && expectVersion && String(j.version || '') !== String(expectVersion)) {
-    throw new Error(`SSIO 最新发行是 ${j.version || '?'}，与清单 ${expectVersion} 不一致（可能被回滚）`);
-  }
-  if (!j?.url) throw new Error('SSIO 没返回下载地址');
-  return String(j.url);
-}
-
-/** v1.2.15：清单里的地址既可以是 http(s) 直链，也可以是 ssio:release:<id> / ssio:file:<id> 引用 */
-function isUsableUrl(u: unknown): u is string {
-  return (
-    typeof u === 'string' &&
-    (/^https?:\/\//i.test(u) || /^ssio:(release|file):[A-Za-z0-9_-]+$/i.test(u))
-  );
-}
-
 function parseAndroid(obj: any, source: string): AndroidUpdateInfo | null {
   const a = obj?.android;
   if (!a || typeof a !== 'object') return null;
@@ -173,7 +123,7 @@ function parseAndroid(obj: any, source: string): AndroidUpdateInfo | null {
 export async function fetchAndroidUpdate(): Promise<AndroidUpdateInfo | null> {
   // v1.2.15：只剩 SSIO 一个源（备源的下场见上方 LATEST_SOURCES 注释）
   try {
-    const obj = await kvGetJson<any>(SSIO_LATEST_KEY);
+    const obj = await kvGetJson<any>(SSIO_KEYS.manifest);
     return parseAndroid(obj, 'ssio');
   } catch (e) {
     console.warn('[apk] SSIO 更新清单读取失败:', e);
@@ -220,7 +170,7 @@ export type InstallResult =
  * 下载并安装（原生侧负责下载 + sha256 校验 + 拉起安装界面）。
  *
  * v1.2.15：清单里的地址多是 ssio: 引用 —— 安装前先现签一条新鲜 URL
- * （签名 5 分钟过期，见 resolveSsioRef）。多个候选依次尝试。
+ * （签名 5 分钟过期，见 ssioClient 的 resolveDownloadRef）。多个候选依次尝试。
  */
 export async function installAndroidApk(info: AndroidUpdateInfo): Promise<InstallResult> {
   const plugin = pick('ApkInstaller');
@@ -233,7 +183,7 @@ export async function installAndroidApk(info: AndroidUpdateInfo): Promise<Instal
 
   for (const raw of candidates) {
     try {
-      const url = /^ssio:/i.test(raw) ? await resolveSsioRef(raw, info.version) : raw;
+      const url = isSsioRef(raw) ? await resolveDownloadRef(raw, { target: 'android', expectVersion: info.version }) : raw;
       const r = await plugin.installApk({ url, sha256: info.sha256 || '' });
       if (r && r.ok === true) return { ok: true };
       lastReason = String(r?.reason || 'UNKNOWN');

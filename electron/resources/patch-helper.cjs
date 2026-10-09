@@ -156,14 +156,25 @@ function waitForProcessExit(pid, timeoutMs) {
   const start = Date.now();
   return new Promise((resolve) => {
     const tick = () => {
-      let alive = false;
+      let alive;
       try {
         // tasklist 在 PID 不存在时返回空（不会抛）
         const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
         alive = /,\s*\d+\s*,/.test(`\n${out}\n`);
-      } catch { alive = false; }
+      } catch (e) {
+        // v1.2.17：**不能**把 tasklist 失败当成「主进程已退出」。
+        // 以前 catch 里直接 alive=false，于是「查不到进程」=「可以开始替换 asar」，
+        // 而主进程其实还在跑 → Windows 上 asar 被占用 → rename 全失败 →
+        // 写 .new 旁路 → 照常 relaunch → 被单实例锁吞掉 → 全程静默。
+        // 现在保守处理：查不到就认为还活着，直到超时。
+        log(`tasklist failed (${e && e.message}); assuming main still alive`);
+        alive = true;
+      }
       if (!alive) return resolve();
-      if (Date.now() - start > timeoutMs) return resolve(); // 超时不阻塞
+      if (Date.now() - start > timeoutMs) {
+        log(`timeout waiting for pid=${pid}; continue anyway`);
+        return resolve(); // 超时不阻塞
+      }
       setTimeout(tick, 250);
     };
     tick();
@@ -431,6 +442,11 @@ async function main() {
       await waitForProcessExit(opts.mainPid, opts.timeoutMs || 30000);
     }
     await apply(opts);
+    // v1.2.17：applied 必须在 relaunchApp() **之前**落盘（apply() 内部会拉起新实例）。
+    // 原来顺序是「apply（内部 relaunch）→ 写 applied」，而新实例启动后会立刻跑
+    // checkPatchStateOnBoot：它看到 asar 已是新版、sha 对上 → 删掉状态文件 →
+    // helper 随后再写一份空的（读不到旧值就写 {}，里面没有 expectedToSha）→
+    // 于是「下次启动」永远报 hash-mismatch，用户每次看到「✗ 上次补丁应用失败」。
     writePatchState(opts.stateFile, { phase: 'applied', appliedAt: Date.now() });
     process.exit(0);
   } catch (e) {

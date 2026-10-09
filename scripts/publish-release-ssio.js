@@ -19,102 +19,16 @@
  */
 
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
 const path = require('path');
 const crypto = require('crypto');
+// v1.2.17：凭据加载 / HTTP 原语 / 默认地址都从这里来，本文件只留下发布流程本身
+const { createSsioClient } = require('./lib/ssioHttp');
 
-const BASE = process.env.SSIO_BASE || 'http://120.53.9.81:8100';
-
-/**
- * 从仓库根的 .env.local / .env 里补环境变量（两者都已进 .gitignore）。
- * 只补当前进程里缺失的键，不覆盖显式传入的环境变量。
- */
-function loadEnvLocal() {
-  const root = path.resolve(__dirname, '..');
-  for (const name of ['.env.local', '.env']) {
-    const p = path.join(root, name);
-    if (!fs.existsSync(p)) continue;
-    for (const rawLine of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eq = line.indexOf('=');
-      if (eq < 0) continue;
-      const k = line.slice(0, eq).trim();
-      let v = line.slice(eq + 1).trim();
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-        v = v.slice(1, -1);
-      }
-      if (k && process.env[k] === undefined) process.env[k] = v;
-    }
-  }
-}
-
-loadEnvLocal();
-const KEY = process.env.SSIO_PUBLISH_KEY || '';
-
-function requireKey() {
-  if (KEY) return;
-  console.error(
-    [
-      '缺少 SSIO 发布凭据：环境变量 SSIO_PUBLISH_KEY 未设置。',
-      '',
-      '请二选一：',
-      '  1) 仓库根建 .env.local（已在 .gitignore 里），写一行：',
-      '       SSIO_PUBLISH_KEY=你的Key',
-      '  2) 或当前终端先 export SSIO_PUBLISH_KEY=你的Key',
-      '',
-      '需要 storage:write + release:write scope 的 Key。',
-      '⚠️ 不要把 Key 提交进仓库 —— 本仓库是公开的。',
-    ].join('\n'),
-  );
-  process.exit(1);
-}
-
-function req(method, urlStr, { headers = {}, body = null, timeout = 600000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
-    const mod = u.protocol === 'https:' ? https : http;
-    const opts = {
-      protocol: u.protocol,
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + u.search,
-      method,
-      headers: { accept: 'application/json', 'X-API-Key': KEY, ...headers },
-    };
-    if (body) {
-      const buf = Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body), 'utf8');
-      opts.headers['content-length'] = buf.length;
-      if (!Buffer.isBuffer(body)) opts.headers['content-type'] = 'application/json';
-      else opts.headers['content-type'] = 'application/octet-stream';
-      opts.body = buf;
-    }
-    const r = mod.request(opts, (res) => {
-      let d = '';
-      res.on('data', (c) => (d += c));
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            resolve(JSON.parse(d));
-          } catch {
-            resolve(d);
-          }
-        } else {
-          reject(new Error(`HTTP ${res.statusCode} ${method} ${urlStr}: ${d.slice(0, 300)}`));
-        }
-      });
-    });
-    r.on('error', reject);
-    r.setTimeout(timeout, () => r.destroy(new Error('请求超时')));
-    if (opts.body) r.write(opts.body);
-    r.end();
-  });
-}
+const ssio = createSsioClient({ requireKey: true });
+const BASE = ssio.base;
 
 async function ping() {
-  requireKey();
-  const apps = await req('GET', `${BASE}/v1/releases?limit=1`);
+  const apps = (await ssio.get(`${BASE}/v1/releases?limit=1`)).json;
   const n = Array.isArray(apps) ? apps.length : (apps && apps.items ? apps.items.length : '?');
   console.log(`✓ 凭据可用：${BASE}  已有 release 记录 ${n} 条（抽样 1 条）`);
 }
@@ -122,8 +36,6 @@ async function ping() {
 async function main() {
   // 自检模式：不通网络凭据就别等到传完 90MB 才失败
   if (process.argv[2] === '--ping') return ping();
-
-  requireKey();
 
   // ── v1.2.15 纯存储模式：只传文件拿 fileId，不建 release ──
   // 用途：增量补丁 zip（latest.json 里记 ssio:file:<id>）。
@@ -138,17 +50,17 @@ async function main() {
     const buf = fs.readFileSync(file);
     const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
     console.log(`上传到 SSIO storage：${key}  ${(buf.length / 1048576).toFixed(2)} MB  sha256=${sha256.slice(0, 16)}…`);
-    const init = await req('POST', `${BASE}/v1/storage/uploads`, {
+    const init = (await ssio.request('POST', `${BASE}/v1/storage/uploads`, {
       body: { filename: path.basename(key), totalSize: buf.length, mime: 'application/zip' },
-    });
+    })).json;
     for (let i = 0; i < init.totalChunks; i++) {
       const start = i * init.chunkSize;
       const chunk = buf.slice(start, Math.min(start + init.chunkSize, buf.length));
-      await req('PUT', `${BASE}/v1/storage/uploads/${init.uploadId}/chunks/${i}`, { body: chunk });
+      await ssio.request('PUT', `${BASE}/v1/storage/uploads/${init.uploadId}/chunks/${i}`, { body: chunk });
       process.stdout.write(`  上传 ${i + 1}/${init.totalChunks}\r`);
     }
     console.log('');
-    const done = await req('POST', `${BASE}/v1/storage/uploads/${init.uploadId}/complete`, { body: { sha256 } });
+    const done = (await ssio.request('POST', `${BASE}/v1/storage/uploads/${init.uploadId}/complete`, { body: { sha256 } })).json;
     // 把 fileId 落盘给 release-one-click.js 读（比解析 stdout 稳）
     fs.writeFileSync(path.join(process.cwd(), '.ssio-last-storage.json'), JSON.stringify({ fileId: done.fileId, key, sha256 }));
     console.log(`  ✓ 存储就位：fileId=${done.fileId}  dedup=${done.dedup}`);
@@ -176,27 +88,27 @@ async function main() {
   console.log(`发布到 SSIO：${filename}  ${(buf.length / 1048576).toFixed(2)} MB  sha256=${sha256.slice(0, 16)}…`);
 
   // 1) 初始化分片上传
-  const init = await req('POST', `${BASE}/v1/storage/uploads`, {
+  const init = (await ssio.request('POST', `${BASE}/v1/storage/uploads`, {
     body: { filename, totalSize: buf.length, mime: 'application/octet-stream' },
-  });
+  })).json;
   console.log(`  分片：${init.totalChunks} × ${(init.chunkSize / 1048576).toFixed(1)} MB`);
 
   // 2) 逐片上传
   for (let i = 0; i < init.totalChunks; i++) {
     const start = i * init.chunkSize;
     const chunk = buf.slice(start, Math.min(start + init.chunkSize, buf.length));
-    await req('PUT', `${BASE}/v1/storage/uploads/${init.uploadId}/chunks/${i}`, { body: chunk });
+    await ssio.request('PUT', `${BASE}/v1/storage/uploads/${init.uploadId}/chunks/${i}`, { body: chunk });
     process.stdout.write(`  上传 ${i + 1}/${init.totalChunks}\r`);
   }
   console.log('');
 
   // 3) 完成
-  const done = await req('POST', `${BASE}/v1/storage/uploads/${init.uploadId}/complete`, { body: { sha256 } });
+  const done = (await ssio.request('POST', `${BASE}/v1/storage/uploads/${init.uploadId}/complete`, { body: { sha256 } })).json;
   console.log(`  文件就位：fileId=${done.fileId}  dedup=${done.dedup}`);
 
   // 4) 建 release
   const notesMd = notesFile && fs.existsSync(notesFile) ? fs.readFileSync(notesFile, 'utf8') : null;
-  const rel = await req('POST', `${BASE}/v1/releases`, {
+  const rel = (await ssio.request('POST', `${BASE}/v1/releases`, {
     body: {
       channel: 'stable',
       platform,
@@ -206,7 +118,7 @@ async function main() {
       notesMd,
       published: true,
     },
-  });
+  })).json;
   console.log(`  ✓ release 建立：v${rel.version} ${rel.platform}/${rel.arch}  ${(rel.sizeBytes / 1048576).toFixed(2)} MB`);
   // v1.2.15：releaseId 落盘给清单脚本读（latest.json 记 ssio:release:<id>）。
   // 按 platform 分开落盘：一次发版会先传桌面包再传 APK，同一个标记文件会互相覆盖。
@@ -219,10 +131,9 @@ async function main() {
   // 5) 回读验证：current 用一个必然落后的版本 —— 服务端在 hasUpdate=false 时
   // 只返回 { hasUpdate: false }（不带 version），拿刚发的版本号当 current 会
   // 让「回读版本不一致」的告警恒误报（v1.2.15/1.2.16 发版日志里那句 [!] 就是它）。
-  const probe = await req(
-    'GET',
+  const probe = (await ssio.get(
     `${BASE}/v1/releases/latest?platform=${platform}&arch=${arch}&channel=stable&current=0.0.1&clientId=publish-probe`,
-  );
+  )).json;
   console.log(`  回读 latest（platform=${platform}）：hasUpdate=${probe.hasUpdate} version=${probe.version || '-'}`);
   if (probe.version !== version) console.log('  [!] 回读版本不一致，请检查服务端记录');
 }

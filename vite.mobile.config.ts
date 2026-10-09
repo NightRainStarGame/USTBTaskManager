@@ -33,10 +33,9 @@ export default defineConfig({
       url: r('./src/mobile/shims/url.ts'),
       'node:crypto': r('./src/mobile/shims/crypto.ts'),
       crypto: r('./src/mobile/shims/crypto.ts'),
-      'node:https': r('./src/mobile/shims/https.ts'),
-      https: r('./src/mobile/shims/https.ts'),
-      'node:http': r('./src/mobile/shims/http.ts'),
-      http: r('./src/mobile/shims/http.ts'),
+      // v1.2.17：node:https / node:http 的 shim 已删 —— 它们当年是给 AnyShare（北科云盘）客户端
+      // 兜底的，那个通道下线后无人再 import node:http(s)。实测去掉别名后移动端照常构建
+      // 且产物更小，于是连 alias 一起删；真有依赖用到时，Rollup 会在这里直接报错。
       // 不该被外部化：updater/patchApply 静态 import { spawn }，外部化的空模块会让 Rollup 构建失败
       'node:child_process': r('./src/mobile/shims/child_process.ts'),
       child_process: r('./src/mobile/shims/child_process.ts'),

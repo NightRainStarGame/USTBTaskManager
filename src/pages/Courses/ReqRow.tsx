@@ -72,7 +72,7 @@ export function ReqRow({ req, onEdit, onUpdate }: Props) {
             {req.source === 'github' && (
               <span
                 className="inline-flex items-center gap-0.5 mr-1 px-1 py-px rounded text-[9px] font-mono border border-neon-green/40 text-neon-green align-middle"
-                title={`来自 GitHub 同步${req.publisher ? ' · 发布人 ' + req.publisher : ''}${req.session_date ? ' · 上课 ' + req.session_date : ''}`}
+                title={`来自作业同步${req.publisher ? ' · 发布人 ' + req.publisher : ''}${req.session_date ? ' · 上课 ' + req.session_date : ''}`}
               >
                 <CloudDownload size={9} /> 同步
               </span>

@@ -6,11 +6,12 @@
  *   · GitHub：国内访问不稳定（豆芽机器上 hosts 被劫持时直接连不上）、
  *     Contents API 匿名 60 次/h 限速、内置 PAT 有泄漏爆炸半径
  *   · 北科云盘：仅校园网可达，匿名外链还删不掉旧文件
- *   · 移动端：AnyShare 走 node:https（shim 抛错）根本不可用
+ *   · 移动端：AnyShare 走 node:https，而 webview 里没有 Node 栈，根本不可用
+ *     （v1.2.17：随着北科云盘通道删除，node:http(s) 的移动端 shim 也一并删了）
  *
  * SSIO 是自托管 BaaS，一个后端覆盖「对象存储 + 发行 + KV」，国内外都能连，
  * 且移动端 WebView 用 fetch 就能直连。所以 v1.2.12 把它立为**所有云能力的主源**，
- * GitHub / 云盘降为备源。
+ * v1.2.15 起 GitHub / 北科云盘两条通道彻底下线 —— 它现在是**唯一**后端。
  *
  * 数据模型：KV（key → JSON 文本，带 version 乐观锁）。
  * 班级 / 作业的文件路径协议（class/<code>/manifest.json、homework/<code>.json）
@@ -42,6 +43,21 @@ export const SSIO_DEFAULT_BASE = 'http://120.53.9.81:8100';
  */
 export const SSIO_BUILTIN_KEY = 'ssio_live_OiTftLzMkgh21475jUXmWP';
 
+/**
+ * SSIO KV 键名表 —— **桌面、移动端、发版脚本共用这一份**。
+ *
+ * v1.2.17：以前桌面读 `taskmgr/latest.json`、移动端读裸键 `latest.json`、
+ * 而发版脚本只往 `taskmgr/latest.json` 写 —— 移动端读的是一个**无人写入**的键，
+ * APK 更新通道从 v1.2.12 切主源之后实际上一直是断的（v1.2.16 才发现）。
+ * 键名从此只有一个出处，任一方单独改名都会编译失败，不会再悄悄分叉。
+ */
+export const SSIO_KEYS = {
+  /** 完整更新清单（latest.json 原文，含 patches / urlMirrors / asarSha256 基线） */
+  manifest: 'taskmgr/latest.json',
+  /** 关于页文案 */
+  about: 'taskmgr/about.txt',
+} as const;
+
 export interface SsioConfig {
   baseUrl: string;
   apiKey: string;
@@ -63,11 +79,15 @@ export function getSsioConfig(): SsioConfig {
  * 万一没有（老 Electron）就退回 electron 的 net.fetch。
  * 注意必须**调用时**才取，不能在模块顶层捕获（移动端 bootstrap 的注入顺序
  * 可能早于某些 shim 就位，顶层捕获会永远拿到错的那个）。
+ *
+ * v1.2.17：主进程改优先用 net.fetch。以前是「先全局 fetch，全局没有才 net.fetch」，
+ * 于是主进程实际走的是 Node 的 undici —— 它**不读系统代理**，
+ * 校园网 / 公司代理环境下表现为「能上网但连不上 SSIO」。
+ * net.fetch 走 Chromium 网络栈，与系统代理一致（这也是 updater/fetchText 一直用它的原因）。
  */
 function pickFetch(): typeof fetch {
   const g = globalThis as any;
   if (typeof g.__TASKMGR_FETCH__ === 'function') return g.__TASKMGR_FETCH__;
-  if (typeof g.fetch === 'function') return g.fetch.bind(g);
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { net } = require('electron');
@@ -75,6 +95,7 @@ function pickFetch(): typeof fetch {
   } catch {
     /* 非 Electron 环境 */
   }
+  if (typeof g.fetch === 'function') return g.fetch.bind(g);
   throw new Error('当前环境没有可用的 fetch，无法访问 SSIO');
 }
 
@@ -109,6 +130,105 @@ async function api(path: string, init: { method?: string; body?: unknown } = {})
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 发行引用解析（v1.2.17）
+ *
+ * 更新清单里存的不是下载地址，而是 `ssio:release:<id>` / `ssio:file:<id>` 引用 ——
+ * 因为 SSIO 的下载地址是**带时效的签名 URL（服务端默认 5 分钟过期）**，
+ * 而「早上弹更新、晚上才点安装」是常态：清单里的地址到那时必然 404/401。
+ * 所以在**下载前一刻**把引用换成新鲜签名，这条协议只在本文件实现一次。
+ *
+ * 以前桌面（updater/ssio.ts）和移动端（src/mobile/apkUpdater.ts）各实现一遍，
+ * 连「platform 怎么映射」都在同一文件里给过两个答案（darwin→macos / darwin→any）。
+ * 现在两边共用下面这一个实现，改平台规则只需动一处。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** 引用目标的运行环境 —— 决定了 platform / arch / clientId 三件套。 */
+export type SsioTarget = 'desktop' | 'android';
+
+/** 判断一个值是不是 SSIO 资源引用（而不是 http 直链）。 */
+export function isSsioRef(v: unknown): v is string {
+  return typeof v === 'string' && /^ssio:(release|file):[A-Za-z0-9_-]+$/i.test(v);
+}
+
+/**
+ * SSIO 的 platform 枚举只有 win|linux|android|any（不是 Electron 的 win32/darwin），
+ * 这张表是**唯一出处**。
+ */
+function targetProfile(target: SsioTarget): { platform: string; arch: string; clientId: string } {
+  if (target === 'android') return { platform: 'android', arch: 'arm64', clientId: 'taskmgr-apk-dl' };
+  // desktop：darwin 没有对应枚举，用 any 让服务端只匹配 arch=any 的发行记录
+  return {
+    platform: typeof process !== 'undefined'
+      ? process.platform === 'win32' ? 'win' : process.platform === 'linux' ? 'linux' : 'any'
+      : 'any',
+    arch: typeof process !== 'undefined' && process.arch === 'arm64' ? 'arm64' : 'x64',
+    clientId: 'taskmgr-dl',
+  };
+}
+
+async function jsonGet(url: string, apiKey: string): Promise<any> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await pickFetch()(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+      },
+      signal: ctrl.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`SSIO HTTP ${res.status} ${res.statusText || ''}`.trim());
+    return text ? JSON.parse(text) : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 把 `ssio:release:<id>` / `ssio:file:<id>` 引用换成一条**新鲜**下载地址。
+ *
+ * 服务端能拿签名地址的入口只有两个：
+ *   · release（整包）→ `GET /v1/releases/latest`
+ *     ⚠️ 服务端**没有** `/v1/releases/:id/download` 端点（v1.2.15 曾接错导致下载必 404，
+ *        v1.2.16 修复）。所以这里查 channel 最新那条，再用 expectVersion 校验它没被回滚。
+ *   · file（增量补丁 zip）→ `GET /v1/storage/files/:id/download`
+ *
+ * @param server 覆盖服务器地址/凭据（桌面允许用户自建 SSIO 源）；不传就用当前配置。
+ */
+export async function resolveDownloadRef(
+  ref: string,
+  opts: { target: SsioTarget; expectVersion?: string; server?: { baseUrl?: string; apiKey?: string } },
+): Promise<string> {
+  const m = String(ref || '').match(/^ssio:(release|file):([A-Za-z0-9_-]+)$/i);
+  if (!m) throw new Error(`SSIO 引用格式无效：${ref}（应为 ssio:release:<id> 或 ssio:file:<id>）`);
+
+  const kind = m[1].toLowerCase();
+  const cfg = getSsioConfig();
+  const base = (opts.server?.baseUrl || cfg.baseUrl).replace(/\/+$/, '');
+  const apiKey = opts.server?.apiKey ?? cfg.apiKey;
+
+  let apiPath: string;
+  if (kind === 'release') {
+    const { platform, arch, clientId } = targetProfile(opts.target);
+    // current 传一个必然落后的版本，确保服务端返回本渠道当前已发布的最新记录
+    const qs = new URLSearchParams({ platform, arch, channel: 'stable', current: '0.0.1', clientId });
+    apiPath = `/v1/releases/latest?${qs.toString()}`;
+  } else {
+    apiPath = `/v1/storage/files/${encodeURIComponent(m[2])}/download`;
+  }
+
+  const j = await jsonGet(`${base}${apiPath}`, apiKey);
+  if (kind === 'release' && opts.expectVersion && String(j?.version || '') !== String(opts.expectVersion)) {
+    throw new Error(`SSIO 最新发行是 ${j?.version || '?'}，与清单 ${opts.expectVersion} 不一致（可能被回滚），拒绝下载`);
+  }
+  if (!j?.url) throw new Error('SSIO 没返回下载地址（该版本可能没有挂文件）');
+  return String(j.url);
 }
 
 export interface KvEntry {
